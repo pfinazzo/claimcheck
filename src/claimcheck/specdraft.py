@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -458,7 +459,9 @@ SETUP_FILE = "setup.json"
 
 
 def slug(goal: str) -> str:
-    words = re.sub(r"[^a-z0-9]+", " ", goal.lower()).split()[:5]
+    # Decompose accents first so "café" becomes "cafe" and not "caf" plus a word break.
+    plain = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode("ascii")
+    words = re.sub(r"[^a-z0-9]+", " ", plain.lower()).split()[:5]
     return "-".join(words)[:40].strip("-") or "task"
 
 

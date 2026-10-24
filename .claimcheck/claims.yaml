@@ -1,5 +1,32 @@
-# claimcheck claims file — one entry per thing the author asserts about a diff.
+# claimcheck claims file: one entry per thing the author asserts about this diff.
 version: 1
-author: ""
+author: "claude-code/claude-sonnet-5-5"
 base: "main"
-claims: []
+claims:
+  - id: c1
+    claim: "slug() turns accented Latin letters into their plain letters, so Café menu gives cafe-menu and Überprüfung der Preise gives uberprufung-der-preise"
+    confidence: 0.95
+    criteria: [1, 2]
+    files: ["src/claimcheck/specdraft.py"]
+    kill_condition: "test: tests/test_specdraft.py::test_slug_keeps_accented_letters_as_plain_letters"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_specdraft.py -k slug"
+      - "obs: ran slug on five accented goals before and after the change and compared the output"
+
+  - id: c2
+    claim: "A goal with no Latin letters or digits, such as Japanese text or only punctuation, still produces the branch slug task"
+    confidence: 0.9
+    criteria: [3]
+    files: ["src/claimcheck/specdraft.py"]
+    kill_condition: "test: tests/test_specdraft.py::test_slug_without_latin_letters_falls_back_to_task"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_specdraft.py -k falls_back"
+
+  - id: c3
+    claim: "Plain ASCII goals produce the same slug as before: at most five words, at most 40 characters, no leading or trailing hyphen"
+    confidence: 0.85
+    criteria: [4]
+    files: ["src/claimcheck/specdraft.py"]
+    kill_condition: "obs: slug of a 100-character single word is longer than 40 characters, or the five-word cut changes for an ASCII goal"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_specdraft.py -k slug"

@@ -228,3 +228,30 @@ def test_finish_commits_the_files_init_touched(cc_repo):
     SD.record_setup_files(cc_repo.path, ["CLAUDE.md"])
     SD.finish(cc_repo.path, C.load(cc_repo.path), _draft())
     assert "claimcheck:begin" in cc_repo.git("show", "HEAD:CLAUDE.md")
+
+
+# ---- branch names (criteria 1-4 of the accented-branch-names task) ------------
+
+@pytest.mark.parametrize(
+    "goal, expected",
+    [
+        ("Café menu", "cafe-menu"),
+        ("Überprüfung der Preise", "uberprufung-der-preise"),
+        ("Ñandú São Paulo", "nandu-sao-paulo"),
+        ("Add free shipping over 50", "add-free-shipping-over-50"),
+    ],
+)
+def test_slug_keeps_accented_letters_as_plain_letters(goal, expected):
+    assert SD.slug(goal) == expected
+
+
+@pytest.mark.parametrize("goal", ["日本語のタイトル", "!!!", "   "])
+def test_slug_without_latin_letters_falls_back_to_task(goal):
+    assert SD.slug(goal) == "task"
+
+
+def test_slug_is_short_and_has_no_edge_hyphens():
+    out = SD.slug("  ...Add the very long free shipping over fifty dollars rule!!  ")
+    assert out == "add-the-very-long-free"
+    assert len(out) <= 40 and not out.startswith("-") and not out.endswith("-")
+    assert len(SD.slug("a" * 100)) == 40

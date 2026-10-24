@@ -1,0 +1,24 @@
+{
+  "criteria": [
+    {
+      "id": 1,
+      "sha256": "45354f10d43c15d1c01aa5f2c9e6f7335a5042d9b1a559023656623e9d5e3965"
+    },
+    {
+      "id": 2,
+      "sha256": "811fc6399230524c730c2148bdd99d27dd8829f49d62959ceca0c5453dc642ac"
+    },
+    {
+      "id": 3,
+      "sha256": "9e8cc86f112fc23ebf7260bc9614a3b53f0e2660ba09d6816a9aa7f5b1e6eca9"
+    },
+    {
+      "id": 4,
+      "sha256": "cbe724ebaedeae853d48f4bdbe351f0907f3c36fa7503a6fe2a1333d771fe8cf"
+    }
+  ],
+  "frozen_at": "2026-10-24T23:43:08Z",
+  "git_head": "e1fd5e1c22e745c38646647ae5d7aff45398d3c4",
+  "spec_sha256": "fa103f747f7c132477cb7d9786e53fdf4923899f9ac53ad1665cc55286ba6adb",
+  "version": 1
+}
