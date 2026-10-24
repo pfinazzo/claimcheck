@@ -50,6 +50,10 @@ def run_setup(
             on_step(name, value)
         return value
 
+    # Secrets first, before anything else is written: a repo that can commit .env by accident
+    # should not get any further setup until that is closed.
+    secrets = step("secrets", detect.ensure_secrets_ignored(repo))
+
     d = C.cc_dir(repo)
     d.mkdir(parents=True, exist_ok=True)
     created: list[str] = []
@@ -87,7 +91,7 @@ def run_setup(
         ci_info = {"path": path, "action": action}
     step("ci", ci_info)
 
-    touched = [".gitignore"] if added else []
+    touched = [".gitignore"] if (added or secrets["added"] or secrets["created"]) else []
     touched += [x["path"] for x in docs if x["action"] != "unchanged"]
     if ci_info and ci_info["action"] == "created":
         touched.append(ci_info["path"])
@@ -105,6 +109,7 @@ def run_setup(
             "others": det.others,
         },
         "hook": hook_info,
+        "secrets": secrets,
         "gitignore_added": added,
         "agent_docs": docs,
         "ci": ci_info,

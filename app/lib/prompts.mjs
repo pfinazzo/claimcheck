@@ -10,6 +10,8 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { redactText } from './redact.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = path.join(HERE, '..', 'prompts');
 
@@ -21,7 +23,10 @@ export const PROPOSE_TOOLS = ['Read', 'Grep', 'Glob'];
 /** Credential files, in the relative, home and any-depth forms Claude Code's deny rules understand. */
 export const SECRET_PATHS = [
   './.env', './.env.*', '**/.env', '**/.env.*', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx', '**/id_rsa*', '**/id_ed25519*', '**/id_ecdsa*',
-  '**/.npmrc', '**/.pypirc', '**/.netrc', '**/credentials*', '~/.ssh/**', '~/.aws/**', '~/.config/gh/**', '~/.gnupg/**', '../**',
+  '**/.npmrc', '**/.pypirc', '**/.netrc', '**/credentials*', '**/*.env', '**/*.jks', '**/*.keystore', '**/*.p8', '**/*.ppk', '**/*.kdbx', '**/*.gpg',
+  '**/*.tfvars', '**/terraform.tfstate*', '**/service-account*.json', '**/*serviceaccount*.json', '**/client_secret*.json', '**/firebase-adminsdk*.json',
+  '**/.git-credentials', '**/.htpasswd', '**/.pgpass', '**/secrets/**', '**/secrets.*', '**/secret.*', '**/.ssh/**', '**/.aws/**', '**/.kube/**', '**/.docker/**',
+  '~/.ssh/**', '~/.aws/**', '~/.kube/**', '~/.docker/**', '~/.config/gh/**', '~/.gnupg/**', '~/.npmrc', '~/.netrc', '~/.git-credentials', '../**',
 ];
 
 /** Files whose edit would change what the app or the repo's tooling runs, or the frozen contract. */
@@ -133,11 +138,11 @@ const header = (ctx) =>
 
 /** AC 17. */
 export const proposePrompt = (ctx) =>
-  `${header(ctx)}\n\n${fill(readTemplate('propose.md'), { claim: describeClaim(ctx), test_cmd: ctx.config.test_cmd })}\n\n${CLOSING_SENTENCE}`;
+  redactText(`${header(ctx)}\n\n${fill(readTemplate('propose.md'), { claim: describeClaim(ctx), test_cmd: ctx.config.test_cmd })}\n\n${CLOSING_SENTENCE}`).text;
 
 /** The build prompt for a chosen approach. */
 export const implementPrompt = (ctx, proposal, rejected = []) =>
-  `${header(ctx)}\n\n${fill(readTemplate('implement.md'), {
+  redactText(`${header(ctx)}\n\n${fill(readTemplate('implement.md'), {
     claim: describeClaim(ctx),
     proposal: [
       `Title: ${proposal.title}`,
@@ -149,4 +154,4 @@ export const implementPrompt = (ctx, proposal, rejected = []) =>
     rejected: rejected.length ? rejected.map((p) => `- ${p.title}: ${p.cons.join('; ')}`).join('\n') : '(none)',
     test_cmd: ctx.config.test_cmd,
     kill_condition: ctx.claim.killCondition,
-  })}`;
+  })}`).text;

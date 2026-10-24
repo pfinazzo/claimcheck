@@ -10,6 +10,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+import { redactText } from './redact.mjs';
 import { createLineSplitter, createTextCollector, killTree } from './proc.mjs';
 
 const execFileP = promisify(execFile);
@@ -171,7 +173,7 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
     }
     child.on('error', (error) => finish(failed(`Claude Code could not be started: ${error.message}`)));
     child.stdin?.on?.('error', () => {});
-    child.stdin?.end?.(String(prompt ?? ''), 'utf8');
+    child.stdin?.end?.(redactText(String(prompt ?? '')).text, 'utf8'); // last line of defence: nothing secret-looking leaves
     child.stdout?.on('data', (chunk) => lines.push(chunk));
     child.stderr?.on('data', (chunk) => stderr.push(chunk));
     child.on('close', (code) => {

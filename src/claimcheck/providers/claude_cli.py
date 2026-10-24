@@ -17,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .. import ProviderError
+from .. import ProviderError, redact
 
 DEFAULT_TIMEOUT_S = 300
 # Tools off: the model gets text in and gives text out, nothing else.
@@ -95,6 +95,8 @@ class ClaudeCliProvider:
             )
 
     def complete(self, system: str, user: str, *, schema: dict) -> str:
+        # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
+        system, user = redact.redact_text(system)[0], redact.redact_text(user)[0]
         prefix, direct = resolve_launch(self.binary)
         args = [
             *prefix, "-p", "--output-format", "json", "--system-prompt", system,

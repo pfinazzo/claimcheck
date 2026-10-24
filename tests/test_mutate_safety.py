@@ -224,9 +224,9 @@ def test_restore_refuses_to_overwrite_the_users_newer_edit(calc_repo, monkeypatc
     _crash_with_mutant_in_place(calc_repo, monkeypatch)
     mine = CALC_SRC + "# my newer work\n"
     (calc_repo.path / "src/calc.py").write_text(mine, encoding="utf-8", newline="\n")
-    assert calc_repo.cli("mutate", "--restore") == 0
+    assert calc_repo.cli("mutate", "--restore") == 6  # a refused file is not a success
     cap = capsys.readouterr()
-    assert json.loads(cap.out) == {"restored": []}
+    assert json.loads(cap.out) == {"restored": [], "refused": True}
     assert "not restoring src/calc.py" in cap.err and "changed since the run" in cap.err
     assert calc_repo.read("src/calc.py") == mine
     assert (calc_repo.cc / "mutate-backup" / "src" / "calc.py").exists()
@@ -248,7 +248,7 @@ def test_restore_without_a_record_refuses_rather_than_guesses(calc_repo, capsys)
     b.parent.mkdir(parents=True)
     b.write_text("OLD\n", encoding="utf-8")
     calc_repo.write("src/calc.py", "NEW\n")
-    assert calc_repo.cli("mutate", "--restore") == 0
+    assert calc_repo.cli("mutate", "--restore") == 6
     assert "not restoring src/calc.py" in capsys.readouterr().err
     assert calc_repo.read("src/calc.py") == "NEW\n"
     assert b.exists()

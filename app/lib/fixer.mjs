@@ -17,6 +17,7 @@ import { appendOutcome, outcomeRecord, readAppState, updateAppState } from './le
 import { createTextCollector, killTree } from './proc.mjs';
 import { SAFE_REF } from './store.mjs';
 import { BLOCKED_TOOLS, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, PROPOSE_TOOLS, describeClaim, implementPrompt, proposePrompt } from './prompts.mjs';
+import { filterDiff, isSecretPath, redactText } from './redact.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -104,12 +105,7 @@ export const runShell = ({ command, cwd, spawnFn = nodeSpawn, timeoutMs = 600000
 const git = async (cwd, args, execFn = execFileP) => (await execFn('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout.trim();
 
 /** A file name that holds credentials. Never sent to a model and never read by the app. */
-export const isSensitivePath = (rel) => {
-  const parts = String(rel).replace(/\\/g, '/').split('/').filter(Boolean);
-  const name = parts.at(-1) ?? '';
-  if (parts.some((p) => ['.ssh', '.aws', '.gnupg', '.git'].includes(p))) return true;
-  return /^\.env/i.test(name) || /\.(pem|key|p12|pfx|keystore|jks|kdbx)$/i.test(name) || /^id_(rsa|dsa|ecdsa|ed25519)/i.test(name) || /^(credentials|secrets?)(\.|$)/i.test(name) || /^\.(npmrc|pypirc|netrc)$/i.test(name);
-};
+export const isSensitivePath = (rel) => isSecretPath(rel) || String(rel).replace(/\\/g, '/').split('/').includes('.git');
 
 /**
  * Reads a repo file for API mode only when it is safe to send: inside the repo
@@ -131,7 +127,7 @@ export const readSafeRepoFile = async (repoPath, ref, { execFn = execFileP, maxB
     }
     const stat = await fsp.stat(real);
     if (!stat.isFile() || stat.size > maxBytes) return null;
-    return await fsp.readFile(real, 'utf8');
+    return redactText(await fsp.readFile(real, 'utf8')).text; // a key inside an ordinary file is removed too
   } catch {
     return null;
   }
@@ -190,7 +186,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
     } catch {
       diff = '(diff unavailable)';
     }
-    if (diff.length > 200000) diff = `${diff.slice(0, 200000)}\n... (diff cut at 200,000 characters)`;
+    diff = filterDiff(diff).text; // secret files withheld, secret-looking values redacted, size capped
     const parts = [`## Diff of ${files.join(', ')}\n\`\`\`diff\n${diff}\n\`\`\``];
     const testRef = ctx.claim.killCondition.match(/^test:\s*([^\s:]+)/)?.[1];
     if (testRef) {

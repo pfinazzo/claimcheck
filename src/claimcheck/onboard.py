@@ -145,7 +145,19 @@ def _scene_setup(t: Term, repo: Path, *, assume_yes: bool) -> dict:
     t.p()
 
     def reveal(name: str, value) -> None:
-        if name == "config":
+        if name == "secrets":
+            ok = t.c(t.g["ok"], "green", "bold")
+            if value["created"]:
+                note = ".gitignore created, .env and key files ignored"
+            elif value["added"]:
+                note = f"added {len(value['added'])} lines so .env and key files are ignored"
+            else:
+                note = ".env and key files are already ignored"
+            t.p(f"  {ok} Secrets               {t.c(note, 'grey')}")
+            for tracked in value["tracked"]:
+                t.p(f"  {t.c('!', 'red', 'bold')} {t.c(tracked, 'red')} {t.c('is already committed. Ignoring it does not remove it: run git rm --cached ' + tracked, 'grey')}")
+            t.nap(0.25)
+        elif name == "config":
             t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Config               {t.c('.claimcheck/config.toml (' + str(value) + ')', 'grey')}")
         elif name == "hook":
             t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Commit hook           {t.c(value['status'], 'grey')}")
@@ -191,7 +203,8 @@ def _connection(t: Term):
         t.p("  " + t.c("You can still write .claimcheck/spec.md by hand. Setup is otherwise complete.", "grey"))
         return None, str(e)
     t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Using {how}.")
-    t.p("  " + t.c("It writes the spec with you and later checks claims. Nothing leaves your machine except those prompts.", "grey"))
+    t.p("  " + t.c("Claude sees your goal, your answers and the repo's file names (never .env or key files).", "grey"))
+    t.p("  " + t.c("Later, checking a claim also sends the diff under test.", "grey"))
     return provider, how
 
 

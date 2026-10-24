@@ -53,6 +53,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     r = initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci)
     hook_word = "installed" if r["hook"]["status"] == "installed" else "already present"
     _err(f"init: created {r['created'] or 'nothing new'}; hook {hook_word}")
+    sec = r["secrets"]
+    if sec["created"] or sec["added"]:
+        _err(f"init: secrets first: .gitignore {'created' if sec['created'] else 'updated'} so .env and key files are ignored")
+    for tracked in sec["tracked"]:
+        _err(f"init: WARNING {tracked} is already committed; ignoring does not remove it. Run: git rm --cached {tracked}")
     if r["gitignore_added"]:
         _err(f"init: added {len(r['gitignore_added'])} lines to .gitignore")
     for doc in r["agent_docs"]:
@@ -212,6 +217,9 @@ def cmd_mutate(args: argparse.Namespace) -> int:
     repo = C.find_repo_root()
     if args.restore:
         restored = mutate.restore(repo)
+        if (C.cc_dir(repo) / C.MUTATE_SENTINEL).exists():  # a file was refused: do not report success
+            _out({"restored": restored, "refused": True})
+            return 6
         _out({"restored": restored})
         return 0
     result, code = mutate.run_mutate(

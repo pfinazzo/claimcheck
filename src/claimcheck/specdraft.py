@@ -18,13 +18,11 @@ from typing import Callable
 
 from . import ClaimcheckError, ProviderError
 from . import config as C
-from . import gitio
+from . import gitio, redact
 
 DRAFT_FILE = "spec-draft.json"
 MAX_QUESTIONS = 5
 MAX_FILES_SHOWN = 300
-# File names that suggest secrets. They are never sent to the model, not even as names.
-_SECRET_NAME = re.compile(r"(^|/)(\.env[^/]*|id_rsa[^/]*|id_ed25519[^/]*|[^/]*\.(pem|key|p12|pfx)|secrets?\.[^/]+)$", re.I)
 
 REPLY_SCHEMA: dict = {
     "type": "object",
@@ -139,14 +137,20 @@ def repo_files(repo: Path) -> list[str]:
     except ClaimcheckError:
         return []
     names = [n.strip().replace("\\", "/") for n in out.splitlines() if n.strip()]
-    names = [n for n in names if not _SECRET_NAME.search(n) and not n.startswith(".claimcheck/")]
+    names = [n for n in names if not redact.is_secret_path(n) and not n.startswith(".claimcheck/")]
     return names[:MAX_FILES_SHOWN]
 
 
 # ---- prompt and reply -----------------------------------------------------
 
+def _clean(text: str) -> str:
+    """Everything the person typed passes through the secret filter on its way out: a key pasted into
+    an answer by accident must not reach the model."""
+    return redact.redact_text(text)[0]
+
+
 def _answer_tag(text: str) -> str:
-    return "<answer>" + text.replace("</answer>", "") + "</answer>"
+    return "<answer>" + _clean(text).replace("</answer>", "") + "</answer>"
 
 
 def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int) -> tuple[str, str]:
@@ -166,11 +170,11 @@ def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int)
     if draft.criteria:
         lines = ["## Criteria as they stand (the person may have edited these; keep their wording)"]
         for i, c in enumerate(draft.criteria, 1):
-            lines.append(f"{i}. {c.text}")
+            lines.append(f"{i}. {_clean(c.text)}")
             if c.check:
-                lines.append(f"   check: {c.check}")
+                lines.append(f"   check: {_clean(c.check)}")
         if draft.out_of_scope:
-            lines.append("Out of scope so far: " + "; ".join(draft.out_of_scope))
+            lines.append("Out of scope so far: " + _clean("; ".join(draft.out_of_scope)))
         parts.append("\n".join(lines) + "\n")
     parts.append(
         f"## This is round {round_no} of at most {max_rounds}.\n"

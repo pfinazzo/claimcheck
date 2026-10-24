@@ -21,6 +21,10 @@ class ClaudeProvider:
         self.client = anthropic.Anthropic()
 
     def complete(self, system: str, user: str, *, schema: dict) -> str:
+        from .. import redact
+
+        # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
+        system, user = redact.redact_text(system)[0], redact.redact_text(user)[0]
         response = self.client.messages.create(
             model=self.model,
             max_tokens=16000,

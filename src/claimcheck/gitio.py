@@ -169,3 +169,16 @@ def commit(repo: Path, message: str) -> str:
     """Commit what is staged (the pre-commit hook runs) and return the new commit sha."""
     git(repo, "commit", "-q", "-m", message)
     return head_sha(repo)
+
+
+def is_ignored(repo: Path, path: str) -> bool:
+    """True when git would ignore `path` (any .gitignore, the repo's exclude file, or a global one)."""
+    proc = subprocess.run(
+        ["git", *_FIXED, "check-ignore", "-q", "--no-index", "--", path], cwd=repo, capture_output=True
+    )
+    return proc.returncode == 0
+
+
+def tracked_files(repo: Path) -> list[str]:
+    out = git(repo, "ls-files", "-z", check=False)
+    return [n.replace("\\", "/") for n in out.split("\0") if n]

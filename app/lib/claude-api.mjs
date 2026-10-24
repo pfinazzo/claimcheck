@@ -9,6 +9,8 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { redactText } from './redact.mjs';
+
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 
 /** A key store bound to a safeStorage implementation and a folder. */
@@ -79,5 +81,6 @@ export const proposeWithStore = async ({ store, system, user, schema, model, cli
   const key = store.loadKey();
   if (!key) throw new Error('No API key saved.');
   const client = await clientFactory(key);
-  return propose({ system, user, schema, model, client });
+  // last line of defence: nothing secret-looking leaves, whatever built the text
+  return propose({ system: redactText(system).text, user: redactText(user).text, schema, model, client });
 };

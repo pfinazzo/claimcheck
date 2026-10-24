@@ -12,7 +12,7 @@ from pathlib import Path
 from . import ClaimsError, ProviderError
 from . import claims as CL
 from . import config as C
-from . import gitio
+from . import gitio, redact
 from . import providers
 from . import spec as S
 from .spec import Criterion
@@ -206,7 +206,9 @@ def run_check(
     if claims_file is None:
         claims_file = CL.load_file(CL.claims_path(repo), S.lock_ids(lock))
 
-    diff = gitio.diff_text(repo, base, worktree)
+    # Whatever leaves this process is filtered first: secret files withheld, secret-looking values
+    # redacted, size capped. What was held back is recorded in the result (never its content).
+    diff, sent = redact.filter_diff(gitio.diff_text(repo, base, worktree))
     system, user = build_prompt(criteria, diff, claims_file)
     claim_ids = [c.id for c in claims_file.claims]
 
@@ -227,6 +229,7 @@ def run_check(
         "provider": provider_name,
         "model": None if provider_name == "stub" else model,
         "verdicts": verdicts,
+        "sent": sent.as_dict(),
     }
     runs = C.cc_dir(repo) / C.RUNS_DIR
     runs.mkdir(parents=True, exist_ok=True)
