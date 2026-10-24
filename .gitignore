@@ -7,3 +7,21 @@ dist/
 .pytest_cache/
 node_modules/
 .claimcheck/runs/
+
+
+# secrets: never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+id_rsa*
+id_ed25519*
+
+# claimcheck scratch output
+.claimcheck/mutate-backup/
+.claimcheck/mutate.lock
+.claimcheck/worktrees/
+.claimcheck/app-state.json
+.claimcheck/spec-draft.json

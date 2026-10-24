@@ -1,0 +1,21 @@
+# claimcheck configuration — written by `claimcheck init`, edit freely.
+version = 1
+base = "main"
+# Run claimcheck from the activated virtualenv so `python` here is the one with pytest installed.
+# -x stops at the first failure, which is what a planted bug that gets caught does.
+test_cmd = "python -m pytest -q -x"
+# app/** is the Desk app: its own suite (npm test) is not run by pytest, so a planted bug there
+# could never be caught here. examples/** is sample data.
+# Paths that are not product code. Planted bugs go only into files NOT listed here,
+# and the commit hook does not ask for a claim covering them.
+ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml", "tests/**", "**/tests/**", "test/**", "**/test/**", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py", "app/**", "examples/**"]
+require_full_coverage = true
+
+[checker]
+provider = "auto"            # "auto" | "claude" | "claude-cli" | "stub"
+model = "claude-opus-5-5"
+
+[mutate]
+max_mutants = 15            # the suite takes about 100 s, so keep a run to a sensible length
+timeout_s = 600
+min_catch_rate = 0.0         # 0.0 = report only; raise it to make `mutate` a gate
