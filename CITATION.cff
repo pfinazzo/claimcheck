@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use claimcheck or build on its design, please cite it as below."
+title: "claimcheck: a verification ledger for AI-written code"
+abstract: >-
+  Frozen acceptance criteria, blind-checked claims with stated confidence and kill conditions,
+  and a planted-bug catch rate for every AI-written diff, recorded in an append-only ledger.
+type: software
+authors:
+  - family-names: Finazzo
+    given-names: Patrick
+repository-code: "https://github.com/pfinazzo/claimcheck"
+license: MIT
+date-released: "2026-10-24"
+version: "0.1.0"
+keywords:
+  - ai-agents
+  - code-review
+  - verification
+  - mutation-testing

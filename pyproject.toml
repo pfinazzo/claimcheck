@@ -12,6 +12,10 @@ description = "Frozen acceptance criteria, blind-checked claims, and a planted-b
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Patrick Finazzo" }]
+maintainers = [{ name = "Patrick Finazzo" }]
+
+[project.urls]
+Repository = "https://github.com/pfinazzo/claimcheck"
 requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0"]
 

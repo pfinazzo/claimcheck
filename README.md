@@ -1,6 +1,6 @@
 # claimcheck
 
-@author Patrick Finazzo
+Created by [Patrick Finazzo](https://github.com/pfinazzo). First released October 2026.
 
 **A verification ledger for AI-written code.** An AI agent says its change works. claimcheck checks that claim three independent ways, writes the result to an append-only ledger, and shows you which claims are backed and which are only confident.
 
@@ -27,6 +27,7 @@ claimcheck init
 - [Reference](#reference)
 - [Troubleshooting](#troubleshooting)
 - [Limits, stated plainly](#limits-stated-plainly)
+- [Credit and prior art](#credit-and-prior-art)
 - [Development](#development)
 
 ## How it works
@@ -549,6 +550,14 @@ docs/screenshots/ images used in this README
 
 The terminal screens in this README are real frames from the onboarding run rendered to images. The Desk images come from the app's own `npm run screenshot` command, using a small demo project.
 
+## Credit and prior art
+
+claimcheck was designed and built by Patrick Finazzo. The design is the combination: criteria frozen before the code is written and checked by a lock, claims that carry a stated confidence and a kill condition, a checker that never sees the confidence, planted bugs to measure whether the tests would notice, and an append-only ledger that lets you compare confidence against outcomes over time.
+
+The parts have a history, and it is worth saying so. Mutation testing is decades old and has tools such as Stryker, PIT and mutmut. Hashing a spec and flagging drift, and running an independent check against agent claims, both appear in other tools, for example FleetProof and FalseGreen. I found no tool that puts these pieces together around AI-written diffs with calibration tracked in a ledger, but I only searched in October 2026 and may have missed one.
+
+If you use claimcheck or build on its design, please cite it using [CITATION.cff](CITATION.cff), which GitHub shows as "Cite this repository".
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The license requires the copyright notice, "Copyright (c) 2026 Patrick Finazzo", to stay in every copy and substantial portion of the code.

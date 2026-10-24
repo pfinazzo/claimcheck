@@ -4,6 +4,7 @@
   "description": "The desktop board over a claimcheck ledger: see where the AI was sure and where it was not, and fix the weak spots with your own Claude.",
   "author": "Patrick Finazzo",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/pfinazzo/claimcheck.git" },
   "private": true,
   "type": "module",
   "main": "dist/main.mjs",

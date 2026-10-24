@@ -8,7 +8,7 @@ test_cmd = "python -m pytest -q -x"
 # could never be caught here. examples/** is sample data.
 # Paths that are not product code. Planted bugs go only into files NOT listed here,
 # and the commit hook does not ask for a claim covering them.
-ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml", "tests/**", "**/tests/**", "test/**", "**/test/**", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py", "app/**", "examples/**"]
+ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.cff", "pyproject.toml", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml", "tests/**", "**/tests/**", "test/**", "**/test/**", "test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py", "app/**", "examples/**"]
 require_full_coverage = true
 
 [checker]
