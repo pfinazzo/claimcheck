@@ -1,6 +1,7 @@
 /**
  * The only bridge between the page and Node: `window.desk`.
- * Every call returns the handler's value or throws its error message.
+ * Every call returns the handler's value or throws its error message
+ * (with `code` and `details` when the handler gave them).
  *
  * @author Patrick Finazzo
  */
@@ -9,7 +10,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const call = (name) => async (payload) => {
   const res = await ipcRenderer.invoke(`desk:${name}`, payload);
-  if (!res.ok) throw new Error(res.error);
+  if (!res.ok) {
+    const error = new Error(res.error);
+    if (res.code) error.code = res.code;
+    if (res.details) error.details = res.details;
+    throw error;
+  }
   return res.value;
 };
 
@@ -23,7 +29,9 @@ contextBridge.exposeInMainWorld('desk', {
   openRepo: call('openRepo'),
   recents: call('recents'),
   getBoard: call('getBoard'),
+  getView: call('getView'),
   onBoard: subscribe('desk:board'),
+  onView: subscribe('desk:view'),
   connect: call('connect'),
   testConnection: call('testConnection'),
   startPropose: call('startPropose'),
@@ -34,7 +42,19 @@ contextBridge.exposeInMainWorld('desk', {
   runClaimcheck: call('runClaimcheck'),
   openPullRequest: call('openPullRequest'),
   openPath: call('openPath'),
+  trustRepo: call('trustRepo'),
   getRun: call('getRun'),
   ghReady: call('ghReady'),
+  wizardLoad: call('wizardLoad'),
+  wizardSave: call('wizardSave'),
+  wizardStart: call('wizardStart'),
+  wizardStatus: call('wizardStatus'),
+  wizardInit: call('wizardInit'),
+  wizardSaveTestCmd: call('wizardSaveTestCmd'),
+  wizardDraft: call('wizardDraft'),
+  wizardFinish: call('wizardFinish'),
+  wizardCancel: call('wizardCancel'),
+  wizardSpec: call('wizardSpec'),
+  wizardExit: call('wizardExit'),
   rendered: () => ipcRenderer.send('desk:rendered'),
 });

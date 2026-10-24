@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import SpecError
+from . import ClaimcheckError, SpecError
 from . import config as C
 from . import gitio
 
@@ -47,6 +47,14 @@ def parse_criteria(text: str) -> list[Criterion]:
     return found
 
 
+def spec_digest(repo: Path) -> str:
+    """sha256 of spec.md with the BOM removed and CRLF folded to LF, so Windows checkouts agree."""
+    raw = spec_path(repo).read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
+    return C.sha256_bytes(raw.replace(b"\r\n", b"\n"))
+
+
 def spec_path(repo: Path) -> Path:
     return C.cc_dir(repo) / C.SPEC_FILE
 
@@ -59,7 +67,7 @@ def read_spec(repo: Path) -> tuple[str, list[Criterion]]:
     p = spec_path(repo)
     if not p.exists():
         raise SpecError(f"missing {C.CLAIMCHECK_DIR}/{C.SPEC_FILE}; run `claimcheck init`")
-    text = p.read_text(encoding="utf-8")
+    text = p.read_text(encoding="utf-8-sig")
     return text, parse_criteria(text)
 
 
@@ -67,7 +75,7 @@ def read_lock(repo: Path) -> dict:
     p = lock_path(repo)
     if not p.exists():
         raise SpecError(f"missing {C.CLAIMCHECK_DIR}/{C.LOCK_FILE}; run `claimcheck spec freeze`")
-    return parse_lock(p.read_text(encoding="utf-8"))
+    return parse_lock(p.read_text(encoding="utf-8-sig"))
 
 
 def parse_lock(text: str) -> dict:
@@ -90,19 +98,36 @@ def build_lock(repo: Path, spec_text: str, criteria: list[Criterion]) -> dict:
         "version": 1,
         "frozen_at": C.utc_now_iso(),
         "git_head": gitio.head_sha(repo),
-        "spec_sha256": C.sha256_bytes(spec_path(repo).read_bytes()),
+        "spec_sha256": spec_digest(repo),
         "criteria": [{"id": c.id, "sha256": c.sha256} for c in criteria],
     }
+
+
+def open_code_paths(repo: Path, cfg: C.Config, base: str) -> list[str]:
+    """Product-code paths changed against `base`, committed or not. Spec and docs edits do not count.
+
+    A diff is "open" once code exists. Before that, writing or rewriting the spec is the normal job.
+    """
+    try:
+        names = gitio.changed_files(repo, base, worktree=True)
+    except ClaimcheckError:
+        names = []  # no commits yet, or no base: nothing can be open
+    return [n for n in names if not C.is_ignored(n, cfg.ignore)]
 
 
 def freeze(repo: Path, cfg: C.Config) -> dict:
     """Write spec.lock. With an existing lock, refuse unless the tree is clean and at base."""
     spec_text, criteria = read_spec(repo)
     if lock_path(repo).exists():
-        if gitio.is_dirty(repo) or gitio.commits_ahead(repo, cfg.base) > 0:
-            raise SpecError("refusing to re-freeze with an open diff")
+        open_paths = open_code_paths(repo, cfg, cfg.base)
+        if open_paths:
+            shown = ", ".join(open_paths[:3]) + ("..." if len(open_paths) > 3 else "")
+            raise SpecError(
+                f"refusing to re-freeze with an open diff: code already changed ({shown}). "
+                "Start the next task on a fresh branch from the base."
+            )
     lock = build_lock(repo, spec_text, criteria)
-    lock_path(repo).write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    lock_path(repo).write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return lock
 
 
@@ -122,7 +147,7 @@ def verify(repo: Path) -> list[Criterion]:
     lock = read_lock(repo)
     problems = diff_against_lock(criteria, lock)
     lines = [f"{kind}: {ids}" for kind, ids in problems.items() if ids]
-    if C.sha256_bytes(spec_path(repo).read_bytes()) != lock["spec_sha256"] and not lines:
+    if spec_digest(repo) != lock["spec_sha256"] and not lines:
         lines.append("modified: spec file bytes differ from lock (non-criterion text changed)")
     if lines:
         raise SpecError("spec drifted from lock:\n  " + "\n  ".join(lines))

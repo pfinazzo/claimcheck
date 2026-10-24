@@ -36,10 +36,12 @@ test('resolveSpawn follows an npm .cmd shim to the real executable, or node for 
 const fakeSpawn = ({ lines, code = 0, stderr = '' }) => {
   const calls = [];
   const spawnFn = (command, args, opts) => {
-    calls.push({ command, args, opts });
+    const call = { command, args, opts, stdin: '' };
+    calls.push(call);
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
+    child.stdin = { write: (d) => { call.stdin += String(d); }, end: (d) => { if (d) call.stdin += String(d); } };
     setTimeout(() => {
       child.stdout.emit('data', Buffer.from(lines.slice(0, -1).join('\n') + '\n'));
       child.stdout.emit('data', Buffer.from(lines.at(-1)));
@@ -76,12 +78,14 @@ test('runClaude: events stream, result resolves, spawn args carry the base flags
   assert.equal(out.error, null);
   assert.deepEqual(out.structured, { proposals: [{ title: 't' }] });
   assert.equal(out.result, '{"proposals":[]}');
-  const { command, args, opts } = calls[0];
+  const { command, args, opts, stdin } = calls[0];
   assert.equal(command, '/usr/bin/claude');
-  assert.deepEqual(args.slice(0, 2), ['-p', 'hello']);
-  assert.deepEqual(args.slice(2, 2 + BASE_ARGS.length), BASE_ARGS);
+  assert.equal(args[0], '-p');
+  assert.ok(!args.includes('hello'), 'the prompt is not an argv element, so its length cannot break the launch');
+  assert.equal(stdin, 'hello', 'the prompt is sent on stdin');
+  assert.deepEqual(args.slice(1, 1 + BASE_ARGS.length), BASE_ARGS);
   assert.deepEqual(args.slice(-2), ['--max-turns', '1']);
-  assert.deepEqual(opts.stdio, ['ignore', 'pipe', 'pipe']);
+  assert.deepEqual(opts.stdio, ['pipe', 'pipe', 'pipe']);
 });
 
 test('runClaude: a sign-in failure is flagged', async () => {

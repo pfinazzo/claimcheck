@@ -1,4 +1,4 @@
-"""Thin subprocess wrappers around git. Never stash, reset, or checkout.
+"""Thin subprocess wrappers around git. Never stash, reset, or check out files (creating a new branch is allowed).
 
 @author Patrick Finazzo
 """
@@ -12,9 +12,14 @@ from pathlib import Path
 from . import ClaimcheckError
 
 
+# Fixed settings for every call, so a person's git config cannot change what we parse:
+# real UTF-8 paths (not "caf\303\251"), plain a/ b/ diff prefixes, no color codes.
+_FIXED = ["-c", "core.quotepath=off", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "color.ui=never"]
+
+
 def git(repo: Path, *args: str, check: bool = True) -> str:
     proc = subprocess.run(
-        ["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        ["git", *_FIXED, *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace"
     )
     if check and proc.returncode != 0:
         raise ClaimcheckError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
@@ -26,7 +31,13 @@ def head_sha(repo: Path) -> str:
 
 
 def rev_parse(repo: Path, ref: str) -> str:
-    return git(repo, "rev-parse", "--verify", f"{ref}^{{commit}}").strip()
+    out = git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False).strip()
+    if not out:
+        raise ClaimcheckError(
+            f"base ref {ref!r} was not found. Fetch it (git fetch origin {ref}), "
+            "check the name in .claimcheck/config.toml, or pass --base."
+        )
+    return out
 
 
 def staged_paths(repo: Path) -> list[tuple[str, str]]:
@@ -64,6 +75,7 @@ def path_dirty(repo: Path, path: str) -> bool:
 
 
 def commits_ahead(repo: Path, base: str) -> int:
+    rev_parse(repo, base)  # a missing base is a clear error, not a raw git one
     out = git(repo, "rev-list", "--count", f"{base}..HEAD").strip()
     return int(out or 0)
 
@@ -74,18 +86,36 @@ def commits_ahead(repo: Path, base: str) -> int:
 _EXCLUDE_CLAIMCHECK = (".", ":(exclude).claimcheck")
 
 
+_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv")
+
+
+def untracked_files(repo: Path) -> list[str]:
+    """New files git does not track yet, as repo-relative POSIX paths (never inside .claimcheck)."""
+    out = git(repo, "ls-files", "--others", "--exclude-standard", "-z", check=False)
+    names = [n.replace("\\", "/") for n in out.split("\0") if n]
+    return [n for n in names if not n.startswith(".claimcheck/")]
+
+
 def diff_text(repo: Path, base: str, worktree: bool) -> str:
-    if worktree:
-        return git(repo, "diff", base, "--", *_EXCLUDE_CLAIMCHECK)
-    return git(repo, "diff", f"{base}...HEAD", "--", *_EXCLUDE_CLAIMCHECK)
+    """The change under test. In worktree mode this includes files git has not tracked yet."""
+    if not worktree:
+        return git(repo, "diff", *_DIFF_FLAGS, f"{base}...HEAD", "--", *_EXCLUDE_CLAIMCHECK)
+    text = git(repo, "diff", *_DIFF_FLAGS, base, "--", *_EXCLUDE_CLAIMCHECK)
+    for name in untracked_files(repo):
+        # --no-index exits 1 when the files differ, which is the point here.
+        text += git(repo, "diff", *_DIFF_FLAGS, "--no-index", "--", "/dev/null", name, check=False)
+    return text
 
 
 def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:
     if worktree:
         out = git(repo, "diff", "--name-only", base, "--")
+        extra = untracked_files(repo)
     else:
         out = git(repo, "diff", "--name-only", f"{base}...HEAD", "--")
-    return [l.strip().replace("\\", "/") for l in out.splitlines() if l.strip()]
+        extra = []
+    names = [l.strip().replace("\\", "/") for l in out.splitlines() if l.strip()]
+    return names + [n for n in extra if n not in names]
 
 
 def path_changed_in_range(repo: Path, base: str, path: str) -> bool:
@@ -114,3 +144,28 @@ def show_file_at(repo: Path, ref: str, path: str) -> str | None:
 
 def staged_file_content(repo: Path, path: str) -> str | None:
     return show_file_at(repo, "", path)
+
+
+def current_branch(repo: Path) -> str:
+    """The checked-out branch name, "HEAD" when detached, "" when the repo has no commits yet."""
+    return git(repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip()
+
+
+def branch_exists(repo: Path, name: str) -> bool:
+    return bool(git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}", check=False).strip())
+
+
+def switch_new_branch(repo: Path, name: str) -> None:
+    """`git switch -c`: makes a branch at HEAD and moves to it. Uncommitted work comes along
+    untouched, which is why this is the one branch-moving command claimcheck allows itself."""
+    git(repo, "switch", "-c", name)
+
+
+def stage(repo: Path, *paths: str) -> None:
+    git(repo, "add", "--", *paths)
+
+
+def commit(repo: Path, message: str) -> str:
+    """Commit what is staged (the pre-commit hook runs) and return the new commit sha."""
+    git(repo, "commit", "-q", "-m", message)
+    return head_sha(repo)

@@ -18,6 +18,18 @@ export const CLOSING_SENTENCE =
 
 export const PROPOSE_TOOLS = ['Read', 'Grep', 'Glob'];
 
+/** Credential files, in the relative, home and any-depth forms Claude Code's deny rules understand. */
+export const SECRET_PATHS = [
+  './.env', './.env.*', '**/.env', '**/.env.*', '**/*.pem', '**/*.key', '**/*.p12', '**/*.pfx', '**/id_rsa*', '**/id_ed25519*', '**/id_ecdsa*',
+  '**/.npmrc', '**/.pypirc', '**/.netrc', '**/credentials*', '~/.ssh/**', '~/.aws/**', '~/.config/gh/**', '~/.gnupg/**', '../**',
+];
+
+/** Files whose edit would change what the app or the repo's tooling runs, or the frozen contract. */
+export const PROTECTED_WRITES = [
+  './.claimcheck/config.toml', './.claimcheck/spec.md', './.claimcheck/spec.lock', './.claimcheck/ledger.jsonl', './.claimcheck/app-state.json',
+  './.git/**', './.github/**', './.claude/**', './.husky/**',
+];
+
 export const IMPLEMENT_TOOLS = [
   'Read', 'Grep', 'Glob', 'Edit', 'Write', 'TodoWrite',
   'Bash(npm run *)', 'Bash(npm test *)', 'Bash(npm test)',
@@ -28,17 +40,28 @@ export const IMPLEMENT_TOOLS = [
   'Bash(pytest *)', 'Bash(pytest)', 'Bash(python -m pytest *)', 'Bash(python3 -m pytest *)', 'Bash(py -3 -m pytest *)',
   'Bash(go test *)', 'Bash(go vet *)', 'Bash(go build *)', 'Bash(cargo test *)', 'Bash(cargo build *)', 'Bash(cargo check *)',
   'Bash(make test *)', 'Bash(make test)', 'Bash(make check)',
-  'Bash(claimcheck *)',
-  'Bash(git status *)', 'Bash(git status)', 'Bash(git diff *)', 'Bash(git diff)', 'Bash(git log *)',
-  'Bash(git show *)', 'Bash(git add *)', 'Bash(git commit *)',
-  'Bash(ls *)', 'Bash(cat *)', 'Bash(grep *)', 'Bash(sed -n *)',
+  'Bash(claimcheck run)', 'Bash(claimcheck run *)',
+  'Bash(git status)', 'Bash(git status --short)', 'Bash(git diff)', 'Bash(git diff --stat)', 'Bash(git diff HEAD)', 'Bash(git diff HEAD --stat)',
+  'Bash(git log --oneline)', 'Bash(git log --oneline -n *)', 'Bash(git show --stat HEAD)',
+  'Bash(git add *)', 'Bash(git commit *)',
+  'Bash(ls)', 'Bash(ls *)',
 ];
 
+/**
+ * Nothing in this list can be undone by a later allow. Claude never reads credential files, never
+ * writes anywhere git or CI reads from, never edits the frozen spec or the app's own config, and
+ * never uses the forms of git and sed that can write a file or reach the network. `cat`, `grep` and
+ * `sed` are not allowed at all: the Read, Grep and Glob tools do the same job and obey these denies.
+ */
 export const BLOCKED_TOOLS = [
-  'Bash(git push *)', 'Bash(git push)', 'Bash(git remote *)', 'Bash(gh *)', 'Bash(curl *)', 'Bash(wget *)',
+  'Bash(git push *)', 'Bash(git push)', 'Bash(git remote *)', 'Bash(git fetch *)', 'Bash(git pull *)', 'Bash(git clone *)',
+  'Bash(git config *)', 'Bash(git -c *)', 'Bash(git * --output*)', 'Bash(git submodule *)', 'Bash(gh *)', 'Bash(curl *)', 'Bash(wget *)',
   'Bash(npm publish *)', 'Bash(npm install *)', 'Bash(npm i *)', 'Bash(pnpm add *)', 'Bash(yarn add *)',
   'Bash(pip install *)', 'Bash(pip3 install *)', 'Bash(uv add *)', 'Bash(cargo add *)',
+  'Bash(cat *)', 'Bash(sed *)', 'Bash(grep *)', 'Bash(rg *)', 'Bash(find *)',
   'WebFetch', 'WebSearch',
+  ...SECRET_PATHS.flatMap((g) => [`Read(${g})`, `Edit(${g})`, `Write(${g})`]),
+  ...PROTECTED_WRITES.flatMap((g) => [`Edit(${g})`, `Write(${g})`]),
 ];
 
 export const PROPOSALS_SCHEMA = {

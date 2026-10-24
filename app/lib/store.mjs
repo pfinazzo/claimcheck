@@ -3,6 +3,9 @@
  * the newest verdict and mutation result beside its stated confidence, plus
  * the risk score and flags that decide what lands in the decision queue.
  *
+ * Everything in `.claimcheck/` can be written by someone else (a cloned repo),
+ * so every field is coerced to the type the rest of the app expects.
+ *
  * @author Patrick Finazzo
  */
 
@@ -18,16 +21,26 @@ const execFileP = promisify(execFile);
 
 export const CC = '.claimcheck';
 export const STATUSES = ['open', 'fixing', 'resolved', 'accepted'];
+export const HISTORY_LIMIT = 50;
+const MUTANT_LIMIT = 1000;
 const CRITERION_RE = /^- \[[ xX]\] (\d+)\. (.+)$/;
 const VERDICT_WEIGHT = { REFUTED: 1.0, UNVERIFIABLE: 0.5, SUPPORTED: 0.0 };
 
 export const APP_DEFAULTS = { flagConfidence: 0.75, flagCatchRate: 0.8, python: null };
 
+/** A git ref that cannot be read as an option: no leading dash, no odd characters. */
+export const SAFE_REF = /^(?!-)[\w./-]+$/;
+
 const sha256 = (data) => createHash('sha256').update(data).digest('hex');
+
+const str = (v, fallback = '') => (typeof v === 'string' ? v : v === null || v === undefined ? fallback : String(v));
+const strList = (v) => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]).map((x) => str(x));
+const finite = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 const readText = async (file) => {
   try {
-    return await fs.readFile(file, 'utf8');
+    return (await fs.readFile(file, 'utf8')).replace(/^﻿/, '');
   } catch {
     return null;
   }
@@ -70,20 +83,20 @@ export const lockMatches = ({ specText, specBytes, lock }) => {
   return sha256(specBytes) === lock.spec_sha256;
 };
 
-/** AC 5: the number the queue sorts by. */
+/** AC 5: the number the queue sorts by. A missing confidence counts as 0, a verdict nobody knows as 0.75. */
 export const riskOf = ({ confidence, verdict, catchRate }) => {
-  const verdictWeight = verdict in VERDICT_WEIGHT ? VERDICT_WEIGHT[verdict] : 0.75;
+  const verdictWeight = typeof verdict === 'string' && Object.hasOwn(VERDICT_WEIGHT, verdict) ? VERDICT_WEIGHT[verdict] : 0.75;
   const conf = Number.isFinite(confidence) ? confidence : 0;
   const rate = Number.isFinite(catchRate) ? catchRate : 0;
   return Number(((1 - conf) * 0.4 + verdictWeight * 0.4 + (1 - rate) * 0.2).toFixed(4));
 };
 
-/** AC 6: why a claim needs a decision. */
+/** AC 6: why a claim needs a decision. A confidence that is missing or not a number counts as unsure. */
 export const flagsOf = ({ confidence, verdict, mutation }, appConfig = APP_DEFAULTS) => {
   const flags = [];
-  if (confidence < appConfig.flagConfidence) flags.push('low-confidence');
+  if (!Number.isFinite(confidence) || confidence < appConfig.flagConfidence) flags.push('low-confidence');
   if (verdict === 'REFUTED') flags.push('refuted');
-  if (verdict === 'UNVERIFIABLE' || !verdict) flags.push('unverified');
+  if (verdict !== 'SUPPORTED' && verdict !== 'REFUTED') flags.push('unverified');
   const total = mutation?.total ?? 0;
   const rate = mutation?.catchRate;
   if (total > 0 && (rate === null || rate === undefined || rate < appConfig.flagCatchRate)) flags.push('weak-tests');
@@ -93,7 +106,23 @@ export const flagsOf = ({ confidence, verdict, mutation }, appConfig = APP_DEFAU
 
 export const inQueue = (claim) => claim.flags.length > 0 && (claim.status === 'open' || claim.status === 'fixing');
 
-const runSortKey = (run) => `${run.ts ?? ''}|${run.run_id ?? ''}`;
+const runSortKey = (run) => `${str(run.ts)}|${str(run.run_id)}`;
+
+const cleanVerdict = (v) => ({
+  id: str(v.id),
+  verdict: str(v.verdict),
+  reason: str(v.reason),
+  evidence: strList(v.evidence),
+});
+
+const cleanMutant = (m) => ({
+  file: str(m.file),
+  line_no: finite(m.line_no),
+  cls: str(m.cls),
+  original: str(m.original),
+  mutated: str(m.mutated),
+  outcome: str(m.outcome),
+});
 
 const readRuns = async (runsDir) => {
   let names = [];
@@ -106,9 +135,22 @@ const readRuns = async (runsDir) => {
   const mutate = [];
   for (const name of names) {
     const data = await readJson(path.join(runsDir, name));
-    if (!data) continue;
-    if (name.endsWith('-check.json')) check.push({ file: name, ...data });
-    else if (name.endsWith('-mutate.json')) mutate.push({ file: name, ...data });
+    if (!isObject(data)) continue;
+    const base = { file: name, run_id: str(data.run_id), ts: str(data.ts) };
+    if (name.endsWith('-check.json')) {
+      check.push({
+        ...base,
+        provider: str(data.provider),
+        model: data.model === null || data.model === undefined ? null : str(data.model),
+        verdicts: (Array.isArray(data.verdicts) ? data.verdicts : []).filter(isObject).map(cleanVerdict),
+      });
+    } else if (name.endsWith('-mutate.json')) {
+      mutate.push({
+        ...base,
+        mutants: (Array.isArray(data.mutants) ? data.mutants : []).filter(isObject).slice(0, MUTANT_LIMIT).map(cleanMutant),
+        per_claim: isObject(data.per_claim) ? data.per_claim : {},
+      });
+    }
   }
   const newestFirst = (a, b) => (runSortKey(a) < runSortKey(b) ? 1 : -1);
   check.sort(newestFirst);
@@ -123,7 +165,8 @@ const readLedger = async (file) => {
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
     try {
-      out.push(JSON.parse(line));
+      const rec = JSON.parse(line);
+      if (isObject(rec)) out.push(rec);
     } catch {
       /* a torn or foreign line is skipped, never fatal */
     }
@@ -139,18 +182,29 @@ const summarise = (mutants) => {
   return { total, killed, survived, timeout, catchRate: total ? Number(((killed + timeout) / total).toFixed(4)) : null };
 };
 
+/** What a newest ledger outcome line says about a claim when app-state.json is missing (a fresh clone). */
+const statusFromOutcome = (outcome) => {
+  if (!outcome) return null;
+  if (outcome.outcome === 'broken' && outcome.outcome_source === 'fix_commit') return 'resolved';
+  if (outcome.outcome === 'held' && outcome.outcome_source === 'human') return 'accepted';
+  return null;
+};
+
+const newestTs = (records) => records.map((r) => str(r.ts)).filter(Boolean).sort().at(-1) ?? '';
+
 /** The whole board for one repo (AC 4). */
 export const readBoard = async (repoPath) => {
   const repo = path.resolve(repoPath);
   const cc = path.join(repo, CC);
   const configText = await readText(path.join(cc, 'config.toml'));
   const configRaw = configText ? parseToml(configText) : {};
+  const baseRaw = str(configRaw.base, 'main');
   const config = {
-    base: configRaw.base ?? 'main',
-    test_cmd: configRaw.test_cmd ?? 'python -m pytest -q',
-    ignore: configRaw.ignore ?? [],
-    checker: { provider: configRaw.checker?.provider ?? 'claude', model: configRaw.checker?.model ?? 'claude-opus-5-5' },
-    app: { ...APP_DEFAULTS, ...(configRaw.app ?? {}) },
+    base: SAFE_REF.test(baseRaw) ? baseRaw : 'main',
+    test_cmd: typeof configRaw.test_cmd === 'string' && configRaw.test_cmd.trim() ? configRaw.test_cmd : 'python -m pytest -q',
+    ignore: strList(configRaw.ignore),
+    checker: { provider: str(configRaw.checker?.provider, 'claude'), model: str(configRaw.checker?.model, 'claude-opus-5-5') },
+    app: { ...APP_DEFAULTS, ...(isObject(configRaw.app) ? configRaw.app : {}) },
   };
 
   const specText = await readText(path.join(cc, 'spec.md'));
@@ -169,39 +223,55 @@ export const readBoard = async (repoPath) => {
 
   const runs = await readRuns(path.join(cc, 'runs'));
   const ledger = await readLedger(path.join(cc, 'ledger.jsonl'));
-  const appState = (await readJson(path.join(cc, 'app-state.json'))) ?? { claims: {} };
+  const appStateRaw = await readJson(path.join(cc, 'app-state.json'));
+  const appState = isObject(appStateRaw) && isObject(appStateRaw.claims) ? appStateRaw : { claims: {} };
 
-  const claims = (Array.isArray(claimsRaw.claims) ? claimsRaw.claims : []).map((raw) => {
-    const id = String(raw.id ?? '');
-    const files = (raw.files ?? []).map((f) => String(f).replace(/\\/g, '/'));
-    const checkRun = runs.check.find((r) => (r.verdicts ?? []).some((v) => v.id === id));
+  const claims = (Array.isArray(claimsRaw?.claims) ? claimsRaw.claims : []).filter(isObject).map((raw) => {
+    const id = str(raw.id);
+    const files = strList(raw.files).map((f) => f.replace(/\\/g, '/'));
+    const checkRun = runs.check.find((r) => r.verdicts.some((v) => v.id === id));
     const verdictRaw = checkRun?.verdicts.find((v) => v.id === id) ?? null;
-    const verdict = verdictRaw
-      ? { ...verdictRaw, provider: checkRun.provider, model: checkRun.model, ts: checkRun.ts, runId: checkRun.run_id }
-      : null;
-    const mutateRun = runs.mutate.find((r) => r.per_claim && id in r.per_claim);
-    const mutants = mutateRun ? (mutateRun.mutants ?? []).filter((m) => files.includes(m.file)) : [];
+    const verdict = verdictRaw ? { ...verdictRaw, provider: checkRun.provider, model: checkRun.model, ts: checkRun.ts, runId: checkRun.run_id } : null;
+    const mutateRun = runs.mutate.find((r) => Object.hasOwn(r.per_claim, id));
+    const mutants = mutateRun ? mutateRun.mutants.filter((m) => files.includes(m.file)) : [];
     const mutation = mutateRun ? { ...summarise(mutants), mutants, ts: mutateRun.ts, runId: mutateRun.run_id } : null;
-    const state = appState.claims?.[id] ?? {};
-    const confidence = Number(raw.confidence);
+    const state = isObject(appState.claims[id]) ? appState.claims[id] : {};
+    const confidence = finite(raw.confidence);
     const catchRate = mutation?.catchRate ?? null;
-    const base = {
+    const history = ledger.filter((l) => l.claim_id === id);
+    const claimLines = history.filter((l) => l.type === 'claim');
+    const outcomes = history.filter((l) => l.type === 'outcome');
+    const newestOutcome = [...outcomes].sort((a, b) => (str(a.ts) < str(b.ts) ? -1 : 1)).at(-1) ?? null;
+
+    let status = STATUSES.includes(state.status) ? state.status : (statusFromOutcome(newestOutcome) ?? 'open');
+    const flags = flagsOf({ confidence, verdict: verdict?.verdict, mutation }, config.app);
+    // A fix that no longer holds: a later run flagged the claim again after it was resolved.
+    let reopened = false;
+    if (status === 'resolved' && flags.length > 0) {
+      const resolvedAt = [str(state.status === 'resolved' ? state.updatedAt : ''), str(statusFromOutcome(newestOutcome) === 'resolved' ? newestOutcome.ts : '')].sort().at(-1);
+      if (resolvedAt && newestTs(claimLines) > resolvedAt) {
+        status = 'open';
+        reopened = true;
+      }
+    }
+    return {
       id,
-      claim: String(raw.claim ?? ''),
+      claim: str(raw.claim),
       confidence,
-      criteria: (raw.criteria ?? []).map((cid) => ({ id: Number(cid), text: criteriaText.get(Number(cid)) ?? '' })),
+      criteria: (Array.isArray(raw.criteria) ? raw.criteria : []).map((cid) => ({ id: Number(cid), text: criteriaText.get(Number(cid)) ?? '' })),
       files,
-      killCondition: String(raw.kill_condition ?? ''),
-      verifiedBy: raw.verified_by ?? [],
+      killCondition: str(raw.kill_condition),
+      verifiedBy: strList(raw.verified_by),
       verdict,
       mutation,
-      status: STATUSES.includes(state.status) ? state.status : 'open',
-      note: state.note ?? '',
-      fix: state.fix ?? null,
-      history: ledger.filter((l) => l.claim_id === id),
-      risk: riskOf({ confidence, verdict: verdict?.verdict, catchRate }),
+      status,
+      reopened,
+      note: str(state.note),
+      fix: isObject(state.fix) ? state.fix : null,
+      history: history.slice(-HISTORY_LIMIT),
+      risk: riskOf({ confidence: confidence ?? undefined, verdict: verdict?.verdict, catchRate }),
+      flags,
     };
-    return { ...base, flags: flagsOf({ confidence, verdict: verdict?.verdict, mutation }, config.app) };
   });
 
   const timestamps = [...runs.check, ...runs.mutate].map((r) => r.ts).filter(Boolean).sort();
@@ -214,6 +284,7 @@ export const readBoard = async (repoPath) => {
       head: await git(repo, ['rev-parse', 'HEAD']),
       hasClaimcheck: configText !== null || claimsText !== null,
       lockOk: lockMatches({ specText, specBytes, lock }),
+      specState: specText === null ? 'none' : lock ? (lockMatches({ specText, specBytes, lock }) ? 'frozen' : 'drifted') : 'draft',
       lastRunTs: timestamps.at(-1) ?? null,
     },
     config,
@@ -221,6 +292,6 @@ export const readBoard = async (repoPath) => {
     claims,
     queue: claims.filter(inQueue).sort((a, b) => b.risk - a.risk).map((c) => c.id),
     runs: { check: runs.check[0] ?? null, mutate: runs.mutate[0] ?? null },
-    ledger,
+    ledgerCount: ledger.length,
   };
 };

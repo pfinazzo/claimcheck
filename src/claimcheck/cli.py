@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from . import ClaimcheckError, __version__
-from . import checker, hook, ledger, mutate, run
+from . import checker, gitio, hook, initflow, ledger, mutate, onboard, providers, run, specdraft, tui
 from . import claims as CL
 from . import config as C
 from . import spec as S
@@ -36,22 +36,138 @@ def _write_if_missing(path: Path, content: str) -> bool:
     return True
 
 
+def _interactive() -> bool:
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     repo = C.find_repo_root()
-    d = C.cc_dir(repo)
-    d.mkdir(parents=True, exist_ok=True)
-    created = []
-    for name, content in (
-        (C.CONFIG_FILE, C.DEFAULT_CONFIG_TOML),
-        (C.SPEC_FILE, C.DEFAULT_SPEC_MD),
-        (C.CLAIMS_FILE, C.DEFAULT_CLAIMS_YAML),
-        (C.LEDGER_FILE, ""),
-    ):
-        if _write_if_missing(d / name, content):
-            created.append(name)
-    (d / C.RUNS_DIR).mkdir(exist_ok=True)
-    hook_changed = hook.install(repo)
-    _err(f"init: created {created or 'nothing new'}; hook {'installed' if hook_changed else 'already present'}")
+    if args.json:
+        _out(initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci))
+        return 0
+    if _interactive() and not args.yes:
+        term = tui.Term(animate=False if args.no_animation else None)
+        tui.enable_windows_vt()
+        return onboard.run_onboarding(term, repo, tour=not args.no_tour, goal=args.goal)
+    # Plain mode: same work, no prompts, no animation. This is what scripts and CI get.
+    r = initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci)
+    hook_word = "installed" if r["hook"]["status"] == "installed" else "already present"
+    _err(f"init: created {r['created'] or 'nothing new'}; hook {hook_word}")
+    if r["gitignore_added"]:
+        _err(f"init: added {len(r['gitignore_added'])} lines to .gitignore")
+    for doc in r["agent_docs"]:
+        _err(f"init: {doc['path']}: {doc['action']}")
+    if r["ci"]:
+        _err(f"init: {r['ci']['path']}: {r['ci']['action']}")
+    _err(f"init: test command is {r['stack']['test_cmd']!r}" + (f" (detected {r['stack']['name']})" if r["stack"]["name"] else " (nothing detected; edit .claimcheck/config.toml)"))
+    _err("init: next, write the spec with `claimcheck spec draft`")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    repo = C.find_repo_root()
+    cfg = C.load(repo)
+    initialized = (C.cc_dir(repo) / C.CONFIG_FILE).exists()
+    spec_state, criteria = "none", 0
+    try:
+        text, crit = S.read_spec(repo)
+        criteria = len(crit)
+        placeholder = "Replace this placeholder" in text
+        try:
+            S.verify(repo)
+            spec_state = "frozen"
+        except ClaimcheckError:
+            spec_state = "none" if placeholder else "draft"
+    except ClaimcheckError:
+        pass
+    try:
+        hook_on = "claimcheck" in hook.hook_file(repo).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        hook_on = False
+    info = {
+        "initialized": initialized,
+        "spec": spec_state,
+        "criteria": criteria,
+        "hook": hook_on,
+        "base": cfg.base,
+        "branch": gitio.current_branch(repo) or None,
+        "provider": cfg.checker_provider,
+    }
+    if args.json:
+        _out(info)
+    else:
+        _err(f"initialized: {info['initialized']}; spec: {spec_state} ({criteria} criteria); hook: {hook_on}; branch: {info['branch']}")
+    return 0
+
+
+def _read_json_stdin() -> dict:
+    try:
+        data = json.loads(sys.stdin.read())
+    except json.JSONDecodeError as e:
+        raise ClaimcheckError(f"stdin is not valid JSON: {e}")
+    if not isinstance(data, dict):
+        raise ClaimcheckError("stdin must be a JSON object")
+    return data
+
+
+def cmd_spec_draft(args: argparse.Namespace) -> int:
+    repo = C.find_repo_root()
+    cfg = C.load(repo)
+    provider_name = args.provider or "auto"
+
+    if args.step:  # one round, stateless: the caller keeps the conversation
+        draft = specdraft.Draft.from_dict(_read_json_stdin())
+        if not draft.goal.strip():
+            raise ClaimcheckError("a goal is needed")
+        provider = providers.load(provider_name, model=None)
+        reply = specdraft.next_round(provider, draft, specdraft.repo_files(repo), len(draft.rounds) + 1, args.max_rounds)
+        _out(
+            {
+                "questions": [vars(q) for q in reply.questions],
+                "criteria": [vars(c) for c in reply.criteria],
+                "out_of_scope": reply.out_of_scope,
+                "concerns": reply.concerns,
+                "ready": reply.ready,
+                "lint": {str(i): w for i, w in specdraft.lint(reply.criteria).items()},
+            }
+        )
+        return 0
+
+    if args.finish:
+        draft = specdraft.Draft.from_dict(_read_json_stdin())
+        if not draft.criteria:
+            raise ClaimcheckError("the draft has no criteria")
+        _out(
+            specdraft.finish(
+                repo, cfg, draft, freeze=not args.no_freeze, branch=args.branch, new_branch=not args.no_branch
+            )
+        )
+        return 0
+
+    # interactive conversation in the terminal
+    term = tui.Term()
+    tui.enable_windows_vt()
+    draft = specdraft.load_draft(repo) if args.resume else None
+    goal = args.goal or (draft.goal if draft else "")
+    if not goal:
+        if not _interactive():
+            raise ClaimcheckError("pass --goal, or run this in a terminal to be asked")
+        goal = term.ask(f"{term.c('?', 'cyan', 'bold')} What do you want built? A sentence or two> ").strip()
+    provider = onboard._SpinningProvider(providers.load(provider_name), term, "Claude is thinking")
+    draft, status = specdraft.run_interview(
+        provider, repo, goal, say=term.p, ask=term.ask, max_rounds=args.max_rounds, draft=draft
+    )
+    if status == "quit":
+        term.p(term.c("Left without writing. `claimcheck spec draft --resume` picks up here.", "grey"))
+        return 0
+    freeze = not args.no_freeze and (args.yes or (_interactive() and term.yes_no("Freeze these and commit them on a new branch?", default=True)))
+    out = specdraft.finish(repo, cfg, draft, freeze=freeze, branch=args.branch, new_branch=not args.no_branch)
+    if out["frozen"]:
+        term.decode("criteria locked", out["lock_sha256"])
+        if out["commit"]:
+            term.p(f"Committed {out['commit'][:8]} on {out['branch']}.")
+    else:
+        term.p(term.c("Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", "grey"))
     return 0
 
 
@@ -132,14 +248,37 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.required = True
 
-    p = sub.add_parser("init", help="create .claimcheck/ and install the pre-commit hook")
+    p = sub.add_parser("init", help="guided setup: config, commit hook, .gitignore, agent instructions, first spec")
+    p.add_argument("--yes", "-y", action="store_true", help="no prompts and no animation; do the setup and print a summary")
+    p.add_argument("--json", action="store_true", help="no prompts; print what was done as one JSON document")
+    p.add_argument("--no-tour", action="store_true", help="skip the short explanation and go straight to setup")
+    p.add_argument("--no-animation", action="store_true", help="keep the guided flow but turn the animations off")
+    p.add_argument("--goal", default=None, help="what you want built; starts the spec conversation with it")
+    p.add_argument("--ci", choices=["github"], default=None, help="also write a CI workflow")
+    p.add_argument("--agent-doc", choices=["claude", "agents"], default=None, help="create CLAUDE.md or AGENTS.md when neither exists")
     p.set_defaults(func=cmd_init)
 
-    p = sub.add_parser("spec", help="freeze or verify the acceptance criteria")
+    p = sub.add_parser("status", help="where this repo is: set up, spec state, hook, branch")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("spec", help="write, freeze or verify the acceptance criteria")
     ss = p.add_subparsers(dest="spec_command")
     ss.required = True
     ss.add_parser("freeze", help="hash the criteria into spec.lock").set_defaults(func=cmd_spec_freeze)
     ss.add_parser("verify", help="refuse if the spec drifted from the lock").set_defaults(func=cmd_spec_verify)
+    d = ss.add_parser("draft", help="write the spec as a conversation with Claude")
+    d.add_argument("--goal", default=None, help="what you want built")
+    d.add_argument("--resume", action="store_true", help="continue the saved conversation")
+    d.add_argument("--provider", default=None, help="auto | claude | claude-cli | stub (default auto)")
+    d.add_argument("--max-rounds", dest="max_rounds", type=int, default=6)
+    d.add_argument("--yes", "-y", action="store_true", help="freeze and commit without asking")
+    d.add_argument("--no-freeze", dest="no_freeze", action="store_true", help="write spec.md only")
+    d.add_argument("--no-branch", dest="no_branch", action="store_true", help="commit on the current branch")
+    d.add_argument("--branch", default=None, help="name for the task branch")
+    d.add_argument("--step", action="store_true", help="machine mode: one round, JSON on stdin and stdout")
+    d.add_argument("--finish", action="store_true", help="machine mode: write, freeze and commit a JSON draft from stdin")
+    d.set_defaults(func=cmd_spec_draft)
 
     p = sub.add_parser("claims", help="validate claims.yaml")
     cs = p.add_subparsers(dest="claims_command")
@@ -186,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.func(args))
     except ClaimcheckError as e:
         _err(str(e))
+        if getattr(args, "json", False) or getattr(args, "step", False) or getattr(args, "finish", False):
+            _out({"error": str(e), "code": e.code})  # machine callers read stdout
         return e.code
     except KeyboardInterrupt:
         return 130

@@ -1,16 +1,28 @@
 /**
- * Runs `claimcheck run` for the open repo and streams its output.
+ * Finds the claimcheck command line and runs `claimcheck run` for the open
+ * repo, streaming its output.
  *
  * @author Patrick Finazzo
  */
 
 import { spawn as nodeSpawn, execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
+import { createLineSplitter } from './proc.mjs';
 
 const execFileP = promisify(execFile);
 
-/** `claimcheck` on PATH, else `<python> -m claimcheck`, else null. */
-export const resolveClaimcheck = async ({ python, execFn = execFileP } = {}) => {
+/**
+ * How to start claimcheck: `{ command, prefix }`, or null when it cannot be found.
+ * Order: CLAIMCHECK_BIN (an executable, or a .js/.mjs/.cjs script run with node),
+ * `claimcheck` on PATH, a saved path from the Connect screen, `<python> -m claimcheck`.
+ */
+export const resolveClaimcheck = async ({ python, bin = null, env = process.env, execFn = execFileP } = {}) => {
+  const override = env.CLAIMCHECK_BIN || bin;
+  if (override) {
+    if (/\.(c|m)?js$/i.test(override)) return { command: process.execPath, prefix: [override], env: process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} };
+    if (existsSync(override)) return { command: override, prefix: [] };
+  }
   const finder = process.platform === 'win32' ? 'where' : 'which';
   try {
     const { stdout } = await execFn(finder, ['claimcheck'], { windowsHide: true });
@@ -26,18 +38,24 @@ export const resolveClaimcheck = async ({ python, execFn = execFileP } = {}) => 
 export const runClaimcheck = ({ repoPath, provider, resolved, extraArgs = [], onLine = () => {}, spawnFn = nodeSpawn }) =>
   new Promise((resolve) => {
     if (!resolved) {
-      onLine('claimcheck is not on PATH and no python is configured ([app].python in config.toml).');
+      onLine('claimcheck was not found. Set its path in Connect Claude, or set [app].python in config.toml.');
       resolve({ exitCode: null });
       return;
     }
     const args = [...resolved.prefix, 'run', ...(provider ? ['--provider', provider] : []), ...extraArgs];
     const child = spawnFn(resolved.command, args, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-    const feed = (chunk) => chunk.toString().split(/\r?\n/).filter(Boolean).forEach((l) => onLine(l));
-    child.stdout?.on('data', feed);
-    child.stderr?.on('data', feed);
+    // One splitter per stream: a line (or a multi-byte character) may arrive in two chunks.
+    const out = createLineSplitter((l) => l && onLine(l));
+    const err = createLineSplitter((l) => l && onLine(l));
+    child.stdout?.on('data', (c) => out.push(c));
+    child.stderr?.on('data', (c) => err.push(c));
     child.on('error', (e) => {
       onLine(`could not start: ${e.message}`);
       resolve({ exitCode: null });
     });
-    child.on('close', (code) => resolve({ exitCode: code }));
+    child.on('close', (code) => {
+      out.flush();
+      err.flush();
+      resolve({ exitCode: code });
+    });
   });

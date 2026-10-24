@@ -5,7 +5,7 @@
  * @author Patrick Finazzo
  */
 
-import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 export const OUTCOME_KEYS = ['v', 'type', 'ts', 'run_id', 'claim_id', 'outcome', 'outcome_source'];
@@ -28,6 +28,21 @@ export const validateOutcome = (rec) => {
   return rec;
 };
 
+/** True when the file is non-empty and its last byte is not a newline (a torn last line). */
+const lacksTrailingNewline = (file) => {
+  if (!existsSync(file)) return false;
+  const size = statSync(file).size;
+  if (size === 0) return false;
+  const fd = openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(1);
+    readSync(fd, buf, 0, 1, size - 1);
+    return buf[0] !== 0x0a;
+  } finally {
+    closeSync(fd);
+  }
+};
+
 const sortedJson = (obj) => JSON.stringify(Object.fromEntries(Object.keys(obj).sort().map((k) => [k, obj[k]])));
 
 /** Writes the line to a temp file, then appends those bytes in one write. */
@@ -38,7 +53,9 @@ export const appendOutcome = (repoPath, rec) => {
   const ledger = path.join(dir, 'ledger.jsonl');
   const tmp = path.join(dir, `.ledger-${process.pid}-${Date.now()}.tmp`);
   const line = `${sortedJson(rec)}\n`;
-  writeFileSync(tmp, line, 'utf8');
+  // A ledger whose last line lost its newline would fuse with ours and make both unreadable.
+  const prefix = lacksTrailingNewline(ledger) ? '\n' : '';
+  writeFileSync(tmp, prefix + line, 'utf8');
   try {
     const data = readFileSync(tmp);
     const fd = openSync(ledger, 'a');

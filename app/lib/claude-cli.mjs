@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { createLineSplitter, createTextCollector, killTree } from './proc.mjs';
 
 const execFileP = promisify(execFile);
 
@@ -47,16 +48,23 @@ export const findClaude = async ({ env = process.env } = {}) => {
 
 /**
  * On Windows `claude` is a `.cmd` shim; spawning it needs a shell, which would
- * mangle a prompt. Read the shim, find what it runs (`"%dp0%\...\claude.exe"`
- * or a `.js`), and spawn that directly (through node for a script).
+ * mangle a prompt. Read the shim, find what it runs (a quoted path that starts with
+ * the shim folder variable, ending in claude.exe or a .js file), and spawn that
+ * directly (through node for a script).
+ *
+ * A classic npm shim mentions the folder's own node.exe first (to pick the node next
+ * to it) and the script last, so the LAST quoted path is the program, and a bare
+ * node is never the answer when something follows it.
  */
 export const resolveSpawn = (bin, { readShim = (p) => readFileSync(p, 'utf8') } = {}) => {
   if (/\.cmd$/i.test(bin)) {
     let target = null;
     try {
       const shim = readShim(bin);
-      const m = shim.match(/"%dp0%\\?([^"]+)"/) ?? shim.match(/"%~dp0\\?([^"]+)"/);
-      if (m) target = path.join(path.dirname(bin), m[1]);
+      const found = [...shim.matchAll(/"%~?dp0%?\\?([^"]+)"/g)].map((m) => m[1]);
+      const candidates = found.filter((rel) => !/(^|[\\/])node(\.exe)?$/i.test(rel));
+      const last = candidates.at(-1);
+      if (last) target = path.join(path.dirname(bin), last);
     } catch {
       target = null;
     }
@@ -116,22 +124,37 @@ export const describeEvent = (event) => {
   return '';
 };
 
+export const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
+
 /**
- * Runs `claude -p <prompt> ...`. Resolves with the run's outcome; never rejects
- * for a non-zero exit (that is reported in `error`).
+ * Runs `claude -p ...` with the prompt on stdin (a long prompt as an argument
+ * fails with ENAMETOOLONG). Resolves with the run's outcome; never rejects for
+ * a non-zero exit (that is reported in `error`). A run that outlives
+ * `timeoutMs` is killed, tree and all, and reported as an error so the app
+ * never stays busy forever.
  */
-export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent = () => {}, bin, spawnFn = nodeSpawn }) =>
+export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent = () => {}, bin, model, spawnFn = nodeSpawn, timeoutMs = DEFAULT_RUN_TIMEOUT_MS }) =>
   new Promise((resolve) => {
     const { command, prefix } = resolveSpawn(bin ?? 'claude');
-    const fullArgs = [...prefix, '-p', prompt, ...BASE_ARGS, ...args];
+    const fullArgs = [...prefix, '-p', ...BASE_ARGS, ...(model ? ['--model', model] : []), ...args];
+    const failed = (message) => ({ exitCode: null, result: '', structured: null, error: message, needsSignIn: false, stderr: '' });
+    let settled = false;
+    let timer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
     let child;
     try {
-      child = spawnFn(command, fullArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      child = spawnFn(command, fullArgs, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     } catch (error) {
-      resolve({ exitCode: null, result: '', structured: null, error: `Claude Code could not be started: ${error.message}`, needsSignIn: false, stderr: '' });
+      finish(failed(`Claude Code could not be started: ${error.message}`));
       return;
     }
-    const state = { pending: '', result: null, stderr: '', events: [] };
+    const state = { result: null, events: [] };
+    const stderr = createTextCollector(256 * 1024);
     const handleLine = (line) => {
       for (const event of parseStreamLine(line)) {
         state.events.push(event);
@@ -139,30 +162,32 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
         onEvent(event);
       }
     };
-    child.on('error', (error) => {
-      resolve({ exitCode: null, result: '', structured: null, error: `Claude Code could not be started: ${error.message}`, needsSignIn: false, stderr: '' });
-    });
-    child.stdout?.on('data', (chunk) => {
-      const lines = (state.pending + chunk.toString()).split('\n');
-      state.pending = lines.pop() ?? '';
-      lines.forEach(handleLine);
-    });
-    child.stderr?.on('data', (chunk) => {
-      state.stderr += chunk.toString();
-    });
+    const lines = createLineSplitter(handleLine);
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        killTree(child);
+        finish(failed(`Claude did not finish within ${Math.round(timeoutMs / 60000) || 1} minutes and was stopped.`));
+      }, timeoutMs);
+    }
+    child.on('error', (error) => finish(failed(`Claude Code could not be started: ${error.message}`)));
+    child.stdin?.on?.('error', () => {});
+    child.stdin?.end?.(String(prompt ?? ''), 'utf8');
+    child.stdout?.on('data', (chunk) => lines.push(chunk));
+    child.stderr?.on('data', (chunk) => stderr.push(chunk));
     child.on('close', (code) => {
-      if (state.pending) handleLine(state.pending);
+      lines.flush();
+      const errText = stderr.end();
       const r = state.result;
       let error = null;
       if (r?.isError) error = r.result || `Claude reported an error (${r.subtype ?? 'unknown'}).`;
-      else if (code !== 0 && !r) error = `Claude stopped with exit code ${code}.${state.stderr ? ` ${state.stderr.trim().split('\n').slice(-2).join(' ')}` : ''}`;
-      resolve({
+      else if (code !== 0 && !r) error = `Claude stopped with exit code ${code}.${errText ? ` ${errText.trim().split('\n').slice(-2).join(' ')}` : ''}`;
+      finish({
         exitCode: code,
         result: r?.result ?? '',
         structured: r?.structured ?? null,
         error,
-        needsSignIn: Boolean(error && SIGN_IN_ERRORS.test(error + state.stderr)),
-        stderr: state.stderr,
+        needsSignIn: Boolean(error && SIGN_IN_ERRORS.test(error + errText)),
+        stderr: errText,
       });
     });
   });
@@ -171,16 +196,32 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
 export const testConnection = async ({ bin, spawnFn } = {}) => {
   const found = bin ?? (await findClaude());
   if (!found) return { ok: false, path: null, error: 'Claude Code is not installed on this computer (or set CLAUDE_BIN).' };
-  const run = await runClaude({ prompt: 'Reply with the single word OK.', args: ['--max-turns', '1'], bin: found, spawnFn, cwd: os.tmpdir() });
+  const run = await runClaude({ prompt: 'Reply with the single word OK.', args: ['--max-turns', '1'], bin: found, spawnFn, cwd: os.tmpdir(), timeoutMs: 120000 });
   if (run.error) return { ok: false, path: found, error: run.error, needsSignIn: run.needsSignIn };
   return { ok: /\bOK\b/i.test(run.result), path: found, error: null, needsSignIn: false };
+};
+
+/**
+ * The exact cmd.exe launch for the sign-in window. Node would re-escape a quoted title in an args
+ * array (`"Claude sign-in"` becomes `\"Claude sign-in\"`), and `start` then tries to run the title
+ * as a program ("Windows cannot find 'Claude-sign-in'"). So the command line is built by hand and
+ * passed verbatim; /s makes cmd strip the one outer pair of quotes.
+ */
+export const windowsSignInLaunch = (exe) => {
+  if (/["%\r\n]/.test(exe)) throw new Error(`Cannot open a sign-in window for a path containing quotes, percent signs or line breaks: ${exe}`);
+  return {
+    command: 'cmd.exe',
+    args: ['/d', '/s', '/c', `start "Claude sign-in" cmd /k ""${exe}" auth login --claudeai"`],
+    options: { detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: true },
+  };
 };
 
 /** Opens a terminal window running `claude auth login --claudeai` for the person to complete. */
 export const signIn = ({ bin, spawnFn = nodeSpawn } = {}) => {
   const exe = bin ?? 'claude';
   if (process.platform === 'win32') {
-    spawnFn('cmd.exe', ['/c', 'start', '"Claude sign-in"', 'cmd', '/k', exe, 'auth', 'login', '--claudeai'], { detached: true, stdio: 'ignore', windowsHide: false, shell: false }).unref?.();
+    const { command, args, options } = windowsSignInLaunch(exe);
+    spawnFn(command, args, options).unref?.();
   } else if (process.platform === 'darwin') {
     spawnFn('osascript', ['-e', `tell application "Terminal" to do script "${exe} auth login --claudeai"`], { detached: true, stdio: 'ignore' }).unref?.();
   } else {

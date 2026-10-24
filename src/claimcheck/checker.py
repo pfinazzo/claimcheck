@@ -114,6 +114,8 @@ def validate_verdicts(obj: object, claim_ids: set[str]) -> list[str]:
         if not isinstance(v["evidence"], list) or any(not isinstance(e, str) for e in v["evidence"]):
             errs.append(f"verdicts[{i}] evidence must be a list of strings")
         if isinstance(v.get("id"), str):
+            if v["id"] in seen:
+                errs.append(f"verdicts[{i}] duplicate verdict for {v['id']!r}")
             seen.add(v["id"])
     missing = sorted(claim_ids - seen)
     if missing:
@@ -141,14 +143,25 @@ def _salvage(raw: str, claim_ids: set[str]) -> dict[str, dict]:
             and isinstance(v.get("evidence"), list)
             and all(isinstance(e, str) for e in v["evidence"])
         ):
-            out[v["id"]] = {"id": v["id"], "verdict": v["verdict"], "reason": v["reason"], "evidence": v["evidence"]}
+            mine = {"id": v["id"], "verdict": v["verdict"], "reason": v["reason"], "evidence": v["evidence"]}
+            out[v["id"]] = _worse(out.get(v["id"]), mine)
     return out
+
+
+_SEVERITY = {"REFUTED": 2, "UNVERIFIABLE": 1, "SUPPORTED": 0}
+
+
+def _worse(a: dict | None, b: dict) -> dict:
+    """Of two verdicts for one claim keep the harsher one. A refutation is never quietly overwritten."""
+    if a is None:
+        return b
+    return a if _SEVERITY[a["verdict"]] >= _SEVERITY[b["verdict"]] else b
 
 
 def ask(provider: providers.Provider, system: str, user: str, claim_ids: list[str]) -> list[dict]:
     """Call the provider, retry once on an invalid reply, then fill gaps with UNVERIFIABLE."""
     ids = set(claim_ids)
-    raw = ""
+    salvaged: dict[str, dict] = {}
     for _attempt in range(2):
         raw = provider.complete(system, user, schema=VERDICT_SCHEMA)
         try:
@@ -158,7 +171,10 @@ def ask(provider: providers.Provider, system: str, user: str, claim_ids: list[st
         if not validate_verdicts(obj, ids):
             by_id = {v["id"]: v for v in obj["verdicts"]}
             return [by_id[i] for i in claim_ids]
-    salvaged = _salvage(raw, ids)
+        # Keep what was usable from this reply: a REFUTED in a flawed first reply must survive a
+        # second reply that is also flawed.
+        for cid, v in _salvage(raw, ids).items():
+            salvaged[cid] = _worse(salvaged.get(cid), v)
     return [
         salvaged.get(
             i, {"id": i, "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
@@ -209,7 +225,7 @@ def run_check(
         "head": "worktree" if worktree else gitio.head_sha(repo),
         "spec_lock": C.sha256_bytes(S.lock_path(repo).read_bytes()),
         "provider": provider_name,
-        "model": model if provider_name == "claude" else None,
+        "model": None if provider_name == "stub" else model,
         "verdicts": verdicts,
     }
     runs = C.cc_dir(repo) / C.RUNS_DIR

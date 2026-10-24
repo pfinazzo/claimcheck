@@ -52,5 +52,5 @@ test('AC 25: runner resolves claimcheck on PATH, else python -m, else null', asy
   const lines = [];
   const res = await runClaimcheck({ repoPath: '.', provider: 'stub', resolved: null, onLine: (l) => lines.push(l) });
   assert.equal(res.exitCode, null);
-  assert.match(lines[0], /not on PATH/);
+  assert.match(lines[0], /claimcheck was not found/);
 });

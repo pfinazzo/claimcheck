@@ -5,10 +5,11 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
-from . import ClaimsError, SpecError
+from . import ClaimcheckError, ClaimsError, SpecError
 from . import claims as CL
 from . import config as C
 from . import gitio
@@ -23,20 +24,44 @@ def hook_line() -> str:
 
 
 def hook_file(repo: Path) -> Path:
-    git_dir = gitio.git(repo, "rev-parse", "--git-dir").strip()
-    return (repo / git_dir).resolve() / "hooks" / "pre-commit"
+    """Where git will actually look for pre-commit: honors core.hooksPath (husky and friends)
+    and linked worktrees, which share the main repository's hooks."""
+    hooks = gitio.git(repo, "rev-parse", "--git-path", "hooks").strip()
+    return (repo / hooks).resolve() / "pre-commit"
+
+
+_TRAILING_EXIT = re.compile(r"^\s*exit(\s+\d+)?\s*$")
+_SHELLS = ("sh", "bash", "zsh", "dash", "ksh")
 
 
 def install(repo: Path) -> bool:
-    """Install or append the hook line. Returns True when the file changed."""
+    """Install or add the hook line. Returns True when the file changed.
+
+    An existing hook is kept: our line goes in before a trailing `exit` (otherwise it would never
+    run), and a hook written in another language is refused rather than corrupted.
+    """
     path = hook_file(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
-        existing = path.read_bytes()
-        if HOOK_MARKER.encode() in existing:
+        existing = path.read_bytes().decode("utf-8", errors="replace")
+        if HOOK_MARKER in existing:
             return False
-        sep = b"" if existing.endswith(b"\n") or not existing else b"\n"
-        path.write_bytes(existing + sep + hook_line().encode("utf-8"))
+        first = existing.splitlines()[0] if existing.strip() else ""
+        if first.startswith("#!") and not any(s in first for s in _SHELLS):
+            raise ClaimcheckError(
+                f"{path} is not a shell script ({first.strip()}), so claimcheck will not edit it. "
+                f"Add this line to it yourself: {hook_line().strip()}"
+            )
+        lines = existing.splitlines(keepends=True)
+        last = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].strip()), None)
+        line = hook_line()
+        if last is not None and _TRAILING_EXIT.match(lines[last]):
+            lines.insert(last, line)
+            new = "".join(lines)
+        else:
+            sep = "" if not existing or existing.endswith("\n") else "\n"
+            new = existing + sep + line
+        path.write_bytes(new.encode("utf-8"))
     else:
         path.write_bytes(("#!/bin/sh\n" + hook_line()).encode("utf-8"))
     try:

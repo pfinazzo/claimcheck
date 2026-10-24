@@ -131,9 +131,9 @@ test('AC 13: copyPrompt hands the exact propose prompt to the clipboard and retu
   api.close();
 });
 
-test('AC 26: opening a folder without .claimcheck is refused with the exact message', async () => {
+test('AC 26: a folder that is not a git repository is refused with a plain message', async () => {
   const api = createDeskApi({ userDir: mkdtempSync(path.join(os.tmpdir(), 'desk-user-')), keyStore: { hasKey: () => false, last4: () => null }, clipboard: {} });
   const res = await api.openRepo(mkdtempSync(path.join(os.tmpdir(), 'plain-')));
   assert.equal(res.ok, false);
-  assert.equal(res.error, 'This folder has no .claimcheck/ — run claimcheck init there first.');
+  assert.equal(res.error, 'This folder is not a git repository. claimcheck works on a repo, so run git init there first.');
 });

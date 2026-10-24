@@ -35,7 +35,7 @@ test('AC 4: readBoard returns the full model from the fixture', async () => {
   assert.equal(c2.history.length, 1);
   assert.ok(c2.flags.includes('refuted') && c2.flags.includes('low-confidence') && c2.flags.includes('weak-tests'));
   assert.deepEqual(board.queue, ['c2', 'c1']);
-  assert.equal(board.ledger.length, 2);
+  assert.equal('ledger' in board, false, 'the raw ledger is not shipped to the renderer on every refresh');
   for (const key of ['id', 'claim', 'confidence', 'criteria', 'files', 'killCondition', 'verifiedBy', 'verdict', 'mutation', 'status', 'note', 'fix', 'risk', 'flags']) {
     assert.ok(key in c2, key);
   }
@@ -100,7 +100,7 @@ test('AC 8: app-state overrides status; stale ids keep ledger history', async ()
   assert.equal(c2.note, 'boundary is covered by the integration suite');
   assert.deepEqual(board.queue, ['c1']);
   assert.equal(board.claims.some((c) => c.id === 'zz'), false);
-  assert.equal(board.ledger.length, 2);
+  assert.equal('ledger' in board, false, 'the raw ledger is not shipped to the renderer on every refresh');
 });
 
 test('a repo without .claimcheck reads as empty, not an error', async () => {
