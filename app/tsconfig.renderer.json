@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/shared/**/*.ts",
+    "src/lib/cc-protocol.ts",
+    "src/lib/fixer.ts",
+    "test/renderer.test.ts",
+    "test/helpers.ts"
+  ],
+  "exclude": []
+}

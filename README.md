@@ -107,6 +107,40 @@ claimcheck picks a connection on its own: your API key if `ANTHROPIC_API_KEY` is
 
 You say what you want built in a sentence or two, and the conversation starts (details in the next section). When you accept the criteria, claimcheck freezes them and commits them on a new task branch, then shows what to do next. You can press Enter at the goal prompt to skip this and do it later with `claimcheck spec draft`.
 
+### The same setup in the Desk app
+
+If you would rather click than type, open the [Desk app](#the-desk-app) and choose a folder that is a git repository but not set up yet. It starts the same guided setup, one step at a time. Every screen has a "More detail" disclosure, the intro can be skipped, and progress is saved, so closing the app and coming back resumes where you were. The terminal and the app run the same code underneath, so the result is identical and you can use either one.
+
+**1. Welcome.** Three short screens. The first says why a confident claim is not a checked claim, the second lists the three checks, and the third shows a planted bug being missed and then caught. The animation is calm and stops at its last frame if your system asks for reduced motion.
+
+![Welcome, screen 1: a confident claim is not a checked claim](docs/screenshots/desk-setup-1a.png)
+
+![Welcome, screen 2: three checks the author cannot influence](docs/screenshots/desk-setup-1b.png)
+
+![Welcome, screen 3: what a planted bug shows](docs/screenshots/desk-setup-1c.png)
+
+**2. Set up this repository.** One button runs the setup. The checklist that follows is the same as the terminal's: secrets first, then the config, the commit hook, `.gitignore`, and the agent instructions. A secret file that is already committed is called out. The test command is detected and editable, and there is a checkbox for the CI workflow.
+
+![Step 2: what setup did, and the detected test command](docs/screenshots/desk-setup-2.png)
+
+**3. Connect Claude.** Check your Claude Code sign-in, use an API key instead, or skip and write the spec by hand.
+
+![Step 3: connect Claude](docs/screenshots/desk-setup-3.png)
+
+**4. Write the spec.** Say what you want built. Claude asks questions, each with the reason it matters, and the criteria take shape beside them. Every criterion is editable, with warnings for vague wording, and "Send answers" starts the next round.
+
+![Step 4: Claude's questions beside the editable criteria](docs/screenshots/desk-setup-4.png)
+
+**5. Freeze the spec.** The spec is shown as it will be written. "Freeze and commit" locks it and commits it on a new task branch, and shows the lock hash and the commit. Nothing is pushed.
+
+![Step 5: review and freeze](docs/screenshots/desk-setup-5.png)
+
+**6. Done.** What to do next: have your coding agent build it on the branch, then press Run claimcheck on the board.
+
+![Step 6: done](docs/screenshots/desk-setup-6.png)
+
+*These screens use sample data for a small checkout service, rendered by the app's own `npm run screenshot` command.*
+
 ### Running without the tour
 
 | Command | What you get |
@@ -243,11 +277,11 @@ The author's tests cover a big order and a small order and nothing near the boun
 
 The catch rate is 50%. Two real boundary bugs would have shipped with a green test run.
 
-![The board before the fix: 50% of planted bugs caught](docs/screenshots/board-weak.png)
+![The board before the fix: 50% of planted bugs caught](docs/screenshots/desk-board-weak.png)
 
 Pinning the boundary with three tests (exactly $50, just under, just over) catches all four:
 
-![The board after the fix: nothing needs a decision](docs/screenshots/board-strong.png)
+![The board after the fix: nothing needs a decision](docs/screenshots/desk-board-strong.png)
 
 *Both boards use the offline stand-in for the checker, so the "supported" verdict was scripted for the demo. The planted-bug numbers are real runs.*
 
@@ -293,7 +327,7 @@ A sensible rollout: report only for the first couple of weeks, then set a floor 
 
 ## The Desk app
 
-Desk is an Electron app that reads a repo's `.claimcheck/ledger.jsonl` and shows it as a board: a decision queue of claims that need a person, and the claims that are backed. From a flagged claim, **Fix this** proposes three or four different ways to resolve it, builds the one you choose on a branch in a separate worktree, runs your tests, and records the outcome in the ledger. It lives in [`app/`](app/); see [`app/README.md`](app/README.md).
+Desk is an Electron app that reads a repo's `.claimcheck/ledger.jsonl` and shows it as a plain board: the claims that need a person on one side, the claims that are backed below them, and the selected claim's evidence beside them. It also runs the [guided setup](#the-same-setup-in-the-desk-app) for a repo that is not set up yet. It lives in [`app/`](app/); see [`app/README.md`](app/README.md).
 
 ```bash
 cd app
@@ -301,11 +335,17 @@ npm install
 npm start
 ```
 
-Node 20 or newer. Use **Open repo** to pick a project. Desk reads Claude Code's sign-in or an API key stored encrypted by your operating system, and applies the same secret filter as the command line before anything is sent. In Claude Code mode it denies the file tools access to credential files and blocks `cat`, `grep`, `curl`, `git push` and package installs.
+Node 24 or newer. Use **Open repo** to pick a project.
 
-![Desk showing a refuted claim with its reasons and the Fix this panel](docs/screenshots/board-refuted.png)
+![Desk: one claim that needs a decision, with the evidence beside it](docs/screenshots/desk-board-weak.png)
 
-*A claim the independent check refuted, with the reasons and the Fix this panel. The checker verdict here is from the offline stub.*
+A slim top bar shows the repo, the branch and whether the spec is frozen, with **Write a spec**, **Connect Claude**, **Run claimcheck** and **Open repo**. One sentence summarises the repo. Each claim is a row with one muted line: what the author stated, what the checker said, and how many planted bugs the tests caught. Select a row to see why it is flagged, what the checker said, and each planted bug that survived.
+
+From a flagged claim, **Fix this** proposes three or four different ways to resolve it. You pick one, Desk builds it on a branch in a separate worktree, runs your tests, and records the outcome in the ledger. A fix only counts as resolved when the tests pass **and** a change was actually committed. **Accept the risk** takes a one-line reason and writes it to the ledger. Arrow keys move through the list, and the page follows your system's light or dark setting.
+
+![The same board in dark mode](docs/screenshots/desk-board-dark.png)
+
+Desk reads Claude Code's sign-in or an API key stored encrypted by your operating system. Before anything goes to Claude it applies the same secret filter as the command line. In Claude Code mode it denies the file tools access to credential files and blocks `cat`, `grep`, `curl`, `git push` and package installs. The first run in a repository shows the exact commands its config and claims name and asks before running them. The page is built without `innerHTML`, so text from a repository can never become markup.
 
 ## Writing good claims
 
@@ -493,8 +533,11 @@ pytest                          # about 330 tests, around 100 seconds
 
 cd app
 npm install
-npm test                        # about 80 tests
+npm test                        # type checks, builds, then about 90 tests
+npm run build                   # bundles the main process, the preload and the page into dist/
 ```
+
+Desk is written entirely in TypeScript (strict, no `any`) and a test fails if any hand-written JavaScript appears.
 
 ```
 src/claimcheck/   the CLI: init flow, onboarding, spec conversation, checker, mutate, ledger, hook, redaction, providers
@@ -504,7 +547,7 @@ examples/         a sample spec, claims file, config and ledger
 docs/screenshots/ images used in this README
 ```
 
-The terminal screens in this README are real frames from the onboarding run rendered to images. The board images come from the Desk app's `npm run screenshot` command.
+The terminal screens in this README are real frames from the onboarding run rendered to images. The Desk images come from the app's own `npm run screenshot` command, using a small demo project.
 
 ## License
 
