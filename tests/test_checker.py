@@ -233,3 +233,36 @@ def test_ac20_full_offline_refuted(calc_repo, monkeypatch, capsys):
     saved = _run_file(calc_repo, "check")
     fixture = json.loads((FIXTURES / "stub_verdicts.json").read_text(encoding="utf-8"))
     assert saved["verdicts"] == fixture["verdicts"]
+
+
+# ---- blindness holds end to end ------------------------------------------
+
+class _CapturingProvider:
+    """Records the prompt it is given and answers every claim UNVERIFIABLE."""
+
+    def __init__(self):
+        self.user = ""
+
+    def complete(self, system, user, *, schema):
+        self.user = user
+        ids = [c["id"] for c in json.loads(user.split("```json", 1)[1].split("```", 1)[0])]
+        return json.dumps(
+            {"verdicts": [{"id": i, "verdict": "UNVERIFIABLE", "reason": "capture", "evidence": []} for i in ids]}
+        )
+
+
+@pytest.mark.parametrize("extra", [[], ["--worktree"]])
+def test_checker_prompt_never_contains_author_confidence(calc_repo, monkeypatch, extra):
+    # claims.yaml is committed on the branch, so it is part of base...HEAD. The checker must
+    # still never see the confidence or verified_by text inside it, nor earlier ledger lines.
+    from claimcheck import providers
+
+    calc_repo.write(".claimcheck/ledger.jsonl", '{"leak": "LEDGER_SENTINEL"}\n')
+    calc_repo.commit("ledger", date="2020-01-06T00:00:00+00:00")
+    cap = _CapturingProvider()
+    monkeypatch.setattr(providers, "load", lambda name, model=None: cap)
+    assert calc_repo.cli("check", "--provider", "stub", *extra) == 0
+    assert "src/calc.py" in cap.user  # the real diff is still there
+    assert "return a - b" in cap.user
+    for needle in ("confidence", "verified_by", "ran it", "pytest -q", "LEDGER_SENTINEL", "0.6"):
+        assert needle not in cap.user, f"checker prompt leaked {needle!r}"

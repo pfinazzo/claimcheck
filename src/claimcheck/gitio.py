@@ -68,10 +68,16 @@ def commits_ahead(repo: Path, base: str) -> int:
     return int(out or 0)
 
 
+# The checker is blind to the author's confidence and evidence. claims.yaml (and the ledger)
+# carry exactly those, and the hook makes the claims file part of every commit, so the
+# claimcheck folder must never reach the checker through the diff.
+_EXCLUDE_CLAIMCHECK = (".", ":(exclude).claimcheck")
+
+
 def diff_text(repo: Path, base: str, worktree: bool) -> str:
     if worktree:
-        return git(repo, "diff", base, "--")
-    return git(repo, "diff", f"{base}...HEAD", "--")
+        return git(repo, "diff", base, "--", *_EXCLUDE_CLAIMCHECK)
+    return git(repo, "diff", f"{base}...HEAD", "--", *_EXCLUDE_CLAIMCHECK)
 
 
 def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:
