@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- claimcheck Desk — @author Patrick Finazzo -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; script-src 'self'" />
+  <title>claimcheck Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="header" class="header"></header>
+
+  <main class="layout">
+    <aside id="queue" class="column column-queue"></aside>
+    <section id="center" class="column column-center"></section>
+    <div id="splitter" class="splitter" title="Drag to resize the panel"></div>
+    <aside id="panel" class="column column-panel"></aside>
+  </main>
+
+  <section id="drawer" class="drawer" hidden>
+    <div class="drawer-head"><strong>claimcheck run</strong><span id="drawer-status" class="muted"></span><button id="drawer-close" class="btn ghost">Close</button></div>
+    <pre id="drawer-out" class="mono"></pre>
+  </section>
+
+  <dialog id="connect" class="dialog"></dialog>
+  <dialog id="open" class="dialog"></dialog>
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="boot.js"></script>
+</body>
+</html>

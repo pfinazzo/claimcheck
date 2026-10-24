@@ -1,0 +1,15 @@
+# claimcheck configuration — written by `claimcheck init`, edit freely.
+version = 1
+base = "main"
+test_cmd = "python -m pytest -q"
+ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt"]
+require_full_coverage = true
+
+[checker]
+provider = "claude"          # "claude" | "stub"
+model = "claude-opus-5-5"
+
+[mutate]
+max_mutants = 50
+timeout_s = 600
+min_catch_rate = 0.0         # 0.0 = report only; raise it to make `mutate` a gate

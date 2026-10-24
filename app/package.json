@@ -1,0 +1,22 @@
+{
+  "name": "claimcheck-desk",
+  "version": "0.1.0",
+  "description": "The desktop board over a claimcheck ledger: see where the AI was sure and where it was not, and fix the weak spots with your own Claude.",
+  "author": "Patrick Finazzo",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test",
+    "screenshot": "electron . --screenshot"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.134.0",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "electron": "^44.7.2"
+  }
+}

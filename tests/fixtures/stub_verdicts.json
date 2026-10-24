@@ -1,0 +1,6 @@
+{
+  "verdicts": [
+    {"id": "c1", "verdict": "SUPPORTED", "reason": "return a - b is literal subtraction", "evidence": ["+    return a - b"]},
+    {"id": "c2", "verdict": "REFUTED", "reason": "fixture says so", "evidence": ["+    return age >= 18"]}
+  ]
+}

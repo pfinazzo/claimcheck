@@ -1,0 +1,33 @@
+# claimcheck claims file — one entry per thing the author asserts about this diff.
+# confidence and verified_by are stripped before the independent checker sees this.
+version: 1
+author: "claude-code/claude-fable-5-1"
+base: "main"
+claims:
+  - id: c1
+    claim: "add(a, b) returns a + b for all int inputs including negatives"
+    confidence: 0.98
+    criteria: [1]
+    files: ["src/calc.py"]
+    kill_condition: "test: tests/test_calc.py::test_add_negatives"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_calc.py::test_add_negatives"
+
+  - id: c2
+    claim: "clamp() returns lo below the range, hi above it, and x at or inside the bounds"
+    confidence: 0.80
+    criteria: [2]
+    files: ["src/calc.py"]
+    kill_condition: "obs: clamp(5, 5, 10) returns 5 and clamp(10, 5, 10) returns 10; any other value breaks this claim"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_calc.py::test_clamp_bounds"
+      - "obs: ran clamp(5,5,10) and clamp(10,5,10) in a REPL and saw 5 and 10"
+
+  - id: c3
+    claim: "tests/test_calc.py exercises every branch of add and clamp"
+    confidence: 0.70
+    criteria: [3]
+    files: ["tests/test_calc.py"]
+    kill_condition: "cmd: python -m pytest -q --cov=src --cov-fail-under=100 tests/test_calc.py"
+    verified_by:
+      - "obs: read the test file; one test per branch"
