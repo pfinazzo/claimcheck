@@ -80,14 +80,22 @@ def test_ac22_exact_mutant_sets(line, expected):
 # ---- AC 23 ---------------------------------------------------------------
 
 def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, capsys):
+    import hashlib
+
     sentinel = calc_repo.cc / "mutate.lock"
     sentinel.write_text("stale\n", encoding="utf-8")
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 6
     assert "--restore" in capsys.readouterr().err
 
+    sha = lambda s: hashlib.sha256(s.encode("utf-8")).hexdigest()
+    sentinel.write_text(
+        json.dumps({"version": 2, "files": {"src/calc.py": {
+            "original_sha256": sha("ORIGINAL\n"), "mutated_sha256": sha("MUTATED\n")}}}),
+        encoding="utf-8",
+    )
     backup = calc_repo.cc / "mutate-backup" / "src" / "calc.py"
     backup.parent.mkdir(parents=True)
-    backup.write_text("ORIGINAL\n", encoding="utf-8")
+    backup.write_text("ORIGINAL\n", encoding="utf-8", newline="\n")
     calc_repo.write("src/calc.py", "MUTATED\n")
     assert calc_repo.cli("mutate", "--restore") == 0
     assert json.loads(capsys.readouterr().out) == {"restored": ["src/calc.py"]}
@@ -118,7 +126,7 @@ def test_ac23_backup_and_sentinel_exist_during_run_then_vanish(calc_repo, monkey
 def test_ac23_failed_restore_keeps_backup_and_sentinel(calc_repo, monkeypatch, capsys):
     real_restore = mutate._restore_file
 
-    def boom(path, original):
+    def boom(path, original, *times):
         raise OSError("disk says no")
 
     monkeypatch.setattr(mutate, "_restore_file", boom)
@@ -151,20 +159,13 @@ def test_ac24_baseline_failure_exits_5(calc_repo, capsys):
 
 
 def test_ac24_timeout_counts_as_timeout(calc_repo, monkeypatch):
-    import subprocess
-
     calls = {"n": 0}
-    real = subprocess.run
 
-    def fake(cmd, **kw):
-        if isinstance(cmd, list):  # git calls go through untouched
-            return real(cmd, **kw)
+    def fake(repo, cmd, timeout):
         calls["n"] += 1
-        if calls["n"] == 1:
-            return real("exit 0", **kw)  # baseline passes
-        raise subprocess.TimeoutExpired(cmd, kw.get("timeout", 0))
+        return ("survived", 0.0) if calls["n"] == 1 else ("timeout", float(timeout))
 
-    monkeypatch.setattr(mutate.subprocess, "run", fake)
+    monkeypatch.setattr(mutate, "_run_tests", fake)
     result, code = mutate.run_mutate(calc_repo.path, C.load(calc_repo.path), test_cmd="x", max_mutants=2)
     assert result["summary"]["timeout"] == 2
     assert result["summary"]["catch_rate"] == 1.0

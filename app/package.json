@@ -6,17 +6,27 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "main": "main.mjs",
+  "main": "dist/main.mjs",
   "scripts": {
-    "start": "electron .",
-    "test": "node --test",
-    "screenshot": "electron . --screenshot"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "build:main": "esbuild src/main.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/main.mjs --log-level=warning",
+    "build:preload": "esbuild src/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist/preload.cjs --log-level=warning",
+    "build:renderer": "esbuild src/renderer/main.ts --bundle --format=iife --target=chrome130 --outfile=dist/renderer.js --log-level=warning",
+    "build": "npm run build:main && npm run build:preload && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "test": "npm run typecheck && npm run build && node --test \"test/**/*.test.ts\"",
+    "screenshot": "npm run build && electron . --screenshot"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
-    "electron": "^44.7.2"
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.19.2",
+    "electron": "^44.7.2",
+    "esbuild": "^0.25.12",
+    "linkedom": "^0.18.14",
+    "typescript": "~5.9"
   }
 }

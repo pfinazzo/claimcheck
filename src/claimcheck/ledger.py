@@ -102,6 +102,11 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
             f.flush()
             os.fsync(f.fileno())
         data = Path(tmp).read_bytes()
+        if path.exists() and path.stat().st_size > 0:
+            with open(path, "rb") as existing:
+                existing.seek(-1, os.SEEK_END)
+                if existing.read(1) != b"\n":
+                    data = b"\n" + data  # a crash or an editor left the last line open: never fuse onto it
         with open(path, "ab") as out:
             out.write(data)
             out.flush()

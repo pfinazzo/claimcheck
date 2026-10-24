@@ -63,14 +63,33 @@ def load_text(text: str) -> tuple[ClaimsFile | None, list[str]]:
         if not isinstance(rc, dict):
             violations.append(f"claims[{i}] must be a mapping")
             continue
+        tag = f"claims[{i}]"
+
+        def text(key: str) -> str:
+            v = rc.get(key)
+            if v is None:
+                return ""
+            if not isinstance(v, str):
+                violations.append(f"{tag}: {key} must be text (got {v!r})")
+                return ""
+            return v
+
+        criteria_raw = rc.get("criteria") or []
+        if not isinstance(criteria_raw, list):
+            violations.append(f"{tag}: criteria must be a list of numbers (got {criteria_raw!r})")
+            criteria_raw = []
+        files_raw = rc.get("files") or []
+        if not isinstance(files_raw, list) or any(not isinstance(f, str) for f in files_raw):
+            violations.append(f"{tag}: files must be a list of paths (got {files_raw!r})")
+            files_raw = []
         claims.append(
             Claim(
-                id=str(rc.get("id", "")),
-                claim=str(rc.get("claim", "")),
+                id=text("id"),
+                claim=text("claim"),
                 confidence=rc.get("confidence"),  # validated later
-                criteria=list(rc.get("criteria") or []),
-                files=[str(f).replace("\\", "/") for f in (rc.get("files") or [])],
-                kill_condition=str(rc.get("kill_condition", "")),
+                criteria=list(criteria_raw),
+                files=[f.replace("\\", "/") for f in files_raw],
+                kill_condition=text("kill_condition"),
                 verified_by=rc.get("verified_by"),  # validated later
             )
         )

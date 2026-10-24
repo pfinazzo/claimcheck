@@ -66,10 +66,39 @@ def test_ac5_refreeze_clean_overwrites(cc_repo):
     assert second["git_head"] == cc_repo.sha()
 
 
-def test_ac5_refreeze_refused_when_dirty(cc_repo, capsys):
-    cc_repo.write("README.md", "# changed\n")
+def test_ac5_refreeze_refused_when_code_is_dirty(cc_repo, capsys):
+    cc_repo.write("x.py", "x = 1\n")  # a new, untracked code file is an open diff
     assert cc_repo.cli("spec", "freeze") == 3
     assert "refusing to re-freeze with an open diff" in capsys.readouterr().err
+
+
+def test_ac5_refreeze_allowed_when_only_the_spec_and_docs_changed(cc_repo):
+    """A second task in the same repo: edit the spec, freeze again. This used to be impossible."""
+    cc_repo.branch("task-two")
+    cc_repo.write(".claimcheck/spec.md", TWO_CRITERIA_SPEC + "- [ ] 3. A third thing.\n")
+    cc_repo.write("README.md", "# docs changed\n")
+    assert cc_repo.cli("spec", "freeze") == 0
+    assert [c["id"] for c in json.loads(cc_repo.read(".claimcheck/spec.lock"))["criteria"]] == [1, 2, 3]
+    cc_repo.commit("freeze task two")
+    assert cc_repo.cli("spec", "verify") == 0
+
+
+def test_ac5_second_freeze_after_a_spec_only_commit_on_the_branch(cc_repo):
+    cc_repo.branch("task-two")
+    cc_repo.write(".claimcheck/spec.md", TWO_CRITERIA_SPEC + "- [ ] 3. A third thing.\n")
+    cc_repo.commit("spec only")  # one commit ahead of the base, but no code in it
+    assert cc_repo.cli("spec", "freeze") == 0
+
+
+def test_spec_hash_ignores_bom_and_crlf(cc_repo):
+    """A Windows checkout (autocrlf) or an editor that adds a BOM must not look like drift."""
+    raw = cc_repo.read(".claimcheck/spec.md")
+    (cc_repo.cc / "spec.md").write_bytes(b"\xef\xbb\xbf" + raw.replace("\n", "\r\n").encode("utf-8"))
+    assert cc_repo.cli("spec", "verify") == 0
+
+
+def test_lock_is_written_with_lf_newlines(cc_repo):
+    assert b"\r\n" not in (cc_repo.cc / "spec.lock").read_bytes()
 
 
 def test_ac5_refreeze_refused_when_ahead_of_base(cc_repo, capsys):

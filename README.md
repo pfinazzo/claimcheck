@@ -2,18 +2,25 @@
 
 @author Patrick Finazzo
 
-**A verification ledger for AI-written code.** Every change an AI agent makes arrives with a list of claims about itself ("this handles negatives", "the boundary is inclusive"). claimcheck checks those claims three independent ways, records the result in an append-only ledger, and shows you which claims are backed and which ones are only confident.
+**A verification ledger for AI-written code.** An AI agent says its change works. claimcheck checks that claim three independent ways, writes the result to an append-only ledger, and shows you which claims are backed and which are only confident.
 
-![Desk board: one claim stated at 0.92 confidence, only half of the planted bugs caught](docs/screenshots/board-weak.png)
+Setup is one command, and it walks you through everything:
 
-*The claim sounds sure (0.92) and the independent check agrees, but the tests only caught 2 of 4 deliberately planted bugs. claimcheck puts it in the decision queue.*
+```bash
+claimcheck init
+```
+
+![The first setup screen: the problem, in one picture](docs/screenshots/setup-1-problem.png)
 
 ## Contents
 
-- [Why this exists](#why-this-exists)
 - [How it works](#how-it-works)
-- [Quickstart](#quickstart)
-- [Walkthrough: the weak-test catch](#walkthrough-the-weak-test-catch)
+- [Install](#install)
+- [Setup: `claimcheck init`](#setup-claimcheck-init)
+- [Writing the spec with Claude](#writing-the-spec-with-claude)
+- [What is sent to Claude](#what-is-sent-to-claude)
+- [Using it day to day](#using-it-day-to-day)
+- [Example: the weak-test catch](#example-the-weak-test-catch)
 - [Using it on a team](#using-it-on-a-team)
 - [The Desk app](#the-desk-app)
 - [Writing good claims](#writing-good-claims)
@@ -22,110 +29,332 @@
 - [Limits, stated plainly](#limits-stated-plainly)
 - [Development](#development)
 
-## Why this exists
-
-A coding agent will happily tell you its change is correct. It will say so with the same tone when it is right and when it is wrong, and the passing test suite it points to may not test the thing it changed. Reviewing the diff by hand does not scale to the volume agents produce.
-
-claimcheck adds three things to every diff that it does not carry today:
-
-1. **Criteria that were fixed before the code existed.** Acceptance criteria are hashed into a lock file. Anything added or edited after the work starts is refused, so nobody can quietly move the goalposts to fit the code.
-2. **A second opinion that cannot see the author's confidence.** A separate model reads only the frozen criteria, the diff and the bare claims. It never sees how sure the author was or what evidence the author cited.
-3. **A planted-bug catch rate.** claimcheck breaks the new code on purpose, one small change at a time (a flipped sign, an off-by-one, swapped arguments, a shifted boundary), and reruns your tests. The share of broken versions the tests notice is printed next to the confidence the author stated.
-
-Every run appends one line per claim to a ledger. The ledger is the product: over time it is the record of how much to trust each author, human or AI.
-
 ## How it works
 
+Every change carries three checks that its author cannot influence.
+
+1. **Criteria frozen before the code exists.** Acceptance criteria are hashed into a lock file. Anything added or edited afterwards is refused.
+2. **A second opinion that cannot see the author's confidence.** A separate model reads only the frozen criteria, the diff and the bare claims. It never sees how sure the author was or what evidence the author cited.
+3. **Planted bugs.** claimcheck breaks the new code on purpose, one small change at a time, and reruns your tests. The share of planted bugs your tests catch is printed next to the confidence the author stated.
+
 ```
- spec.md ──freeze──▶ spec.lock          (criteria, hashed, before any code)
+ spec.md ──freeze──▶ spec.lock          criteria, hashed, before any code
                          │
- agent writes code ──▶ claims.yaml      (claim + confidence + what would prove it wrong)
+ agent writes code ──▶ claims.yaml      claim + confidence + what would prove it wrong
                          │
        claimcheck run ───┼──▶ checker      blind verdict per claim: SUPPORTED / REFUTED / UNVERIFIABLE
-                         └──▶ mutate       plant bugs in the added lines, rerun the tests, count catches
+                         └──▶ mutate       plant bugs in the added lines, rerun your tests, count catches
                                 │
                                 ▼
                          ledger.jsonl      one line per claim, append-only
-                                │
-                                ▼
-                         Desk board        decision queue of claims that need a human
 ```
 
-| Check | What it answers | Needs |
-| --- | --- | --- |
-| Spec lock | Did the goalposts move after the work started? | Nothing |
-| Pre-commit hook | Does every changed file have a claim covering it? | Nothing |
-| Blind checker | Does the diff actually support what the author said? | A Claude credential, or the offline stub |
-| Planted bugs | Would your tests notice if this code were wrong? | Your own test command |
+## Install
 
-## Quickstart
-
-You need Python 3.11 or newer and a git repository. The commands below are for the repo you want to protect, not for this one.
-
-### 1. Install
-
-claimcheck is not on PyPI yet. Clone it and install it into the environment your project uses:
+Python 3.11 or newer, and a git repository. claimcheck is not on PyPI yet, so install it from a clone:
 
 ```bash
 git clone https://github.com/pfinazzo/claimcheck.git
 pip install -e "./claimcheck[claude]"
 ```
 
-Drop `[claude]` if you only want the offline stub. The Claude checker reads `ANTHROPIC_API_KEY` from your environment, or an `ant auth login` profile. claimcheck never reads a `.env` file.
+You do not need an API key. If you have Claude Code installed and signed in, claimcheck uses that sign-in. An `ANTHROPIC_API_KEY` in your environment is used instead when it is set. Drop `[claude]` if you only want the sign-in route or the offline stub.
 
-### 2. Set it up in your repo
+## Setup: `claimcheck init`
 
-From the root of the repo you want to protect:
+Run it from the root of the repository you want to protect. It is a short guided tour, one screen at a time. Press Enter to move on, `m` for more detail on a screen, `s` to skip the explanation. Nothing is committed until the last step, and you can stop with Ctrl+C at any point: whatever finished is kept, and running `init` again continues.
+
+### 1. The problem
+
+![Screen 1: a claim with its stated confidence](docs/screenshots/setup-1-problem.png)
+
+A confident claim is shown next to the question the rest of the tool answers: do the tests actually back it?
+
+### 2. Three checks
+
+![Screen 2: the three checks and the planted-bug example](docs/screenshots/setup-2-checks.png)
+
+The three checks, with a small animated example of a planted bug: the comparison `>=` becomes `>`, the tests still pass (survived), a boundary test is added, and the same bug is now caught (killed).
+
+### 3. Set up this repo
+
+![Screen 3: setting up the repo](docs/screenshots/setup-3-repo.png)
+
+This is the part that changes your repo. The first step is always the same: **secrets first**. Before anything else is written, `init` creates `.gitignore` if it is missing and makes sure `.env` and key files are ignored. If a secret file is already committed, it tells you, because ignoring a file does not remove it from history.
+
+Then, in order:
+
+| Step | What it does |
+| --- | --- |
+| Secrets | Creates `.gitignore` if missing. Adds `.env`, `.env.*` (but not `.env.example`), `*.pem`, `*.key`, `*.p12`, `id_rsa*`, `id_ed25519*`. Warns about any such file that is already tracked |
+| Config | Writes `.claimcheck/config.toml`. Detects your stack (Node, Python, Go, Rust, Maven, Gradle) and fills in the test command and the list of paths that are not product code. You can type a different test command when asked |
+| Commit hook | Installs a pre-commit hook where git actually looks for it. That is the right place even with `core.hooksPath` (husky and similar) or in a linked worktree. An existing hook is kept, and the claimcheck line goes in before a trailing `exit` |
+| `.gitignore` | Ignores claimcheck's scratch output (`runs/`, the mutation lock and backup, the app state, the draft) |
+| Agent instructions | Adds the claimcheck rules to `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md`, whichever exist. If none exist you are asked whether to create `CLAUDE.md`. The block sits between two marker comments, so running `init` again updates it in place and never duplicates it |
+| CI workflow | Asked once, default no. A GitHub Actions workflow that runs claimcheck on every pull request |
+
+You never copy a block into an instructions file or edit `.gitignore` by hand. The block `init` adds is in [`src/claimcheck/agentdocs.py`](src/claimcheck/agentdocs.py); it tells the agent to check the spec, keep `claims.yaml` current with honest confidence, and run `claimcheck run` before it finishes.
+
+### 4. Connect Claude
+
+![Screen 4: the Claude connection](docs/screenshots/setup-4-connect.png)
+
+claimcheck picks a connection on its own: your API key if `ANTHROPIC_API_KEY` is set, otherwise your Claude Code sign-in. The screen says which one, and says what Claude will see (see [What is sent to Claude](#what-is-sent-to-claude)). If neither is available you are told how to fix it, and setup finishes anyway. You can write the spec by hand in `.claimcheck/spec.md`.
+
+### 5. Your first spec
+
+![Screen 5: the spec conversation, freeze and commit](docs/screenshots/setup-5-spec.png)
+
+You say what you want built in a sentence or two, and the conversation starts (details in the next section). When you accept the criteria, claimcheck freezes them and commits them on a new task branch, then shows what to do next. You can press Enter at the goal prompt to skip this and do it later with `claimcheck spec draft`.
+
+### The same setup in the Desk app
+
+If you would rather click than type, open the [Desk app](#the-desk-app) and choose a folder that is a git repository but not set up yet. It starts the same guided setup, one step at a time. Every screen has a "More detail" disclosure, the intro can be skipped, and progress is saved, so closing the app and coming back resumes where you were. The terminal and the app run the same code underneath, so the result is identical and you can use either one.
+
+**1. Welcome.** Three short screens. The first says why a confident claim is not a checked claim, the second lists the three checks, and the third shows a planted bug being missed and then caught. The animation is calm and stops at its last frame if your system asks for reduced motion.
+
+![Welcome, screen 1: a confident claim is not a checked claim](docs/screenshots/desk-setup-1a.png)
+
+![Welcome, screen 2: three checks the author cannot influence](docs/screenshots/desk-setup-1b.png)
+
+![Welcome, screen 3: what a planted bug shows](docs/screenshots/desk-setup-1c.png)
+
+**2. Set up this repository.** One button runs the setup. The checklist that follows is the same as the terminal's: secrets first, then the config, the commit hook, `.gitignore`, and the agent instructions. A secret file that is already committed is called out. The test command is detected and editable, and there is a checkbox for the CI workflow.
+
+![Step 2: what setup did, and the detected test command](docs/screenshots/desk-setup-2.png)
+
+**3. Connect Claude.** Check your Claude Code sign-in, use an API key instead, or skip and write the spec by hand.
+
+![Step 3: connect Claude](docs/screenshots/desk-setup-3.png)
+
+**4. Write the spec.** Say what you want built. Claude asks questions, each with the reason it matters, and the criteria take shape beside them. Every criterion is editable, with warnings for vague wording, and "Send answers" starts the next round.
+
+![Step 4: Claude's questions beside the editable criteria](docs/screenshots/desk-setup-4.png)
+
+**5. Freeze the spec.** The spec is shown as it will be written. "Freeze and commit" locks it and commits it on a new task branch, and shows the lock hash and the commit. Nothing is pushed.
+
+![Step 5: review and freeze](docs/screenshots/desk-setup-5.png)
+
+**6. Done.** What to do next: have your coding agent build it on the branch, then press Run claimcheck on the board.
+
+![Step 6: done](docs/screenshots/desk-setup-6.png)
+
+*These screens use sample data for a small checkout service, rendered by the app's own `npm run screenshot` command.*
+
+### Running without the tour
+
+| Command | What you get |
+| --- | --- |
+| `claimcheck init` | The guided tour, when run in a terminal |
+| `claimcheck init --no-tour` | Straight to setup, still guided |
+| `claimcheck init --no-animation` | The guided flow without animation. Also automatic when `NO_COLOR` or `CI` is set, or the terminal is `dumb` |
+| `claimcheck init --yes` | No prompts, no animation: does the setup and prints a summary. This is what scripts and CI get automatically when there is no terminal |
+| `claimcheck init --json` | No prompts. Prints what was done as one JSON document, for tools |
+| `claimcheck init --goal "…"` | Starts the spec conversation with that goal |
+| `claimcheck init --ci github` | Also writes the CI workflow |
+| `claimcheck init --agent-doc claude` | Creates `CLAUDE.md` (or `agents` for `AGENTS.md`) when neither exists |
+
+`init` is safe to run twice. It never overwrites a file that exists. `claimcheck status` tells you where a repo is: whether it is set up, whether a spec is frozen, whether the hook is in place.
+
+## Writing the spec with Claude
+
+`claimcheck spec draft` turns a goal into acceptance criteria through a back-and-forth. It is the same conversation the setup tour ends with, and you can run it any time you start a new task.
 
 ```bash
-claimcheck init
+claimcheck spec draft
 ```
 
-This creates `.claimcheck/` with a config, a spec template, an empty claims file and an empty ledger, and installs a git pre-commit hook. It prints what it created:
+Each round, Claude:
 
-```
-claimcheck: init: created ['config.toml', 'spec.md', 'claims.yaml', 'ledger.jsonl']; hook installed
-```
+- asks up to five questions, each with a short reason it matters ("it decides which side of the boundary criterion 1 lands on"),
+- shows the criteria as they stand, each with a one-line way to check it,
+- flags contradictions and assumptions it had to make.
 
-`init` is safe to run twice. It never overwrites a file that exists, and it adds the hook line only once. It does not look at your project, so two settings are yours to fix by hand:
+You answer in plain text. A blank answer means "you decide", and Claude says what it assumed. You can also edit the draft yourself at any point, and Claude keeps your wording:
 
-- **`test_cmd`** in `.claimcheck/config.toml` defaults to `python -m pytest -q`. Change it to your own command (`npm test`, `go test ./...`, `cargo test`).
-- **`ignore`** in the same file lists paths that are not product code. Add `.gitignore` and your test folder here (see [Keep tests out of the mutation pool](#keep-tests-out-of-the-mutation-pool)). Without `.gitignore` on the list, the hook will ask for a claim covering your next `.gitignore` edit.
+| Type | Does |
+| --- | --- |
+| Enter | Keep going: Claude folds in your answers and asks what is left. When nothing is left, Enter saves |
+| `e 2` | Rewrite criterion 2 |
+| `c 2` | Rewrite how criterion 2 is checked |
+| `d 2` | Delete criterion 2 |
+| `a` | Add a criterion |
+| `o` | Add an out-of-scope line |
+| `save` | Write the spec and stop |
+| `quit` | Leave without writing. Your answers are kept: `claimcheck spec draft --resume` continues |
+| `?` | Show this list |
 
-Then add these lines to your `.gitignore`. They are scratch output, not history. Commit the `.gitignore` change together with the freeze commit in step 3:
+Local warnings appear under a criterion when it uses vague words ("fast", "properly"), names no observable behavior, runs to two ideas, or duplicates another. They are advice, not rules.
 
-```
-.claimcheck/runs/
-.claimcheck/mutate-backup/
-.claimcheck/mutate.lock
-.claimcheck/worktrees/
-.claimcheck/app-state.json
-```
+At the end claimcheck writes `.claimcheck/spec.md`, freezes it, switches to a new branch named from your goal (for example `task/add-free-shipping-over-50`, only when you were on the base branch) and commits the spec, the lock and the files `init` changed. Nothing is pushed.
 
-### 3. Write the criteria and freeze them
+| Option | Meaning |
+| --- | --- |
+| `--goal "…"` | Skip the goal prompt |
+| `--resume` | Continue the saved conversation |
+| `--max-rounds N` | Stop asking after N rounds (default 6) |
+| `--no-freeze` | Write `spec.md` only |
+| `--no-branch` / `--branch NAME` | Commit on the current branch, or on a branch with this name |
+| `--yes` | Freeze and commit without asking |
+| `--provider auto\|claude\|claude-cli\|stub` | Which model connection. `stub` is offline and gives placeholder questions |
 
-Edit `.claimcheck/spec.md`. Each criterion is one line in this exact shape, numbered from 1 with no gaps:
+The result is a plain file you can read and edit before it is frozen:
 
 ```markdown
 # Acceptance criteria
 
-- [ ] 1. An order of exactly $50 ships free.
-- [ ] 2. An order under $50 pays a $5 shipping fee.
-- [ ] 3. An order over $50 ships free.
+Goal: Orders of $50 or more should ship free, and everything else pays a $5 flat fee.
+
+- [ ] 1. An order whose subtotal is exactly $50.00 pays $0 shipping.
+  - Check: shipping fee for a $50.00 subtotal is 0
+- [ ] 2. An order whose subtotal is under $50.00 pays $5 shipping.
+  - Check: shipping fee for a $49.99 subtotal is 5
+
+## Out of scope
+
+- International shipping rates
 ```
 
-Write criteria a test could check. Then freeze them and commit the spec and the lock as their own commit, **before any code**:
+If you would rather write it by hand, edit `.claimcheck/spec.md` (lines in the form `- [ ] 1. text`, numbered from 1) and run `claimcheck spec freeze`.
+
+Freezing a second task in the same repo works the way you would expect: only changed code blocks a new freeze, so editing the spec on a fresh branch is fine.
+
+## What is sent to Claude
+
+Anything that leaves your machine is filtered first. The filter runs where each prompt is built and again at the connection itself, so a mistake in one place does not get through the other.
+
+| Layer | What it does |
+| --- | --- |
+| Secret files | Files that look like secret stores are never read into a prompt, and their names are not listed. That covers `.env` and `.env.*`, private keys and certificates (`*.pem`, `*.key`, `*.p12`, `*.jks`), `id_rsa` and friends, `.npmrc`, `.pypirc`, `.netrc`, credentials and secrets files and folders, service-account JSON, Terraform state and variables, kubeconfig, and anything under `.ssh`, `.aws`, `.kube` or `.docker` |
+| Secret values | In every other file, text that looks like a secret is replaced with `[REDACTED:kind]` before it is sent: API keys for Anthropic, OpenAI, AWS, GitHub, GitLab, Slack, Stripe, Google, npm, Twilio and SendGrid, JWTs, bearer tokens, private key blocks, passwords in URLs, assignments to names like `password`, `token` or `api_key`, and long random strings. Ordinary code such as `password = get_password()` is left alone |
+| Size cap | At most 40,000 characters per file and 250,000 per request |
+
+What each feature sends:
+
+| Feature | Sent | Not sent |
+| --- | --- | --- |
+| Spec conversation | Your goal, your answers, your edits to the criteria, the repo's file names | Secret-looking file names, file contents |
+| Claim check | The frozen criteria, the claims (text and files), the diff under test | The author's confidence and evidence, anything in `.claimcheck/`, secret files, secret values |
+| Planted bugs | Nothing. This runs your tests locally | Everything |
+
+Two more protections follow from this:
+
+- You can see what was held back. The result of `claimcheck check` has a `sent` section listing the withheld files, how many values were redacted and of what kind, and whether anything was cut for size. It never contains the secret itself.
+- When Claude runs through your Claude Code sign-in, claimcheck starts it with its file, shell and web tools switched off and from a temporary folder, so it works only from the text it was handed.
+
+This is a safety net, not a guarantee. The patterns lean toward redacting too much, but a secret in an unusual format can slip past, and a key that was ever committed should be rotated whatever claimcheck does. `init` closes the usual hole first (`.env` ignored, committed secrets reported), and the Desk app applies the same filter and a deny list for Claude Code's file tools (see [The Desk app](#the-desk-app)). The Python and Desk filters are tested against the same set of cases, in [`tests/fixtures/secret_cases.json`](tests/fixtures/secret_cases.json), so they cannot drift apart.
+
+## Using it day to day
+
+After setup, a task looks like this.
+
+1. **Spec.** `claimcheck spec draft` (or edit `spec.md` and run `claimcheck spec freeze`). The spec and lock are committed first, alone, on a task branch.
+2. **Build.** Your coding agent works on the branch. It reads the claimcheck rules from `CLAUDE.md` or `AGENTS.md`. Each commit that changes code includes an updated `.claimcheck/claims.yaml`, and the commit hook refuses one that does not.
+3. **Check.** `claimcheck run` verifies the lock, asks the blind checker about each claim, plants bugs and reruns your tests, then appends one ledger line per claim. It prints one JSON document and saves it under `.claimcheck/runs/`.
+4. **Decide.** Look at the board (below), fix what is weak, accept a risk with a reason, or narrow a claim.
+5. **Merge.** Commit `ledger.jsonl` with the merge so the history travels with the code.
+
+## Example: the weak-test catch
+
+A real run on a small demo project. The change adds free shipping for orders of $50 or more:
+
+```python
+def shipping_fee(total):
+    """Orders of $50 or more ship free; everything else costs $5."""
+    if total >= 50:
+        return 0
+    return 5
+```
+
+The author's tests cover a big order and a small order and nothing near the boundary. They pass, and the author states 0.92 confidence. When `claimcheck run` planted four bugs in `src/shipping.py`:
+
+| Outcome | Planted bug | Real bug? |
+| --- | --- | --- |
+| survived | `if total >= 50:` became `if total >= 51:` | Yes, $50 would now pay shipping |
+| survived | `if total >= 50:` became `if total > 50:` | Yes, $50 would now pay shipping |
+| killed | `return 0` became `return 1` | Caught |
+| killed | `return 5` became `return 6` | Caught |
+
+The catch rate is 50%. Two real boundary bugs would have shipped with a green test run.
+
+![The board before the fix: 50% of planted bugs caught](docs/screenshots/desk-board-weak.png)
+
+Pinning the boundary with three tests (exactly $50, just under, just over) catches all four:
+
+![The board after the fix: nothing needs a decision](docs/screenshots/desk-board-strong.png)
+
+*Both boards use the offline stand-in for the checker, so the "supported" verdict was scripted for the demo. The planted-bug numbers are real runs.*
+
+Each run writes one JSON line per claim. This is the second run, trimmed:
+
+```json
+{
+  "claim_id": "c1",
+  "confidence": 0.95,
+  "checker": { "provider": "stub", "verdict": "SUPPORTED", "reason": "The comparison is >= 50 returning 0, else 5.", "evidence": ["+    if total >= 50:"] },
+  "mutation": { "catch_rate": 1.0, "killed": 4, "survived": 0, "timeout": 0, "total": 4 },
+  "outcome": null
+}
+```
+
+`outcome` stays `null` until something happens in the real world, such as a later bug fix that touches the same lines. The Desk app writes it when you resolve a claim.
+
+## Using it on a team
+
+| Role | Does | Owns |
+| --- | --- | --- |
+| **Requester** (human) | Runs `claimcheck spec draft` with the agent's task in mind and freezes it before work starts | `spec.md`, `spec.lock` |
+| **Author** (agent or human) | Writes the code and the claims, with honest confidence | `claims.yaml`, the diff |
+| **CI** | Runs `claimcheck run` on every pull request | The ledger line |
+| **Reviewer** (human) | Reads the board, not the whole diff. Starts with the decision queue | The merge decision |
+
+The author never grades their own work: someone else fixes the criteria, a model that cannot see the author's confidence gives the verdict, and your own tests produce the catch rate.
+
+**What to commit and ignore.** Commit `spec.md`, `spec.lock`, `claims.yaml`, `config.toml` and `ledger.jsonl`. `init` already ignores the scratch output. The lock must be in git: the late-criteria check compares the lock's freeze time with the branch's first commit.
+
+**CI.** `claimcheck init --ci github` writes `.github/workflows/claimcheck.yml`, which checks out full history, installs claimcheck and runs it against the pull request's base branch with `ANTHROPIC_API_KEY` from your repository secrets. It has not been run in a real pipeline yet, so treat it as a starting point. While the claimcheck repository is private, installing it from GitHub needs a token. The run edits files in the checkout while it plants bugs and then restores them, which is fine in a throwaway CI checkout.
+
+**Turning it into a gate.** By default `mutate` only reports. To fail a build on weak tests, set a floor in `.claimcheck/config.toml`:
+
+```toml
+[mutate]
+min_catch_rate = 0.7     # exit code 2 if fewer than 70% of planted bugs are caught
+```
+
+A sensible rollout: report only for the first couple of weeks, then set a floor a little under your median, then raise it as your tests improve. A REFUTED verdict already fails a run with exit code 2.
+
+**Keep tests out of the mutation pool.** `init` puts your test folders on the `ignore` list for you, so planted bugs go into product code only. If you write the config by hand, add your test paths to `ignore`.
+
+## The Desk app
+
+Desk is an Electron app that reads a repo's `.claimcheck/ledger.jsonl` and shows it as a plain board: the claims that need a person on one side, the claims that are backed below them, and the selected claim's evidence beside them. It also runs the [guided setup](#the-same-setup-in-the-desk-app) for a repo that is not set up yet. It lives in [`app/`](app/); see [`app/README.md`](app/README.md).
 
 ```bash
-claimcheck spec freeze
-git add .claimcheck .gitignore && git commit -m "Freeze criteria for free shipping"
+cd app
+npm install
+npm start
 ```
 
-That first commit touches only `.claimcheck/` and `.gitignore`, both on the ignore list, so the hook lets it through.
+Node 24 or newer. Use **Open repo** to pick a project.
 
-### 4. Write the code, then the claims
+![Desk: one claim that needs a decision, with the evidence beside it](docs/screenshots/desk-board-weak.png)
 
-Have your agent (or you) make the change. Alongside it, fill in `.claimcheck/claims.yaml`:
+A slim top bar shows the repo, the branch and whether the spec is frozen, with **Write a spec**, **Connect Claude**, **Run claimcheck** and **Open repo**. One sentence summarises the repo. Each claim is a row with one muted line: what the author stated, what the checker said, and how many planted bugs the tests caught. Select a row to see why it is flagged, what the checker said, and each planted bug that survived.
+
+From a flagged claim, **Fix this** proposes three or four different ways to resolve it. You pick one, Desk builds it on a branch in a separate worktree, runs your tests, and records the outcome in the ledger. A fix only counts as resolved when the tests pass **and** a change was actually committed. **Accept the risk** takes a one-line reason and writes it to the ledger. Arrow keys move through the list, and the page follows your system's light or dark setting.
+
+![The same board in dark mode](docs/screenshots/desk-board-dark.png)
+
+Desk reads Claude Code's sign-in or an API key stored encrypted by your operating system. Before anything goes to Claude it applies the same secret filter as the command line. In Claude Code mode it denies the file tools access to credential files and blocks `cat`, `grep`, `curl`, `git push` and package installs. The first run in a repository shows the exact commands its config and claims name and asks before running them. The page is built without `innerHTML`, so text from a repository can never become markup.
+
+## Writing good claims
+
+A claim is one sentence about the diff that could turn out false. Your agent writes these, following the rules `init` added to its instructions, but it helps to know what makes a good one.
+
+- One checkable statement per claim. "`shipping_fee` returns 0 at exactly $50" is a claim. "The shipping feature works" is not.
+- Cite the criteria it supports by number, and list every file it is about.
+- State real confidence. If the code was not run, 0.6 is better than 0.95.
+- A `kill_condition` that names something outside the claim: `test:` (a test id), `cmd:` (a command whose failure disproves it) or `obs:` (an observable value). One that only repeats the claim is rejected.
 
 ```yaml
 version: 1
@@ -137,354 +366,21 @@ claims:
     confidence: 0.92
     criteria: [1, 2, 3]
     files: ["src/shipping.py"]
-    kill_condition: "test: tests/test_shipping.py::test_big_order_ships_free"
+    kill_condition: "test: tests/test_shipping.py::test_exactly_fifty_ships_free"
     verified_by:
       - "cmd: python -m pytest -q"
 ```
 
-Check it against the frozen criteria:
-
-```bash
-claimcheck claims validate
-# claimcheck: claims validate: 1 claims ok
-```
-
-Commit the code and `claims.yaml` together. The hook checks that the claims file is staged and that every changed code file is covered.
-
-### 5. Run it
-
-```bash
-claimcheck run --base main
-```
-
-`run` does everything in order: verify the spec lock, validate the claims, ask the checker for a verdict on each claim, plant bugs and rerun your tests, then append to the ledger. It prints one JSON document and also saves it under `.claimcheck/runs/`. The exit code tells a script what happened (see [Exit codes](#exit-codes)).
-
-No Claude credential yet? Try the offline stub first. It returns `UNVERIFIABLE` for every claim, so you only see the planted-bug half:
-
-```bash
-claimcheck run --provider stub --base main
-```
-
-### 6. Look at it
-
-```bash
-cd claimcheck/app
-npm install
-npm start
-```
-
-Press **Open repo** and pick your project. See [The Desk app](#the-desk-app).
-
-## Walkthrough: the weak-test catch
-
-This is a real run on a small demo project. The change adds free shipping for orders of $50 or more:
-
-```python
-def shipping_fee(total):
-    """Orders of $50 or more ship free; everything else costs $5."""
-    if total >= 50:
-        return 0
-    return 5
-```
-
-The author's tests cover a big order and a small order and nothing near the boundary:
-
-```python
-def test_big_order_ships_free():
-    assert shipping_fee(120) == 0
-
-def test_small_order_pays():
-    assert shipping_fee(10) == 5
-```
-
-The tests pass. The author claims 0.92 confidence. Here is what `claimcheck run` found when it planted four bugs in `src/shipping.py`:
-
-| Outcome | Planted bug | Real bug? |
-| --- | --- | --- |
-| survived | `if total >= 50:` became `if total >= 51:` | Yes, $50 would now pay shipping |
-| survived | `if total >= 50:` became `if total > 50:` | Yes, $50 would now pay shipping |
-| killed | `return 0` became `return 1` | Caught |
-| killed | `return 5` became `return 6` | Caught |
-
-The catch rate is 50%. Two real boundary bugs would have shipped with a green test run. This is the board you saw at the top: the claim is confident and "supported" by the checker, but flagged **weak-tests** and sent to the decision queue.
-
-The fix is to pin the boundary:
-
-```python
-def test_exactly_fifty_ships_free():
-    assert shipping_fee(50) == 0
-
-def test_just_under_fifty_pays():
-    assert shipping_fee(49.99) == 5
-
-def test_just_over_fifty_ships_free():
-    assert shipping_fee(50.01) == 0
-```
-
-Same bugs, rerun: all four are killed, catch rate 100%, and the queue empties.
-
-![Desk board after the fix: nothing needs a decision, 100% caught](docs/screenshots/board-strong.png)
-
-*Both screenshots come from the offline stand-in for the checker, so the "supported" verdict was scripted for the demo. The planted-bug numbers are real runs.*
-
-### What a ledger line looks like
-
-Each run writes one JSON line per claim. This is the second run, trimmed:
-
-```json
-{
-  "claim_id": "c1",
-  "confidence": 0.95,
-  "checker": {
-    "provider": "stub",
-    "verdict": "SUPPORTED",
-    "reason": "The comparison is >= 50 returning 0, else 5, which matches criteria 1 to 3 by inspection.",
-    "evidence": ["+    if total >= 50:", "+        return 0", "+    return 5"]
-  },
-  "mutation": { "catch_rate": 1.0, "killed": 4, "survived": 0, "timeout": 0, "total": 4 },
-  "outcome": null
-}
-```
-
-`outcome` stays `null` until something happens in the real world, such as a later bug fix that touches the same lines. The Desk app writes that line when you resolve a claim. A later version will use outcomes to draw a calibration curve: when this author says 0.9, how often are they right?
-
-### What the guardrails look like
-
-If someone adds a criterion after the lock:
-
-```
-claimcheck: spec drifted from lock:
-  late addition: [4]
-```
-
-(exit code 3.) If someone commits code without updating the claims:
-
-```
-claimcheck: staged code paths ['src/shipping.py'] but .claimcheck/claims.yaml is not staged (added or modified)
-```
-
-(the commit is rejected.)
-
-## Using it on a team
-
-### Who does what
-
-| Role | Does | Owns |
-| --- | --- | --- |
-| **Requester** (human) | Writes the criteria and freezes them before work starts | `spec.md`, `spec.lock` |
-| **Author** (agent or human) | Writes the code and the claims, with honest confidence | `claims.yaml`, the diff |
-| **CI** | Runs `claimcheck run` on every pull request | The ledger line |
-| **Reviewer** (human) | Reads the board, not the whole diff. Starts with the decision queue | The merge decision |
-
-The point of the split is that the author never grades their own work. The criteria are fixed by someone else, the verdict comes from a model that cannot see the author's confidence, and the catch rate comes from your own tests.
-
-### The per-change workflow
-
-1. **Branch.** Cut a branch from `main`.
-2. **Freeze.** The requester writes `.claimcheck/spec.md` and runs `claimcheck spec freeze`. Commit the spec and lock first, alone.
-3. **Build.** The author makes the change. Commits that touch code must include an updated `claims.yaml`.
-4. **Check locally.** `claimcheck run --base main` before pushing. Fix anything in the decision queue.
-5. **Open the pull request.** The CI run appends the ledger line. The reviewer opens Desk on the branch, or reads the summary below.
-6. **Merge.** Commit `ledger.jsonl` with the merge so the history travels with the code.
-
-If a criterion was wrong, that is a new change: start a new branch, write a new spec, freeze again. claimcheck refuses to re-freeze while a diff is open, on purpose.
-
-### What to commit and what to ignore
-
-| Commit | Ignore |
-| --- | --- |
-| `.claimcheck/spec.md` | `.claimcheck/runs/` |
-| `.claimcheck/spec.lock` | `.claimcheck/mutate-backup/` |
-| `.claimcheck/claims.yaml` | `.claimcheck/mutate.lock` |
-| `.claimcheck/config.toml` | `.claimcheck/worktrees/` |
-| `.claimcheck/ledger.jsonl` | `.claimcheck/app-state.json` |
-
-The lock must be in git. The late-criteria check compares the lock's freeze time with the date of the branch's first commit.
-
-### Telling your coding agent
-
-Agents follow written rules. Put this in `CLAUDE.md`, `AGENTS.md` or whatever your agent reads:
-
-```markdown
-## claimcheck
-
-Before writing code for a task:
-1. Confirm `.claimcheck/spec.lock` exists and matches `.claimcheck/spec.md` (`claimcheck spec verify`).
-   Do not edit `spec.md` or `spec.lock`. If a criterion is wrong, stop and ask.
-
-With every commit that changes code:
-2. Update `.claimcheck/claims.yaml`. One claim per thing you assert about the diff.
-3. Give each claim a confidence between 0 and 1 that reflects how sure you actually are.
-   Do not round up. Low confidence is useful information.
-4. Give each claim a `kill_condition`: a test, command or observation that would prove the claim wrong.
-   It must be something other than the claim restated.
-5. List every changed code file in some claim's `files`.
-
-Before finishing:
-6. Run `claimcheck run --base main` and report any claim that is REFUTED or has a low catch rate.
-   Fix the tests or narrow the claim. Do not edit the checker, the ledger or the config to make it pass.
-```
-
-### Running it in CI
-
-`claimcheck run` is a plain command that prints JSON and sets an exit code, so any CI can run it. This GitHub Actions sketch shows the shape. It has not been run in a real pipeline yet, so treat it as a starting point:
-
-```yaml
-name: claimcheck
-on: pull_request
-
-jobs:
-  claimcheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0              # the diff needs history back to the base branch
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install "git+https://github.com/pfinazzo/claimcheck.git#egg=claimcheck[claude]"
-      # install your project's own dependencies and test tools here
-      - run: claimcheck run --base origin/${{ github.base_ref }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-Notes for CI:
-
-- While this repository is private, `pip install` from GitHub needs a token, or install from a vendored copy.
-- The run changes files in the checkout while it plants bugs, then restores them. Use a throwaway checkout, which CI already is.
-- `ANTHROPIC_API_KEY` belongs in your CI secret store. It is never written to a file by claimcheck.
-- The run installs your test dependencies too, because it reruns your tests once per planted bug.
-
-### Turning it into a gate
-
-By default `mutate` only reports. To make a weak catch rate fail the build, raise `min_catch_rate` in `.claimcheck/config.toml`:
-
-```toml
-[mutate]
-min_catch_rate = 0.7     # exit code 2 if fewer than 70% of planted bugs are caught
-```
-
-A sensible rollout:
-
-1. **Weeks 1 to 2: report only.** Leave it at 0.0. Look at the board and learn what your catch rates are.
-2. **Then gate the new code.** Set a floor a bit under your median (for example 0.6).
-3. **Raise it as tests improve.** A REFUTED verdict already fails the run with exit code 2, no config needed.
-
-### Reviewing a pull request
-
-The reviewer does not read a pile of diffs. They open Desk on the branch:
-
-1. **Decision queue first.** Each card says why it is there: `weak-tests`, `refuted`, `unverified`, `low-confidence`.
-2. **Sure but unproven corner.** The scatter plot puts high stated confidence with a low catch rate in the lower right. Anything there deserves a look.
-3. **Accept, fix or narrow.** Press **Fix this** for a set of options, or **Accept risk** with a one-line reason. The reason lands in the ledger.
-
-If you prefer the terminal, `jq` over `.claimcheck/ledger.jsonl` answers the same questions:
-
-```bash
-# claims with confidence over 0.8 that planted bugs got past
-jq -c 'select(.type=="claim" and .confidence>0.8 and .mutation.catch_rate!=null and .mutation.catch_rate<0.7)
-       | {claim_id, confidence, catch: .mutation.catch_rate}' .claimcheck/ledger.jsonl
-```
-
-### Keep tests out of the mutation pool
-
-By default claimcheck plants bugs in every added line that is not on the `ignore` list, including your test files. A planted bug inside a test assertion mostly produces a "survivor" that says nothing about your product code, and it drags the catch rate down.
-
-Add your test folder to `ignore`:
-
-```toml
-ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", "tests/**"]
-```
-
-Two side effects, both intended. The hook stops requiring a claim for test files, and claims should list only product code in `files`. The checker still sees your tests in the diff, which helps it judge whether a claim is backed.
-
-## The Desk app
-
-Desk is an Electron app that reads a repo's `.claimcheck/ledger.jsonl` and shows it as a board. It lives in [`app/`](app/). Full details are in [`app/README.md`](app/README.md).
-
-```bash
-cd app
-npm install
-npm start
-```
-
-Node 20 or newer. The first install downloads Electron. Use **Open repo** to pick a project that has a `.claimcheck/` folder. The board refreshes as the ledger changes.
-
-![Desk board showing a refuted claim with its reasons and the Fix this panel](docs/screenshots/board-refuted.png)
-
-*A claim the independent check refuted (the tests never call the function at the boundary), with the reasons and the Fix this panel on the right. Verdicts in this screenshot are from the offline stub.*
-
-What you are looking at:
-
-| Area | Meaning |
-| --- | --- |
-| **Decision queue** (left) | Claims that need a human, highest risk first. Each card shows the verdict, catch rate and why it was flagged |
-| **Backed or settled** (left) | Claims that are supported with a good catch rate, resolved, or accepted |
-| **Tiles** (top) | Claim count, how many need a decision, how many refuted, mean stated confidence, overall catch rate |
-| **Confidence vs bugs caught** (middle) | One dot per claim. Drag to pan, wheel to zoom, double-click to reset. The shaded lower-right corner is "sure but unproven" |
-| **Detail panel** (right) | The claim, its criteria, the independent verdict with evidence lines, and every planted bug with whether it survived |
-
-### The fix flow
-
-From any flagged claim, press **Fix this**:
-
-1. **Propose.** Claude reads the code and proposes three to four genuinely different approaches: fix the code, tighten the tests, narrow the claim, or replace a kill condition that was not a real observable. Each has pros, cons, effort and the files it touches.
-2. **Use this approach.** Desk creates a branch named `claimcheck/fix-<claim>-<id>` in a separate git worktree. Claude writes a failing test first, then the fix, then commits. It cannot push.
-3. **Verify.** Desk runs your test command in the worktree, then the claim's kill condition when it is a command or a test id.
-4. **Resolve.** On green the card moves to the settled column and an outcome line goes in the ledger. If the GitHub CLI is signed in, **Open pull request** lights up. On red the output stays on screen and the worktree is kept.
-
-**Copy prompt** gives you the same request as text for any fresh Claude Code session. **Accept risk** takes a one-line reason and moves the claim out of the queue.
-
-Desk connects to Claude one of two ways, chosen under **Connect Claude**: through your own Claude Code sign-in, or with an API key that is stored encrypted by your operating system and never shown again. API-key mode can propose fixes but cannot edit your repo.
-
-Desk never pushes, merges, or reads `.env` files. It writes only `.claimcheck/app-state.json`, `.claimcheck/worktrees/` and outcome lines on the ledger.
-
-## Writing good claims
-
-The checker and the catch rate are only as good as the claims. A claim is one sentence about the diff that could turn out false.
-
-**Do:**
-
-- Make each claim one checkable statement. "`shipping_fee` returns 0 at exactly $50" is a claim. "The shipping feature works" is not.
-- Cite the criteria it supports by number in `criteria`.
-- List every file the claim is about in `files`.
-- Put your real confidence. If you did not run the code, say 0.6, not 0.95.
-- Write a `kill_condition` that names something outside the claim: a specific test, a command whose failure disproves it, or an observable value.
-
-**Kill condition forms.** The text must start with one of three prefixes:
-
-| Prefix | Example |
-| --- | --- |
-| `test:` | `test: tests/test_shipping.py::test_exactly_fifty_ships_free` |
-| `cmd:` | `cmd: python -m pytest -q --cov=src --cov-fail-under=100` |
-| `obs:` | `obs: shipping_fee(50) returns 0 and shipping_fee(49.99) returns 5; any other value breaks this claim` |
-
-A kill condition that merely repeats the claim text is rejected.
-
-**What the validator rejects** (all of these exit with code 4):
-
-- an `id` that is not lowercase letters, digits, `-` or `_`, or that repeats
-- empty claim text, or a confidence outside 0 to 1
-- a missing or unknown `kill_condition` prefix
-- an empty `verified_by` list
-- empty `files`
-- `criteria` that cite an id not in the frozen lock
-
-**What the pre-commit hook enforces:**
-
-- A commit that changes code must also stage `.claimcheck/claims.yaml`.
-- Every file named in a claim must be in that same commit.
-- Every changed code file must be named by some claim (unless `require_full_coverage = false`, which only warns).
-- Deleted files count as changed.
+The validator rejects an `id` that is not lowercase letters, digits, `-` or `_`, empty text, a confidence outside 0 to 1, a bad `kill_condition`, an empty `verified_by` or `files`, fields of the wrong type, and criteria numbers that are not in the frozen lock (exit code 4). The commit hook requires, for every commit that changes code: an updated `claims.yaml` in the same commit, every file a claim lists to be in that commit, and every changed code file to be covered by some claim. Deletions count as changes.
 
 ## Reference
 
 ### Commands
 
 ```
-claimcheck init                    create .claimcheck/ and install the pre-commit hook
+claimcheck init                    guided setup: secrets, config, hook, .gitignore, agent notes, first spec
+claimcheck status [--json]         where this repo is: set up, spec state, hook, branch
+claimcheck spec draft              write the spec as a conversation with Claude
 claimcheck spec freeze             hash the criteria into spec.lock
 claimcheck spec verify             refuse if the spec drifted from the lock
 claimcheck claims validate [path]  schema-check a claims file against the frozen criteria
@@ -499,55 +395,70 @@ Options shared by `check`, `mutate` and `run`:
 | Option | Meaning |
 | --- | --- |
 | `--base REF` | The git ref the diff is measured against. Defaults to `base` in config |
-| `--worktree` | Measure uncommitted changes in the working tree instead of `base...HEAD` |
-| `--provider claude\|stub` | Which checker (`check` and `run`). The stub is offline and deterministic |
+| `--worktree` | Measure uncommitted changes, including new untracked files, instead of `base...HEAD` |
+| `--provider auto\|claude\|claude-cli\|stub` | Which model connection (`check` and `run`) |
 | `--model NAME` | Checker model (`check` and `run`) |
 | `--test-cmd CMD` | Override the test command (`mutate` and `run`) |
 | `--max-mutants N` | Cap the number of planted bugs (`mutate` and `run`) |
 | `--seed N` | Make the sample of planted bugs repeatable |
-| `--restore` | After a crashed `mutate`, put the backed-up files back |
+| `--restore` | After a crashed `mutate`, put backed-up files back (see Troubleshooting) |
 
-`check`, `mutate` and `run` print one JSON document to stdout and save it under `.claimcheck/runs/`. Messages for people go to stderr, so `claimcheck run > result.json` stays clean.
+`check`, `mutate` and `run` print one JSON document to stdout and save it under `.claimcheck/runs/`. Messages for people go to stderr. The machine modes `init --json`, `status --json`, `spec draft --step` and `spec draft --finish` also print JSON, and on failure print `{"error": "...", "code": N}` and exit with that code.
+
+### Providers
+
+| Name | Uses |
+| --- | --- |
+| `auto` (default) | `ANTHROPIC_API_KEY` if set, otherwise your Claude Code sign-in |
+| `claude` | The Anthropic API through the official SDK. Needs `claimcheck[claude]` and `ANTHROPIC_API_KEY` |
+| `claude-cli` | Your Claude Code sign-in through the `claude` command, with all tools off. No API key |
+| `stub` | Offline and deterministic. Every claim comes back UNVERIFIABLE, and the spec conversation gives placeholder questions. Good for trying the planted-bug half |
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
 | 0 | ok |
+| 1 | other error, including an invalid config value |
 | 2 | a claim was REFUTED, or the catch rate is under `min_catch_rate` |
-| 3 | spec refusal: drifted from the lock, re-frozen inside an open diff, or dirty while a diff is open |
+| 3 | spec refusal: drifted from the lock, re-frozen after code changed, or a base ref that does not exist |
 | 4 | claims file invalid, or the pre-commit hook rejected the commit |
-| 5 | provider error, unknown provider, or the baseline tests fail |
-| 6 | a previous `mutate` left its lock behind; run `claimcheck mutate --restore` |
+| 5 | provider error, unknown provider, the baseline tests fail, or the working tree no longer matches the diff |
+| 6 | a previous `mutate` left its lock behind, or `--restore` refused to overwrite a file |
 
 ### Files
 
 | File | Purpose |
 | --- | --- |
 | `.claimcheck/spec.md` | Acceptance criteria as `- [ ] 1. text` lines |
-| `.claimcheck/spec.lock` | JSON with a hash per criterion and the freeze time. Edit it and the checks fail |
+| `.claimcheck/spec.lock` | JSON with a hash per criterion and the freeze time. The spec is hashed with line endings and any BOM normalised, so Windows and Linux agree |
 | `.claimcheck/claims.yaml` | One entry per claim. See [`examples/claims.yaml`](examples/claims.yaml) |
-| `.claimcheck/ledger.jsonl` | Append-only. A `claim` line per claim per run, and an `outcome` line when something resolves it. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
+| `.claimcheck/ledger.jsonl` | Append-only. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
 | `.claimcheck/config.toml` | Settings. See [`examples/config.toml`](examples/config.toml) |
+| `.claimcheck/setup.json` | The files `init` changed outside `.claimcheck/`, so the first commit includes them |
 
 ### Config
+
+`init` writes this, with your detected test command and ignore list. A value of the wrong type is reported with the key's name instead of being silently ignored.
 
 ```toml
 version = 1
 base = "main"                       # the ref diffs are measured against
-test_cmd = "python -m pytest -q"    # reran once per planted bug
-ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt"]   # not product code
-require_full_coverage = true        # hook rejects uncovered code files (false = warn)
+test_cmd = "npm test"               # rerun once per planted bug
+ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", ".gitignore", ".github/**", "tests/**"]
+require_full_coverage = true        # the hook rejects uncovered code files (false = warn)
 
 [checker]
-provider = "claude"                 # "claude" or "stub"
+provider = "auto"                   # "auto" | "claude" | "claude-cli" | "stub"
 model = "claude-opus-5-5"
 
 [mutate]
 max_mutants = 50
-timeout_s = 600                     # per test run
+timeout_s = 600                     # per test run; the whole process tree is killed on timeout
 min_catch_rate = 0.0                # 0.0 reports only; raise it to gate
 ```
+
+`ignore` uses glob matching where `*` and `**` both cross folders, and a leading `**/` also matches the top level.
 
 ### The four kinds of planted bug
 
@@ -560,77 +471,83 @@ Mutations are text-level and language-agnostic. They apply only to lines the dif
 | Swapped arguments | `f(a, b)` becomes `f(b, a)` |
 | Boundary shift | `>=` becomes `>`, and `<` becomes `<=` |
 
-Because the mutations are text edits, now and then a mutant will not compile. That counts as **killed**, since the test command fails. A change the tests notice is a change the tests notice.
+A mutant that does not compile counts as killed, because the test command fails.
 
 ## Troubleshooting
 
-**`claimcheck: .claimcheck/mutate.lock exists: a previous mutate run did not finish`**
-A run was interrupted while it had your files modified. First check `git status` to see the state of your files, then run `claimcheck mutate --restore`. It copies the backed-up originals back and removes the lock.
+**`mutate.lock exists: a previous mutate run did not finish`**
+`mutate` edits your files while it plants bugs, and it restores them even if it fails or you press Ctrl+C. The lock only stays behind if a restore itself failed. Run `claimcheck mutate --restore`. It puts back a file only when the file still holds the planted bug, and leaves any file you edited since. For those it prints which file and why, keeps the backup in `.claimcheck/mutate-backup/`, and exits 6. Sort it out by hand, then delete `.claimcheck/mutate.lock`.
+
+**`... line 6 no longer matches the diff`**
+You edited a file after committing it. `mutate` checks every planted bug against the current file before it touches anything, so nothing was changed. Commit or stash your edits and rerun.
 
 **The commit is rejected with "staged paths with no claim covering them"**
-A changed file is not listed in any claim's `files`. Add it to a claim, add it to `ignore` if it is not product code, or set `require_full_coverage = false` to turn the error into a warning.
+A changed file is not listed in any claim's `files`. Add it to a claim, add it to `ignore` if it is not product code, or set `require_full_coverage = false` to warn instead.
 
 **The commit is rejected with "files not in the staged diff"**
-A claim lists a file that is not in this commit. Claims describe one commit's diff. Remove the file from the claim or stage it.
+A claim lists a file that is not in this commit. Claims describe one commit's diff.
 
 **`spec drifted from lock` (exit 3)**
-`spec.md` no longer matches `spec.lock`. If you did not mean to change it, `git checkout .claimcheck/spec.md`. If the criterion really was wrong, finish or abandon the open diff, then start a new branch and freeze again.
+`spec.md` no longer matches `spec.lock`. If you did not mean to change it, `git checkout .claimcheck/spec.md`. If the criterion really was wrong, start a new task on a new branch and freeze again.
 
 **`refusing to re-freeze with an open diff`**
-Once a lock exists, freezing again is only allowed on a clean tree with no commits ahead of the base ref. This is the rule that stops late criteria.
+Code has already changed on this branch. Freezing a new spec is allowed until then, so start the next task on a fresh branch from the base.
+
+**`base ref 'main' was not found`**
+The branch named in `config.toml` does not exist here, often in a shallow CI clone. Fetch it (`git fetch origin main`), correct `base`, or pass `--base origin/main`.
 
 **The baseline tests fail (exit 5)**
-claimcheck runs your tests once before planting any bugs. If they do not pass on the unmodified code there is nothing to measure. Fix the tests first.
+claimcheck runs your tests once before planting anything. If they fail on the unmodified code there is nothing to measure.
+
+**Part of my diff was withheld from the checker**
+That is the secret filter. The `sent` section of the check result names the files and counts the redactions. A file such as `.env` should not be committed at all: `claimcheck init` reports any that are.
 
 **A planted bug survived but is not really a bug**
-Some text changes do not change behavior. In a `clamp` function, `if x < lo` and `if x <= lo` return the same value at the boundary, so no test can tell them apart. This is the known blind spot of mutation testing. Read the survivor list in Desk, judge each one, and use **Accept risk** with a reason for the harmless ones.
+Some text changes do not change behavior. In a `clamp` function, `if x < lo` and `if x <= lo` return the same value at the boundary, so no test can tell them apart. Read the survivors, judge each, and accept the risk with a reason for the harmless ones.
 
-**The hook uses the wrong Python**
-`init` writes the path of the Python that ran it into `.git/hooks/pre-commit`. If you later recreate the virtual environment, run `claimcheck init` again from the new one, or edit that line.
+**The hook does nothing**
+Run `claimcheck status`. `init` installs the hook where git reads it, including with `core.hooksPath` and in worktrees. If you recreate your virtual environment, run `claimcheck init` again so the hook points at the new Python.
 
-**Windows**
-Git Bash and PowerShell both work. The hook is a `sh` script, which Git for Windows runs itself. Line-ending warnings from git are harmless.
+**Animations look wrong**
+Use `--no-animation`, or set `NO_COLOR=1`. On older Windows consoles, Windows Terminal renders the box drawing and colors correctly.
 
 ## Limits, stated plainly
 
-- **The checker only sees the diff.** The `.claimcheck/` folder is removed from it, so the checker never sees your confidence, your evidence or earlier ledger lines. It cannot run your code. A claim that depends on runtime behavior, other files or data comes back `UNVERIFIABLE`, which is honest but not a pass.
+- **The checker only sees the diff.** Anything under `.claimcheck/` is removed from it, so it never sees your confidence, your evidence or earlier ledger lines. It cannot run your code. A claim that depends on runtime behavior comes back `UNVERIFIABLE`, which is honest but not a pass.
 - **The catch rate measures your tests, not your code.** A high rate means your tests would notice small breakages in the lines you added. It does not mean the code is right.
-- **Four kinds of planted bug.** Real bugs are more varied. The rate is a floor for how responsive your tests are, not a full audit.
-- **Equivalent mutants exist.** Some planted bugs do not change behavior and will always survive. Judge survivors, do not just count them.
-- **Only added lines are mutated.** Bugs in untouched code that the change relies on are out of scope.
-- **Confidence is not calibrated yet.** Version 1 makes sure the data exists. The calibration curve (how often a given stated confidence turns out right) comes once the ledger has real outcomes in it.
-- **The criteria are only as good as the person who wrote them.** claimcheck proves the code matches the frozen spec and that the spec was not bent afterward. It cannot tell you the spec was the right one.
-- **`init` does not detect your stack.** You set `test_cmd` and `ignore` yourself.
+- **Four kinds of planted bug.** Real bugs are more varied, so the rate is a floor for how responsive your tests are, not a full audit.
+- **Equivalent mutants exist.** Some planted bugs do not change behavior and always survive. Judge survivors, do not just count them.
+- **Only added lines are mutated.** Bugs in untouched code that the change relies on are out of scope. Files that are not valid UTF-8 are skipped and counted.
+- **The secret filter is a safety net.** See [What is sent to Claude](#what-is-sent-to-claude).
+- **Confidence is not calibrated yet.** Version 1 makes sure the data exists. The calibration curve comes once the ledger has real outcomes in it.
+- **The spec is only as good as the person who wrote it.** claimcheck proves the code matches the frozen spec and that the spec was not bent afterward. It cannot tell you the spec was the right one.
+- **The animated setup is verified by tests and rendered frames, not by every terminal.** If something looks wrong in yours, `--no-animation` gives the plain flow.
 
 ## Development
-
-Python:
 
 ```bash
 python -m venv .venv
 .venv/Scripts/activate          # on macOS and Linux: source .venv/bin/activate
 pip install -e ".[dev,claude]"
-pytest                          # 102 tests
-```
+pytest                          # about 330 tests, around 100 seconds
 
-Desk:
-
-```bash
 cd app
 npm install
-npm test                        # 54 tests
-npm run screenshot -- <repo> board.png    # render the board headless to a PNG
+npm test                        # type checks, builds, then about 90 tests
+npm run build                   # bundles the main process, the preload and the page into dist/
 ```
 
-The screenshots in this README were made with that last command.
+Desk is written entirely in TypeScript (strict, no `any`) and a test fails if any hand-written JavaScript appears.
 
 ```
-src/claimcheck/   the CLI: spec, claims, checker, mutate, ledger, hook, providers
-tests/            Python tests
+src/claimcheck/   the CLI: init flow, onboarding, spec conversation, checker, mutate, ledger, hook, redaction, providers
+tests/            Python tests; fixtures/secret_cases.json is shared with the Desk tests
 app/              the Desk Electron app
 examples/         a sample spec, claims file, config and ledger
 docs/screenshots/ images used in this README
 ```
+
+The terminal screens in this README are real frames from the onboarding run rendered to images. The Desk images come from the app's own `npm run screenshot` command, using a small demo project.
 
 ## License
 

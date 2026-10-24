@@ -8,13 +8,12 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
-import subprocess
 import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import ClaimcheckError
+from . import ClaimcheckError, gitio
 
 CLAIMCHECK_DIR = ".claimcheck"
 CONFIG_FILE = "config.toml"
@@ -26,7 +25,7 @@ RUNS_DIR = "runs"
 MUTATE_BACKUP_DIR = "mutate-backup"
 MUTATE_SENTINEL = "mutate.lock"
 
-DEFAULT_IGNORE = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt"]
+DEFAULT_IGNORE = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml"]
 
 DEFAULT_CONFIG_TOML = """\
 # claimcheck configuration — written by `claimcheck init`, edit freely.
@@ -79,19 +78,28 @@ class Config:
 def find_repo_root(start: Path | None = None) -> Path:
     """Return the git top-level directory for `start` (default: cwd)."""
     cwd = Path(start) if start else Path.cwd()
-    proc = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-    )
-    if proc.returncode != 0:
+    out = gitio.git(cwd, "rev-parse", "--show-toplevel", check=False).strip()
+    if not out:
         raise ClaimcheckError(f"not a git repository: {cwd}")
-    return Path(proc.stdout.strip()).resolve()
+    return Path(out).resolve()
 
 
 def cc_dir(repo: Path) -> Path:
     return repo / CLAIMCHECK_DIR
+
+
+def _want(table: dict, key: str, kind, where: str, default):
+    """table[key] if present and of the right type, else a ClaimcheckError that names the key."""
+    if key not in table:
+        return default
+    v = table[key]
+    ok = isinstance(v, kind) and not (kind is int and isinstance(v, bool))
+    if kind is float:
+        ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+    if not ok:
+        want = {str: "a string", bool: "true or false", int: "a whole number", float: "a number", list: "a list of strings"}[kind]
+        raise ClaimcheckError(f"invalid config.toml: {where}{key} must be {want} (got {v!r})")
+    return v
 
 
 def load(repo: Path) -> Config:
@@ -101,33 +109,50 @@ def load(repo: Path) -> Config:
     if not path.exists():
         return cfg
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     except tomllib.TOMLDecodeError as e:
         raise ClaimcheckError(f"invalid config.toml: {e}")
-    cfg.base = str(data.get("base", cfg.base))
-    cfg.test_cmd = str(data.get("test_cmd", cfg.test_cmd))
-    cfg.ignore = [str(g) for g in data.get("ignore", cfg.ignore)]
-    cfg.require_full_coverage = bool(data.get("require_full_coverage", cfg.require_full_coverage))
-    checker = data.get("checker", {}) or {}
-    cfg.checker_provider = str(checker.get("provider", cfg.checker_provider))
-    cfg.checker_model = str(checker.get("model", cfg.checker_model))
-    mutate = data.get("mutate", {}) or {}
-    cfg.mutate_max_mutants = int(mutate.get("max_mutants", cfg.mutate_max_mutants))
-    cfg.mutate_timeout_s = int(mutate.get("timeout_s", cfg.mutate_timeout_s))
-    cfg.mutate_min_catch_rate = float(mutate.get("min_catch_rate", cfg.mutate_min_catch_rate))
+    cfg.base = _want(data, "base", str, "", cfg.base)
+    cfg.test_cmd = _want(data, "test_cmd", str, "", cfg.test_cmd)
+    ignore = _want(data, "ignore", list, "", cfg.ignore)
+    if not all(isinstance(g, str) for g in ignore):
+        raise ClaimcheckError("invalid config.toml: ignore must be a list of strings")
+    cfg.ignore = list(ignore)
+    cfg.require_full_coverage = _want(data, "require_full_coverage", bool, "", cfg.require_full_coverage)
+    for name in ("checker", "mutate"):
+        if name in data and not isinstance(data[name], dict):
+            raise ClaimcheckError(f"invalid config.toml: [{name}] must be a table (got {data[name]!r})")
+    checker = data.get("checker", {})
+    cfg.checker_provider = _want(checker, "provider", str, "checker.", cfg.checker_provider)
+    cfg.checker_model = _want(checker, "model", str, "checker.", cfg.checker_model)
+    mutate = data.get("mutate", {})
+    cfg.mutate_max_mutants = _want(mutate, "max_mutants", int, "mutate.", cfg.mutate_max_mutants)
+    cfg.mutate_timeout_s = _want(mutate, "timeout_s", int, "mutate.", cfg.mutate_timeout_s)
+    cfg.mutate_min_catch_rate = float(_want(mutate, "min_catch_rate", float, "mutate.", cfg.mutate_min_catch_rate))
     return cfg
+
+
+def _glob_variants(g: str) -> list[str]:
+    """fnmatch cannot match zero directories for `**/`, so also try the pattern without it."""
+    out = [g]
+    if g.startswith("**/"):
+        out.append(g[3:])
+    if "/**/" in g:
+        out.append(g.replace("/**/", "/"))
+    return out
 
 
 def is_ignored(path: str, globs: list[str]) -> bool:
     """fnmatch a repo-relative POSIX path against the ignore globs.
 
     `*` and `**` both match across separators (fnmatch semantics), so `docs/**`
-    covers every depth and `*.md` covers nested markdown.
+    covers every depth and `*.md` covers nested markdown. A leading `**/` also
+    matches no directory at all, so `**/*.md` covers `README.md`.
     """
     p = path.replace("\\", "/")
     if p.startswith(CLAIMCHECK_DIR + "/"):
         return True
-    return any(fnmatch.fnmatchcase(p, g) for g in globs)
+    return any(fnmatch.fnmatchcase(p, v) for g in globs for v in _glob_variants(g))
 
 
 def utc_now_iso() -> str:
@@ -149,8 +174,5 @@ def sha256_text(text: str) -> str:
 
 def repo_id(repo: Path) -> str:
     """sha256 of the origin URL, or of the absolute path when there is no origin."""
-    proc = subprocess.run(
-        ["git", "remote", "get-url", "origin"], cwd=repo, capture_output=True, text=True
-    )
-    source = proc.stdout.strip() if proc.returncode == 0 and proc.stdout.strip() else str(repo.resolve())
-    return sha256_text(source)
+    url = gitio.git(repo, "remote", "get-url", "origin", check=False).strip()
+    return sha256_text(url or str(repo.resolve()))
