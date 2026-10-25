@@ -37,34 +37,34 @@ def _draft_reply(user: str) -> str:
 
 def make_stub_provider() -> Provider:
     """The offline provider: canned replies, no model."""
-    return make_provider("stub", complete=_complete)
+    return make_provider("stub", complete=_answer_request)
 
 
-def _claim_ids_in(user: str) -> list[str]:
+def _find_claim_ids(user: str) -> list[str]:
     """The claim ids in the prompt's claims block; none if it is missing or not JSON."""
-    m = _CLAIMS_BLOCK.search(user)
-    if not m:
+    match = _CLAIMS_BLOCK.search(user)
+    if not match:
         return []
     try:
-        return [str(c["id"]) for c in json.loads(m.group(1))]
+        return [str(char["id"]) for char in json.loads(match.group(1))]
     except (json.JSONDecodeError, TypeError, KeyError):
         # A prompt the stub cannot read gets an empty verdict list, which the checker reports.
         return []
 
 
-def _complete(request: Request) -> str:
+def _answer_request(request: Request) -> str:
     """The stub's reply: the file CLAIMCHECK_STUB_FILE names, an interview round, or UNVERIFIABLE verdicts."""
-    path = config.stub_reply_file()
+    path = config.read_stub_reply_file()
     if path:
-        with open(path, encoding="utf-8") as f:
-            return f.read()
+        with open(path, encoding="utf-8") as file_path:
+            return file_path.read()
     if "questions" in request["schema"].get("properties", {}):
         return _draft_reply(request["user"])
     return json.dumps(
         {
             "verdicts": [
-                {"id": i, "verdict": "UNVERIFIABLE", "reason": "stub provider", "evidence": []}
-                for i in _claim_ids_in(request["user"])
+                {"id": claim_id, "verdict": "UNVERIFIABLE", "reason": "stub provider", "evidence": []}
+                for claim_id in _find_claim_ids(request["user"])
             ]
         }
     )

@@ -60,19 +60,19 @@ def make_detection(*, stack: Stack | None, others: list[str]) -> Detection:
         "stack": stack,
         "others": others,
         "test_cmd": stack["test_cmd"] if stack else None,
-        "ignore": BASE_IGNORE + [g for g in extra if g not in BASE_IGNORE],
+        "ignore": BASE_IGNORE + [glob for glob in extra if glob not in BASE_IGNORE],
     }
 
 
-def _node(repo: Path) -> Stack | None:
+def _detect_node(repo: Path) -> Stack | None:
     pkg = repo / "package.json"
     if not pkg.is_file():
         return None
     try:
-        data = json.loads(pkg.read_text(encoding="utf-8-sig"))
+        raw = json.loads(pkg.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
-        data = {}
-    script = ((data.get("scripts") or {}).get("test") or "") if isinstance(data, dict) else ""
+        raw = {}
+    script = ((raw.get("scripts") or {}).get("test") or "") if isinstance(raw, dict) else ""
     if not script or _NPM_DEFAULT_TEST in script:
         return None
     runner = "npm test"
@@ -83,9 +83,9 @@ def _node(repo: Path) -> Stack | None:
     return make_stack("node", test_cmd=runner, test_globs=_TEST_DIRS + ["__tests__/**", "**/__tests__/**", "*.test.*", "*.spec.*"])
 
 
-def _python(repo: Path) -> Stack | None:
+def _detect_python(repo: Path) -> Stack | None:
     markers = ("pyproject.toml", "setup.cfg", "setup.py", "pytest.ini", "tox.ini", "requirements.txt")
-    if not any((repo / m).is_file() for m in markers):
+    if not any((repo / marker).is_file() for marker in markers):
         return None
     cmd = "python -m unittest" if _has_unittest_only(repo) else "python -m pytest -q"
     return make_stack(
@@ -118,13 +118,13 @@ def _go(repo: Path) -> Stack | None:
     return None
 
 
-def _rust(repo: Path) -> Stack | None:
+def _detect_rust(repo: Path) -> Stack | None:
     if (repo / "Cargo.toml").is_file():
         return make_stack("rust", test_cmd="cargo test", test_globs=["tests/**", "**/tests/**"])
     return None
 
 
-def _jvm(repo: Path) -> Stack | None:
+def _detect_jvm(repo: Path) -> Stack | None:
     if (repo / "pom.xml").is_file():
         return make_stack("maven", test_cmd="mvn -q test", test_globs=["src/test/**", "**/src/test/**"])
     for name in ("build.gradle", "build.gradle.kts"):
@@ -134,19 +134,19 @@ def _jvm(repo: Path) -> Stack | None:
     return None
 
 
-_DETECTORS = (_node, _python, _go, _rust, _jvm)
+_DETECTORS = (_detect_node, _detect_python, _go, _detect_rust, _detect_jvm)
 
 
 def detect(repo: Path) -> Detection:
     """First match wins. Other stacks found are named so `init` can mention them."""
-    found = [s for s in (d(repo) for d in _DETECTORS) if s is not None]
-    return make_detection(stack=found[0] if found else None, others=[s["name"] for s in found[1:]])
+    found = [text for text in (detector(repo) for detector in _DETECTORS) if text is not None]
+    return make_detection(stack=found[0] if found else None, others=[message["name"] for message in found[1:]])
 
 
 def render_config(det: Detection) -> str:
     """The config.toml text `init` writes. Falls back to the stock pytest command when nothing matched."""
     test_cmd = det["test_cmd"] or "python -m pytest -q"
-    ignore = ", ".join(json.dumps(g) for g in det["ignore"])
+    ignore = ", ".join(json.dumps(glob) for glob in det["ignore"])
     return f"""\
 # claimcheck configuration — written by `claimcheck init`, edit freely.
 version = 1
@@ -178,8 +178,8 @@ def ensure_gitignore(repo: Path) -> list[str]:
         return []
     sep = "" if not existing or existing.endswith("\n") else "\n"
     block = sep + ("\n" if existing and not existing.endswith("\n\n") else "") + "# claimcheck scratch output\n" + "\n".join(missing) + "\n"
-    with open(path, "a", encoding="utf-8", newline="\n") as f:
-        f.write(block)
+    with open(path, "a", encoding="utf-8", newline="\n") as file:
+        file.write(block)
     return missing
 
 
@@ -188,7 +188,7 @@ SECRET_IGNORE_LINES = [".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p
 _ENV_LINES = (".env", ".env.*", "!.env.example")
 
 
-def _separator_after(text: str) -> str:
+def _make_separator_after(text: str) -> str:
     """The blank line new lines need after existing text: none for an empty file."""
     if not text:
         return ""
@@ -207,14 +207,14 @@ def ensure_secrets_ignored(repo: Path) -> dict:
     have = {line.strip() for line in text.splitlines()}
     missing = [line_text for line_text in SECRET_IGNORE_LINES if line_text not in have]
     # Already covered, perhaps by a pattern like .env* or a global rule.
-    if gitio.is_ignored(repo, ".env"):
+    if gitio.is_ignored(repo, path=".env"):
         missing = [line_text for line_text in missing if line_text not in _ENV_LINES]
     added: list[str] = []
     if missing or not existed:
-        sep = _separator_after(text)
+        sep = _make_separator_after(text)
         block = ("\n" if text and sep == "\n" else "") + "# secrets: never commit these\n" + "\n".join(missing) + "\n" if missing else ""
-        with open(path, "a" if existed else "w", encoding="utf-8", newline="\n") as f:
-            f.write(sep + block if existed else block)
+        with open(path, "a" if existed else "w", encoding="utf-8", newline="\n") as file:
+            file.write(sep + block if existed else block)
         added = missing
-    tracked = [p for p in gitio.tracked_files(repo) if redact.is_secret_path(p)]
+    tracked = [tracked_file for tracked_file in gitio.list_tracked_files(repo) if redact.is_secret_path(tracked_file)]
     return {"created": not existed, "added": added, "tracked": tracked}

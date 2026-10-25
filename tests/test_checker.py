@@ -11,8 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import checker, providers
-from claimcheck import claims as CL
+from claimcheck import checker, claims, providers
 from claimcheck.spec import make_criterion
 from fakes import make_capturing_provider, make_failing_provider, make_sequence_provider
 
@@ -24,7 +23,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 def test_ac14_prompt_is_pure_and_redacted(tmp_path):
     (tmp_path / "chat.log").write_text("ZZ_SENTINEL_CHAT", encoding="utf-8")
     criteria = [make_criterion(id=1, text="sub returns a - b"), make_criterion(id=2, text="is_adult inclusive")]
-    cf, _ = CL.load_text(
+    cf, _ = claims.load_text(
         "version: 1\nclaims:\n"
         "  - id: c1\n    claim: 'sub returns a minus b'\n    confidence: 0.123456\n"
         "    criteria: [1]\n    files: ['src/calc.py']\n"
@@ -34,24 +33,24 @@ def test_ac14_prompt_is_pure_and_redacted(tmp_path):
     # The un-redacted claims object goes straight in: build_prompt must redact itself.
     assert cf is not None
     assert cf["claims"][0]["confidence"] == 0.123456 and "ZZ_SENTINEL_VERIFIED" in cf["claims"][0]["verified_by"]
-    system, user = checker.build_prompt(criteria, diff, cf)
+    system, user = checker.build_prompt(criteria, diff_text=diff, claims=cf)
     blob = system + user
     for bad in ("0.123456", "ZZ_SENTINEL_VERIFIED", "ZZ_SENTINEL_CHAT"):
         assert bad not in blob
     for good in ("sub returns a - b", "is_adult inclusive", "sub returns a minus b", "obs: sub(5,3) is 2", diff):
         assert good in blob
-    assert checker.build_prompt(criteria, diff, cf) == (system, user)
-    assert checker.build_prompt(criteria, diff, cf["claims"]) == (system, user)
-    assert checker.build_prompt(criteria, diff, CL.redact(cf)) == (system, user)
+    assert checker.build_prompt(criteria, diff_text=diff, claims=cf) == (system, user)
+    assert checker.build_prompt(criteria, diff_text=diff, claims=cf["claims"]) == (system, user)
+    assert checker.build_prompt(criteria, diff_text=diff, claims=claims.redact(cf)) == (system, user)
 
 
 # ---- AC 15 ---------------------------------------------------------------
 
 def test_ac15_load_names():
     assert providers.load("stub")["name"] == "stub"
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(ValueError) as error:
         providers.load("gpt")
-    assert "gpt" in str(e.value)
+    assert "gpt" in str(error.value)
 
 
 def test_ac15_providers_package_does_not_import_anthropic():
@@ -66,12 +65,12 @@ def test_ac16_import_without_sdk_is_clear(monkeypatch):
     if importlib.util.find_spec("anthropic") is not None:
         pytest.skip("anthropic is installed here")
     sys.modules.pop("claimcheck.providers.claude", None)
-    with pytest.raises(ImportError) as e:
+    with pytest.raises(ImportError) as error:
         importlib.import_module("claimcheck.providers.claude")
-    assert 'pip install "claimcheck[claude]"' in str(e.value)
+    assert 'pip install "claimcheck[claude]"' in str(error.value)
 
 
-def _fake_anthropic(monkeypatch, reply_text: str):
+def _install_fake_anthropic(monkeypatch, *, reply_text: str):
     calls = []
 
     def create(**kwargs):
@@ -79,23 +78,23 @@ def _fake_anthropic(monkeypatch, reply_text: str):
         calls.append(kwargs)
         return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=reply_text)])
 
-    def anthropic_client(*a, **k):
+    def make_anthropic_client(*a, **k):
         """Stand-in for the anthropic.Anthropic constructor: record its options."""
         calls.append({"client": k})
         return types.SimpleNamespace(messages=types.SimpleNamespace(create=create))
 
     fake = types.ModuleType("anthropic")
-    fake.__dict__["Anthropic"] = anthropic_client
+    fake.__dict__["Anthropic"] = make_anthropic_client
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     sys.modules.pop("claimcheck.providers.claude", None)
     return calls
 
 
 def test_ac16_claude_provider_request_shape(monkeypatch):
-    calls = _fake_anthropic(monkeypatch, '{"verdicts": []}')
+    calls = _install_fake_anthropic(monkeypatch, reply_text='{"verdicts": []}')
     prov = providers.load("claude")
-    out = providers.ask_model(prov, system="SYS", user="USER", schema=checker.VERDICT_SCHEMA)
-    assert out == '{"verdicts": []}'
+    output = providers.ask_model(prov, system="SYS", user="USER", schema=checker.VERDICT_SCHEMA)
+    assert output == '{"verdicts": []}'
     assert calls[0] == {"client": {"timeout": 300}}
     kw = calls[1]
     assert kw["model"] == "claude-opus-5-5"
@@ -112,104 +111,104 @@ def test_ac16_claude_provider_request_shape(monkeypatch):
 
 def test_ac17_stub_default_marks_all_unverifiable():
     system, user = checker.build_prompt(
-        [make_criterion(id=1, text="x")], "+x\n", [{"id": "a", "claim": "c", "criteria": [], "files": ["f"], "kill_condition": "obs: y"}, {"id": "b", "claim": "d", "criteria": [], "files": ["f"], "kill_condition": "obs: z"}]
+        [make_criterion(id=1, text="x")], diff_text="+x\n", claims=[{"id": "a", "claim": "c", "criteria": [], "files": ["f"], "kill_condition": "obs: y"}, {"id": "b", "claim": "d", "criteria": [], "files": ["f"], "kill_condition": "obs: z"}]
     )
-    out = json.loads(providers.ask_model(providers.load("stub"), system=system, user=user, schema=checker.VERDICT_SCHEMA))
-    assert [(v["id"], v["verdict"], v["reason"]) for v in out["verdicts"]] == [
+    output = json.loads(providers.ask_model(providers.load("stub"), system=system, user=user, schema=checker.VERDICT_SCHEMA))
+    assert [(each_verdict["id"], each_verdict["verdict"], each_verdict["reason"]) for each_verdict in output["verdicts"]] == [
         ("a", "UNVERIFIABLE", "stub provider"),
         ("b", "UNVERIFIABLE", "stub provider"),
     ]
 
 
-def test_ac17_stub_file(monkeypatch, tmp_path):
-    f = tmp_path / "v.json"
-    f.write_text("{\"verdicts\": [{\"id\": \"q\", \"verdict\": \"REFUTED\", \"reason\": \"r\", \"evidence\": []}]}", encoding="utf-8")
-    monkeypatch.setenv("CLAIMCHECK_STUB_FILE", str(f))
-    assert providers.ask_model(providers.load("stub"), system="s", user="u", schema={}) == f.read_text(encoding="utf-8")
+def test_ac17_stub_file(monkeypatch, *, tmp_path):
+    file = tmp_path / "v.json"
+    file.write_text("{\"verdicts\": [{\"id\": \"q\", \"verdict\": \"REFUTED\", \"reason\": \"r\", \"evidence\": []}]}", encoding="utf-8")
+    monkeypatch.setenv("CLAIMCHECK_STUB_FILE", str(file))
+    assert providers.ask_model(providers.load("stub"), system="s", user="u", schema={}) == file.read_text(encoding="utf-8")
 
 
 # ---- AC 18 ---------------------------------------------------------------
 
 def test_ac18_schema_shape():
-    s = checker.VERDICT_SCHEMA
-    assert s["additionalProperties"] is False
-    item = s["properties"]["verdicts"]["items"]
-    assert item["additionalProperties"] is False
-    assert item["properties"]["verdict"]["enum"] == ["SUPPORTED", "REFUTED", "UNVERIFIABLE"]
-    assert set(item["required"]) == {"id", "verdict", "reason", "evidence"}
+    text = checker.VERDICT_SCHEMA
+    assert text["additionalProperties"] is False
+    entry = text["properties"]["verdicts"]["items"]
+    assert entry["additionalProperties"] is False
+    assert entry["properties"]["verdict"]["enum"] == ["SUPPORTED", "REFUTED", "UNVERIFIABLE"]
+    assert set(entry["required"]) == {"id", "verdict", "reason", "evidence"}
 
 
 def test_ac18_validate_verdicts():
     good = {"verdicts": [{"id": "a", "verdict": "SUPPORTED", "reason": "", "evidence": []}]}
-    assert checker.validate_verdicts(good, {"a"}) == []
-    assert any("missing verdicts for ['b']" in e for e in checker.validate_verdicts(good, {"a", "b"}))
+    assert checker.validate_verdicts(good, claim_ids={"a"}) == []
+    assert any("missing verdicts for ['b']" in error for error in checker.validate_verdicts(good, claim_ids={"a", "b"}))
     unknown = {"verdicts": [{"id": "zz", "verdict": "SUPPORTED", "reason": "", "evidence": []}]}
-    assert any("unknown id" in e for e in checker.validate_verdicts(unknown, {"a"}))
+    assert any("unknown id" in problem for problem in checker.validate_verdicts(unknown, claim_ids={"a"}))
     extra = {"verdicts": [{"id": "a", "verdict": "SUPPORTED", "reason": "", "evidence": [], "x": 1}]}
-    assert any("wrong keys" in e for e in checker.validate_verdicts(extra, {"a"}))
+    assert any("wrong keys" in message for message in checker.validate_verdicts(extra, claim_ids={"a"}))
 
 
 def test_ac18_retry_once_then_succeed():
     ok = json.dumps({"verdicts": [{"id": "a", "verdict": "REFUTED", "reason": "r", "evidence": ["+x"]}]})
     p, calls = make_sequence_provider("not json", ok)
-    out = checker.ask(p, "s", "u", ["a"])
+    output = checker.ask(p, system="s", user="u", claim_ids=["a"])
     assert len(calls) == 2
-    assert out[0]["verdict"] == "REFUTED"
+    assert output[0]["verdict"] == "REFUTED"
 
 
 def test_ac18_two_failures_fill_unverifiable():
     partial = json.dumps({"verdicts": [{"id": "a", "verdict": "SUPPORTED", "reason": "r", "evidence": []}]})
     p, calls = make_sequence_provider("garbage", partial)
-    out = checker.ask(p, "s", "u", ["a", "b"])
+    stdout = checker.ask(p, system="s", user="u", claim_ids=["a", "b"])
     assert len(calls) == 2
     # Salvaged from the second reply.
-    assert out[0]["verdict"] == "SUPPORTED"
-    assert out[1] == {"id": "b", "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
+    assert stdout[0]["verdict"] == "SUPPORTED"
+    assert stdout[1] == {"id": "b", "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
 
 
 # ---- AC 19 / 20 ----------------------------------------------------------
 
-def _run_file(repo, kind):
+def _run_file(repo, *, kind):
     files = sorted((repo.cc / "runs").glob(f"*-{kind}.json"))
     assert files, f"no {kind} run file"
     return json.loads(files[-1].read_text(encoding="utf-8"))
 
 
-def test_ac19_check_exit_0_and_run_file(calc_repo, capsys):
+def test_ac19_check_exit_0_and_run_file(calc_repo, *, capsys):
     assert calc_repo.cli("check", "--provider", "stub") == 0
     printed = json.loads(capsys.readouterr().out)
-    saved = _run_file(calc_repo, "check")
+    saved = _run_file(calc_repo, kind="check")
     assert printed == saved
     assert saved["provider"] == "stub"
     assert saved["head"] == calc_repo.sha()
     assert saved["base"] == calc_repo.sha("main")
     assert len(saved["spec_lock"]) == 64
-    assert [v["id"] for v in saved["verdicts"]] == ["c1", "c2"]
+    assert [verdict["id"] for verdict in saved["verdicts"]] == ["c1", "c2"]
 
 
-def test_ac19_worktree_flag(calc_repo, capsys):
+def test_ac19_worktree_flag(calc_repo, *, capsys):
     assert calc_repo.cli("check", "--provider", "stub", "--worktree") == 0
     assert json.loads(capsys.readouterr().out)["head"] == "worktree"
 
 
 def test_ac19_exit_3_on_spec_refusal(calc_repo):
-    calc_repo.write(".claimcheck/spec.md", "- [ ] 1. different\n- [ ] 2. x\n")
+    calc_repo.write(".claimcheck/spec.md", text="- [ ] 1. different\n- [ ] 2. x\n")
     calc_repo.commit("drift")
     assert calc_repo.cli("check", "--provider", "stub") == 3
 
 
 def test_ac19_exit_4_on_bad_claims(calc_repo):
-    calc_repo.write(".claimcheck/claims.yaml", "version: 1\nclaims: {}\n")
+    calc_repo.write(".claimcheck/claims.yaml", text="version: 1\nclaims: {}\n")
     calc_repo.commit("bad claims")
     assert calc_repo.cli("check", "--provider", "stub") == 4
 
 
-def test_ac19_exit_5_on_provider_error(calc_repo, capsys):
+def test_ac19_exit_5_on_provider_error(calc_repo, *, capsys):
     assert calc_repo.cli("check", "--provider", "nope") == 5
     assert "unknown provider" in capsys.readouterr().err
 
 
-def test_ac19_exit_5_when_sdk_raises(calc_repo, monkeypatch, capsys):
+def test_ac19_exit_5_when_sdk_raises(calc_repo, *, monkeypatch, capsys):
     class BoomError(Exception):
         pass
 
@@ -218,10 +217,10 @@ def test_ac19_exit_5_when_sdk_raises(calc_repo, monkeypatch, capsys):
     assert "BoomError: kaboom" in capsys.readouterr().err
 
 
-def test_ac20_full_offline_refuted(calc_repo, monkeypatch, capsys):
+def test_ac20_full_offline_refuted(calc_repo, *, monkeypatch, capsys):
     monkeypatch.setenv("CLAIMCHECK_STUB_FILE", str(FIXTURES / "stub_verdicts.json"))
     assert calc_repo.cli("check", "--provider", "stub") == 2
-    saved = _run_file(calc_repo, "check")
+    saved = _run_file(calc_repo, kind="check")
     fixture = json.loads((FIXTURES / "stub_verdicts.json").read_text(encoding="utf-8"))
     assert saved["verdicts"] == fixture["verdicts"]
 
@@ -229,11 +228,11 @@ def test_ac20_full_offline_refuted(calc_repo, monkeypatch, capsys):
 # ---- blindness holds end to end ------------------------------------------
 
 @pytest.mark.parametrize("extra", [[], ["--worktree"]])
-def test_checker_prompt_never_contains_author_confidence(calc_repo, monkeypatch, extra):
+def test_checker_prompt_never_contains_author_confidence(calc_repo, *, monkeypatch, extra):
     # claims.yaml is committed on the branch, so it is part of base...HEAD. The checker must
     # still never see the confidence or verified_by text inside it, nor earlier ledger lines.
 
-    calc_repo.write(".claimcheck/ledger.jsonl", '{"leak": "LEDGER_SENTINEL"}\n')
+    calc_repo.write(".claimcheck/ledger.jsonl", text='{"leak": "LEDGER_SENTINEL"}\n')
     calc_repo.commit("ledger", date="2020-01-06T00:00:00+00:00")
     cap, prompts = make_capturing_provider()
     monkeypatch.setattr(providers, "load", lambda name, model=None: cap)

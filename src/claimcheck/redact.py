@@ -40,14 +40,14 @@ SECRET_DIRS = {".ssh", ".aws", ".gnupg", ".kube", ".docker", "secrets", ".secret
 
 def is_secret_path(path: str) -> bool:
     """Whether a path looks like a secret store (a .env, a key file, a credentials folder), so it is never sent."""
-    p = path.replace("\\", "/").strip("/")
-    parts = [x for x in p.split("/") if x]
+    normalized = path.replace("\\", "/").strip("/")
+    parts = [value for value in normalized.split("/") if value]
     if not parts:
         return False
-    if any(d.lower() in SECRET_DIRS for d in parts[:-1]):
+    if any(part.lower() in SECRET_DIRS for part in parts[:-1]):
         return True
     name = parts[-1].lower()
-    return any(fnmatch.fnmatchcase(name, g) for g in SECRET_NAME_GLOBS)
+    return any(fnmatch.fnmatchcase(name, secret_name_glob) for secret_name_glob in SECRET_NAME_GLOBS)
 
 
 # ---- layer 2: values --------------------------------------------------------
@@ -87,33 +87,33 @@ _CODE_REF = re.compile(
 )
 
 
-def _entropy(s: str) -> float:
+def _compute_entropy(s: str) -> float:
     if not s:
         return 0.0
     counts: dict[str, int] = {}
-    for ch in s:
-        counts[ch] = counts.get(ch, 0) + 1
-    n = len(s)
-    return -sum(c / n * math.log2(c / n) for c in counts.values())
+    for char in s:
+        counts[char] = counts.get(char, 0) + 1
+    count = len(s)
+    return -sum(character / count * math.log2(character / count) for character in counts.values())
 
 
-def _looks_like_secret_value(value: str, quoted: bool) -> bool:
-    v = value.strip()
-    if len(v) < 6 or _PLACEHOLDER.match(v) or _CODE_REF.match(v) or "[REDACTED" in v:
+def _is_likely_secret_value(value: str, *, quoted: bool) -> bool:
+    element = value.strip()
+    if len(element) < 6 or _PLACEHOLDER.match(element) or _CODE_REF.match(element) or "[REDACTED" in element:
         return False
-    if len(set(v)) <= 2:
+    if len(set(element)) <= 2:
         return False
     if quoted:
         return True
     # unquoted: attribute access (config.token) is code; a bare identifier is code unless it is a long
     # mix of letters and digits, which is what a password or key looks like.
-    has_digit = any(c.isdigit() for c in v)
-    has_alpha = any(c.isalpha() for c in v)
-    if re.fullmatch(r"[A-Za-z_]\w*", v):
-        return len(v) >= 12 and has_digit and has_alpha
-    if re.fullmatch(r"[A-Za-z_][\w.]*", v):
+    has_digit = any(char.isdigit() for char in element)
+    has_alpha = any(character.isalpha() for character in element)
+    if re.fullmatch(r"[A-Za-z_]\w*", element):
+        return len(element) >= 12 and has_digit and has_alpha
+    if re.fullmatch(r"[A-Za-z_][\w.]*", element):
         return False
-    return len(v) >= 16 and has_digit and has_alpha
+    return len(element) >= 16 and has_digit and has_alpha
 
 
 # What redact_text replaced: how many values in all, and how many of each kind.
@@ -135,46 +135,46 @@ def redact_text(text: str) -> tuple[str, Redaction]:
     """Replace secret-looking values with [REDACTED:kind]. Returns (clean text, what was done)."""
     rep = make_redaction()
 
-    def sub_kind(kind: str):
+    def make_kind_replacer(kind: str):
         """A re.sub replacement that redacts the whole match as `kind` and counts it."""
-        def inner(m: re.Match[str]) -> str:
+        def replace_match(m: re.Match[str]) -> str:
             """Count the match and replace it with its redaction marker."""
             count_redaction(rep, kind=kind)
             return f"[REDACTED:{kind}]"
-        return inner
+        return replace_match
 
     for kind, pat in _SPECIFIC:
-        text = pat.sub(sub_kind(kind), text)
+        text = pat.sub(make_kind_replacer(kind), text)
 
-    def creds(m: re.Match[str]) -> str:
+    def redact_creds(m: re.Match[str]) -> str:
         """Redact the password in a URL, unless it is a placeholder or a code reference."""
         if _PLACEHOLDER.match(m.group(2)) or _CODE_REF.match(m.group(2)):
             return m.group(0)
         count_redaction(rep, kind="url-credentials")
         return f"{m.group(1)}[REDACTED:url-credentials]{m.group(3)}"
 
-    text = _URL_CREDS.sub(creds, text)
+    text = _URL_CREDS.sub(redact_creds, text)
 
-    def assign(m: re.Match[str]) -> str:
+    def redact_assign(m: re.Match[str]) -> str:
         """Redact the value in `secret = value`, unless the value does not look secret."""
         head, open_q, value, close_q = m.group(1), m.group(2), m.group(3), m.group(4)
-        if not _looks_like_secret_value(value, quoted=bool(open_q)):
+        if not _is_likely_secret_value(value, quoted=bool(open_q)):
             return m.group(0)
         count_redaction(rep, kind="assigned-secret")
         return f"{head}{open_q}[REDACTED:assigned-secret]{close_q}"
 
-    text = _ASSIGN.sub(assign, text)
+    text = _ASSIGN.sub(redact_assign, text)
 
-    def blob(m: re.Match[str]) -> str:
+    def redact_blob(m: re.Match[str]) -> str:
         """Redact a long random-looking string; hashes and ids are left alone."""
-        s = m.group(2)
+        message = m.group(2)
         # Hashes and ids are fine.
-        if _entropy(s) < 4.0 or re.fullmatch(r"[0-9a-f]{32,}", s):
+        if _compute_entropy(message) < 4.0 or re.fullmatch(r"[0-9a-f]{32,}", message):
             return m.group(0)
         count_redaction(rep, kind="random-string")
         return f"{m.group(1)}[REDACTED:random-string]{m.group(1)}"
 
-    text = _QUOTED_BLOB.sub(blob, text)
+    text = _QUOTED_BLOB.sub(redact_blob, text)
     return text, rep
 
 
@@ -199,31 +199,31 @@ def filter_diff(diff: str) -> tuple[str, Sent]:
     sent = make_sent()
     sections: list[tuple[str | None, list[str]]] = []
     for line in diff.split("\n"):
-        m = _HEADER.match(line)
-        if m:
-            sections.append((m.group(2), [line]))
+        found = _HEADER.match(line)
+        if found:
+            sections.append((found.group(2), [line]))
         elif sections:
             sections[-1][1].append(line)
         else:
             sections.append((None, [line]))
-    out: list[str] = []
+    kept_lines: list[str] = []
     total = 0
     for path, lines in sections:
         if path is not None and is_secret_path(path):
             sent["files_omitted"].append(path)
-            out.append(f"diff --git a/{path} b/{path}\n[withheld: {path} looks like a secret store, so its contents are not sent]")
+            kept_lines.append(f"diff --git a/{path} b/{path}\n[withheld: {path} looks like a secret store, so its contents are not sent]")
             continue
         body, rep = redact_text("\n".join(lines))
         sent["redactions"] += rep["count"]
-        for k, v in rep["kinds"].items():
-            sent["kinds"][k] = sent["kinds"].get(k, 0) + v
+        for key, value in rep["kinds"].items():
+            sent["kinds"][key] = sent["kinds"].get(key, 0) + value
         if len(body) > PER_FILE_CHARS:
             body = body[:PER_FILE_CHARS] + f"\n[truncated: this file's diff is longer than {PER_FILE_CHARS} characters]"
             sent["truncated"] = True
         if total + len(body) > TOTAL_CHARS:
-            out.append(f"[truncated: the rest of the diff is longer than {TOTAL_CHARS} characters in total]")
+            kept_lines.append(f"[truncated: the rest of the diff is longer than {TOTAL_CHARS} characters in total]")
             sent["truncated"] = True
             break
         total += len(body)
-        out.append(body)
-    return "\n".join(out), sent
+        kept_lines.append(body)
+    return "\n".join(kept_lines), sent

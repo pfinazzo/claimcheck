@@ -17,9 +17,16 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TypedDict
 
-from . import ClaimcheckError, ProviderError, SpecError, gitio, providers, redact
-from . import config as C
-from . import spec as S
+from . import (
+    ClaimcheckError,
+    ProviderError,
+    SpecError,
+    config,
+    gitio,
+    providers,
+    redact,
+    spec,
+)
 
 DRAFT_FILE = "spec-draft.json"
 MAX_QUESTIONS = 5
@@ -139,26 +146,26 @@ def draft_from_dict(data: dict) -> Draft:
         goal=str(data.get("goal", "")),
         rounds=[
             make_round(
-                questions=[make_question(**q) for q in r.get("questions", [])],
-                answers=[str(a) for a in r.get("answers", [])],
+                questions=[make_question(**question) for question in row.get("questions", [])],
+                answers=[str(answer) for answer in row.get("answers", [])],
             )
-            for r in data.get("rounds", [])
+            for row in data.get("rounds", [])
         ],
-        criteria=[make_criterion(str(c.get("text", "")), check=str(c.get("check", ""))) for c in data.get("criteria", [])],
-        out_of_scope=[str(x) for x in data.get("out_of_scope", [])],
+        criteria=[make_criterion(str(char.get("text", "")), check=str(char.get("check", ""))) for char in data.get("criteria", [])],
+        out_of_scope=[str(value) for value in data.get("out_of_scope", [])],
     )
 
 
 # ---- repo context ---------------------------------------------------------
 
-def repo_files(repo: Path) -> list[str]:
+def list_repo_files(repo: Path) -> list[str]:
     """Tracked file names, newest layout first. Names only, capped, secrets filtered out."""
     try:
-        out = gitio.git(repo, "ls-files", check=False)
+        output = gitio.run_git(repo, "ls-files", check=False)
     except ClaimcheckError:
         return []
-    names = [n.strip().replace("\\", "/") for n in out.splitlines() if n.strip()]
-    names = [n for n in names if not redact.is_secret_path(n) and not n.startswith(".claimcheck/")]
+    names = [line.strip().replace("\\", "/") for line in output.splitlines() if line.strip()]
+    names = [name for name in names if not redact.is_secret_path(name) and not name.startswith(".claimcheck/")]
     return names[:MAX_FILES_SHOWN]
 
 
@@ -174,44 +181,44 @@ def _answer_tag(text: str) -> str:
     return "<answer>" + _clean(text).replace("</answer>", "") + "</answer>"
 
 
-def _interview_lines(draft: Draft) -> list[str]:
+def _format_interview(draft: Draft) -> list[str]:
     """Every round so far as prompt lines: each question and the person's answer, tagged."""
     no_answer = "(no answer; use your judgment and say what you assumed in concerns)"
     return [
         line
-        for i, r in enumerate(draft["rounds"], 1)
+        for index, past_round in enumerate(draft["rounds"], 1)
         for line in [
-            f"### Round {i}",
+            f"### Round {index}",
             *(
                 qa_line
-                for q, a in zip(r["questions"], r["answers"], strict=False)
-                for qa_line in (f"Q ({q['id']}): {q['text']}", f"A: {_answer_tag(a) if a.strip() else no_answer}")
+                for question, answer in zip(past_round["questions"], past_round["answers"], strict=False)
+                for qa_line in (f"Q ({question['id']}): {question['text']}", f"A: {_answer_tag(answer) if answer.strip() else no_answer}")
             ),
         ]
     ]
 
 
-def _criteria_lines(draft: Draft) -> list[str]:
+def _format_criteria(draft: Draft) -> list[str]:
     """The criteria as they stand, with their checks and the out-of-scope list, as prompt lines."""
     criteria = [
         line
-        for i, c in enumerate(draft["criteria"], 1)
-        for line in [f"{i}. {_clean(c['text'])}", *([f"   check: {_clean(c['check'])}"] if c["check"] else [])]
+        for index, criterion in enumerate(draft["criteria"], 1)
+        for line in [f"{index}. {_clean(criterion['text'])}", *([f"   check: {_clean(criterion['check'])}"] if criterion["check"] else [])]
     ]
     out_of_scope = ["Out of scope so far: " + _clean("; ".join(draft["out_of_scope"]))] if draft["out_of_scope"] else []
     return ["## Criteria as they stand (the person may have edited these; keep their wording)", *criteria, *out_of_scope]
 
 
-def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int) -> tuple[str, str]:
+def build_prompt(draft: Draft, *, files: list[str], round_no: int, max_rounds: int) -> tuple[str, str]:
     """Pure: (system, user)."""
     parts = [
         f"## Goal (the person's words)\n{_answer_tag(draft['goal'])}\n",
         "## Files in the repo (names only)\n" + ("\n".join(files) if files else "(none listed)") + "\n",
     ]
     if draft["rounds"]:
-        parts.append("\n".join(["## Interview so far", *_interview_lines(draft)]) + "\n")
+        parts.append("\n".join(["## Interview so far", *_format_interview(draft)]) + "\n")
     if draft["criteria"]:
-        parts.append("\n".join(_criteria_lines(draft)) + "\n")
+        parts.append("\n".join(_format_criteria(draft)) + "\n")
     parts.append(
         f"## This is round {round_no} of at most {max_rounds}.\n"
         + ("Draft the first criteria and ask your most important questions.\n" if not draft["rounds"] else
@@ -221,7 +228,7 @@ def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int)
     return SYSTEM_PROMPT, "\n".join(parts)
 
 
-def _as_text(v: object) -> str:
+def _to_text(v: object) -> str:
     return v.strip() if isinstance(v, str) else ""
 
 
@@ -232,38 +239,38 @@ def parse_reply(raw: str) -> Reply:
     if fence:
         text = fence.group(1)
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ClaimcheckError(f"reply is not JSON: {e}") from e
-    if not isinstance(data, dict):
+        parsed_raw = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ClaimcheckError(f"reply is not JSON: {error}") from error
+    if not isinstance(parsed_raw, dict):
         raise ClaimcheckError("reply must be a JSON object")
-    missing = [k for k in REPLY_SCHEMA["required"] if k not in data]
+    missing = [key for key in REPLY_SCHEMA["required"] if key not in parsed_raw]
     if missing:
         raise ClaimcheckError(f"reply is missing keys: {missing}")
     questions = []
-    for i, q in enumerate(data["questions"] if isinstance(data["questions"], list) else []):
-        if isinstance(q, dict) and _as_text(q.get("text")):
-            questions.append(make_question(id=_as_text(q.get("id")) or f"q{i + 1}", text=_as_text(q["text"]), why=_as_text(q.get("why"))))
+    for index, question in enumerate(parsed_raw["questions"] if isinstance(parsed_raw["questions"], list) else []):
+        if isinstance(question, dict) and _to_text(question.get("text")):
+            questions.append(make_question(id=_to_text(question.get("id")) or f"q{index + 1}", text=_to_text(question["text"]), why=_to_text(question.get("why"))))
     criteria = []
-    for c in data["criteria"] if isinstance(data["criteria"], list) else []:
-        if isinstance(c, dict) and _as_text(c.get("text")):
-            criteria.append(make_criterion(" ".join(_as_text(c["text"]).split()), check=_as_text(c.get("check"))))
+    for char in parsed_raw["criteria"] if isinstance(parsed_raw["criteria"], list) else []:
+        if isinstance(char, dict) and _to_text(char.get("text")):
+            criteria.append(make_criterion(" ".join(_to_text(char["text"]).split()), check=_to_text(char.get("check"))))
     if not criteria:
         raise ClaimcheckError("reply has no usable criteria")
-    def strs(v):
-        return [_as_text(x) for x in v if _as_text(x)] if isinstance(v, list) else []
+    def to_strings(v):
+        return [_to_text(value) for value in v if _to_text(value)] if isinstance(v, list) else []
     return make_reply(
         questions=questions[:MAX_QUESTIONS],
         criteria=criteria,
-        out_of_scope=strs(data["out_of_scope"]),
-        concerns=strs(data["concerns"]),
-        ready=data["ready"] is True,
+        out_of_scope=to_strings(parsed_raw["out_of_scope"]),
+        concerns=to_strings(parsed_raw["concerns"]),
+        ready=parsed_raw["ready"] is True,
     )
 
 
-def next_round(provider: providers.Provider, draft: Draft, files: list[str], round_no: int, max_rounds: int) -> Reply:
+def next_round(provider: providers.Provider, *, draft: Draft, files: list[str], round_no: int, max_rounds: int) -> Reply:
     """Ask the provider once, and once more with the problem named if the reply is unusable."""
-    system, user = build_prompt(draft, files, round_no, max_rounds)
+    system, user = build_prompt(draft, files=files, round_no=round_no, max_rounds=max_rounds)
     problem = ""
     for _attempt in range(2):
         prompt = user if not problem else user + f"\n\nYour previous reply was rejected: {problem}. Reply with valid JSON only."
@@ -274,12 +281,12 @@ def next_round(provider: providers.Provider, draft: Draft, files: list[str], rou
         except ClaimcheckError:
             raise
         # Network, SDK, subprocess.
-        except Exception as e:
-            raise ProviderError(f"provider failed: {e}") from e
+        except Exception as error:
+            raise ProviderError(f"provider failed: {error}") from error
         try:
             return parse_reply(raw)
-        except ClaimcheckError as e:
-            problem = str(e)
+        except ClaimcheckError as error:
+            problem = str(error)
     raise ProviderError(f"provider gave no usable reply twice: {problem}")
 
 
@@ -299,29 +306,29 @@ _OBSERVABLE = re.compile(
 )
 
 
-def lint(criteria: list[Criterion]) -> dict[int, list[str]]:
+def check_criteria(criteria: list[Criterion]) -> dict[int, list[str]]:
     """{index: [warnings]} (0-based). Warnings only; the human decides."""
-    out: dict[int, list[str]] = {}
+    warnings_by_index: dict[int, list[str]] = {}
     seen: dict[str, int] = {}
-    for i, c in enumerate(criteria):
+    for i, criterion in enumerate(criteria):
         w: list[str] = []
-        m = _VAGUE.search(c["text"])
-        if m:
-            w.append(f"vague word {m.group(0)!r}: say what a test would see instead")
+        match = _VAGUE.search(criterion["text"])
+        if match:
+            w.append(f"vague word {match.group(0)!r}: say what a test would see instead")
         # A concrete check line is observable enough.
-        if not _OBSERVABLE.search(c["text"] + " " + c["check"]):
+        if not _OBSERVABLE.search(criterion["text"] + " " + criterion["check"]):
             w.append("no observable behavior named (a value, a result, a state change)")
-        if len(c["text"]) > 200:
+        if len(criterion["text"]) > 200:
             w.append("over 200 characters: it may be two criteria")
-        elif c["text"].count(" and ") >= 2:
+        elif criterion["text"].count(" and ") >= 2:
             w.append("joins several things with 'and': it may be two criteria")
-        key = re.sub(r"\W+", " ", c["text"].lower()).strip()
+        key = re.sub(r"\W+", " ", criterion["text"].lower()).strip()
         if key in seen:
             w.append(f"duplicates criterion {seen[key] + 1}")
         seen.setdefault(key, i)
         if w:
-            out[i] = w
-    return out
+            warnings_by_index[i] = w
+    return warnings_by_index
 
 
 # ---- rendering and saving --------------------------------------------------
@@ -329,40 +336,40 @@ def lint(criteria: list[Criterion]) -> dict[int, list[str]]:
 def render_spec(draft: Draft) -> str:
     """spec.md text. Criterion lines match the parser; the indented Check lines are ignored by it."""
     lines = ["# Acceptance criteria", "", f"Goal: {' '.join(draft['goal'].split())}", ""]
-    for i, c in enumerate(draft["criteria"], 1):
-        lines.append(f"- [ ] {i}. {c['text']}")
-        if c["check"]:
-            lines.append(f"  - Check: {c['check']}")
+    for index, criterion in enumerate(draft["criteria"], 1):
+        lines.append(f"- [ ] {index}. {criterion['text']}")
+        if criterion["check"]:
+            lines.append(f"  - Check: {criterion['check']}")
     if draft["out_of_scope"]:
-        lines += ["", "## Out of scope", ""] + [f"- {x}" for x in draft["out_of_scope"]]
+        lines += ["", "## Out of scope", ""] + [f"- {value}" for value in draft["out_of_scope"]]
     lines += ["", "<!-- drafted with `claimcheck spec draft`; frozen with `claimcheck spec freeze` -->", ""]
     return "\n".join(lines)
 
 
 def draft_path(repo: Path) -> Path:
     """Where the in-progress interview draft is saved."""
-    return C.cc_dir(repo) / DRAFT_FILE
+    return config.resolve_cc_dir(repo) / DRAFT_FILE
 
 
-def save_draft(repo: Path, draft: Draft) -> None:
+def save_draft(repo: Path, *, draft: Draft) -> None:
     """Write the draft to disk so an interrupted interview can pick up where it stopped."""
-    p = draft_path(repo)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(draft_to_json(draft), encoding="utf-8", newline="\n")
+    path = draft_path(repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(draft_to_json(draft), encoding="utf-8", newline="\n")
 
 
 def load_draft(repo: Path) -> Draft | None:
     """The saved draft, or None when there is none or it cannot be read (the interview then starts fresh)."""
-    p = draft_path(repo)
-    if not p.is_file():
+    path = draft_path(repo)
+    if not path.is_file():
         return None
     try:
-        return draft_from_dict(json.loads(p.read_text(encoding="utf-8")))
+        return draft_from_dict(json.loads(path.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, TypeError, ValueError, KeyError):
         return None
 
 
-def write_spec(repo: Path, draft: Draft, *, refuse_if: Callable[[Path], list[str]] | None = None) -> Path:
+def write_spec(repo: Path, *, draft: Draft, refuse_if: Callable[[Path], list[str]] | None = None) -> Path:
     """Write spec.md. `refuse_if` returns code paths already changed; any means the diff is open."""
     if refuse_if is not None:
         open_paths = refuse_if(repo)
@@ -374,8 +381,8 @@ def write_spec(repo: Path, draft: Draft, *, refuse_if: Callable[[Path], list[str
             )
     text = render_spec(draft)
     # The file we write must parse.
-    S.parse_criteria(text)
-    path = S.spec_path(repo)
+    spec.parse_criteria(text)
+    path = spec.resolve_spec_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
     return path
@@ -395,58 +402,58 @@ HELP = (
 )
 
 
-def _show(draft: Draft, reply: Reply | None, say: Say) -> None:
+def _show(draft: Draft, *, reply: Reply | None, say: Say) -> None:
     say("")
     say("Criteria so far:")
-    warns = lint(draft["criteria"])
-    for i, c in enumerate(draft["criteria"]):
-        say(f"  {i + 1}. {c['text']}")
-        if c["check"]:
-            say(f"       check: {c['check']}")
-        for w in warns.get(i, []):
-            say(f"       ! {w}")
+    warns = check_criteria(draft["criteria"])
+    for index, criterion in enumerate(draft["criteria"]):
+        say(f"  {index + 1}. {criterion['text']}")
+        if criterion["check"]:
+            say(f"       check: {criterion['check']}")
+        for warning in warns.get(index, []):
+            say(f"       ! {warning}")
     if draft["out_of_scope"]:
         say("Out of scope:")
-        for x in draft["out_of_scope"]:
-            say(f"  - {x}")
+        for value in draft["out_of_scope"]:
+            say(f"  - {value}")
     if reply and reply["concerns"]:
         say("Claude flags:")
-        for x in reply["concerns"]:
-            say(f"  * {x}")
+        for value in reply["concerns"]:
+            say(f"  * {value}")
 
 
-def _index(arg: str, n: int) -> int | None:
-    return int(arg) - 1 if arg.isdigit() and 1 <= int(arg) <= n else None
+def _parse_index(arg: str, *, count: int) -> int | None:
+    return int(arg) - 1 if arg.isdigit() and 1 <= int(arg) <= count else None
 
 
-def _edit_criterion(draft: Draft, cmd: str, i: int, say: Say, ask: Ask) -> None:
+def _update_criterion(draft: Draft, *, command: str, index: int, say: Say, ask: Ask) -> None:
     """d removes criterion `i`, e rewrites its text, c sets how it is checked."""
-    if cmd == "d":
-        say(f"  removed: {draft['criteria'].pop(i)['text']}")
+    if command == "d":
+        say(f"  removed: {draft['criteria'].pop(index)['text']}")
         return
-    if cmd == "c":
-        draft["criteria"][i]["check"] = " ".join(ask(f"  How is {i + 1} checked?> ").split())
+    if command == "c":
+        draft["criteria"][index]["check"] = " ".join(ask(f"  How is {index + 1} checked?> ").split())
         return
-    new = " ".join(ask(f"  New text for {i + 1}> ").split())
+    new = " ".join(ask(f"  New text for {index + 1}> ").split())
     if new:
-        draft["criteria"][i]["text"] = new
+        draft["criteria"][index]["text"] = new
 
 
-def _apply_edit(draft: Draft, cmd: str, arg: str, say: Say, ask: Ask) -> bool:
+def _apply_edit(draft: Draft, *, command: str, argument: str, say: Say, ask: Ask) -> bool:
     """Carry out one review command. False when the command was not understood."""
-    if cmd == "?":
+    if command == "?":
         say(HELP)
         return True
-    i = _index(arg, len(draft["criteria"])) if cmd in ("e", "c", "d") else None
+    i = _parse_index(argument, count=len(draft["criteria"])) if command in ("e", "c", "d") else None
     if i is not None:
-        _edit_criterion(draft, cmd, i, say, ask)
+        _update_criterion(draft, command=command, index=i, say=say, ask=ask)
         return True
-    if cmd == "a":
+    if command == "a":
         new = " ".join(ask("  New criterion> ").split())
         if new:
             draft["criteria"].append(make_criterion(new, check=" ".join(ask("  How is it checked? (optional)> ").split())))
         return True
-    if cmd == "o":
+    if command == "o":
         new = " ".join(ask("  Out of scope> ").split())
         if new:
             draft["out_of_scope"].append(new)
@@ -454,7 +461,7 @@ def _apply_edit(draft: Draft, cmd: str, arg: str, say: Say, ask: Ask) -> bool:
     return False
 
 
-def _review(draft: Draft, reply: Reply, say: Say, ask: Ask, *, last_round: bool) -> str:
+def _run_review(draft: Draft, *, reply: Reply, say: Say, ask: Ask, last_round: bool) -> str:
     """Let the human edit. Returns "next", "save" or "quit"."""
     done_hint = "Enter to save" if (reply["ready"] and not reply["questions"]) or last_round else "Enter to continue"
     while True:
@@ -467,27 +474,26 @@ def _review(draft: Draft, reply: Reply, say: Say, ask: Ask, *, last_round: bool)
             return "save"
         if cmd in ("quit", "q"):
             return "quit"
-        if _apply_edit(draft, cmd, arg, say, ask):
-            _show(draft, None, say)
+        if _apply_edit(draft, command=cmd, argument=arg, say=say, ask=ask):
+            _show(draft, reply=None, say=say)
         else:
             say("  I did not understand that. Type ? for the commands.")
 
 
-def _say_questions(reply: Reply, say: Say) -> None:
+def _show_questions(reply: Reply, *, say: Say) -> None:
     """Claude's questions for this round, each with why it matters when Claude said."""
     if reply["questions"]:
         say("Claude asks:")
-    for n, q in enumerate(reply["questions"], 1):
-        say(f"  {n}. {q['text']}")
-        if q["why"]:
-            say(f"     (why: {q['why']})")
+    for number, question in enumerate(reply["questions"], 1):
+        say(f"  {number}. {question['text']}")
+        if question["why"]:
+            say(f"     (why: {question['why']})")
 
 
 def run_interview(
     provider: providers.Provider,
-    repo: Path,
+    *, repo: Path,
     goal: str,
-    *,
     say: Say,
     ask: Ask,
     max_rounds: int = 6,
@@ -497,21 +503,21 @@ def run_interview(
     draft = draft or make_draft(goal=goal.strip())
     if not draft["goal"]:
         raise ClaimcheckError("a goal is needed: say in a sentence or two what the change should do")
-    files = repo_files(repo)
+    files = list_repo_files(repo)
     start = len(draft["rounds"]) + 1
     if start > max_rounds:
         max_rounds = start
     for round_no in range(start, max_rounds + 1):
         say(f"\n--- Round {round_no} of up to {max_rounds} ---")
-        reply = next_round(provider, draft, files, round_no, max_rounds)
+        reply = next_round(provider, draft=draft, files=files, round_no=round_no, max_rounds=max_rounds)
         draft["criteria"], draft["out_of_scope"] = reply["criteria"], reply["out_of_scope"]
-        _say_questions(reply, say)
-        _show(draft, reply, say)
-        answers = [ask(f"\nYour answer to {n} (blank = you decide)> ").strip() for n in range(1, len(reply["questions"]) + 1)]
+        _show_questions(reply, say=say)
+        _show(draft, reply=reply, say=say)
+        answers = [ask(f"\nYour answer to {number} (blank = you decide)> ").strip() for number in range(1, len(reply["questions"]) + 1)]
         draft["rounds"].append(make_round(questions=reply["questions"], answers=answers))
-        save_draft(repo, draft)
-        action = _review(draft, reply, say, ask, last_round=round_no == max_rounds)
-        save_draft(repo, draft)
+        save_draft(repo, draft=draft)
+        action = _run_review(draft, reply=reply, say=say, ask=ask, last_round=round_no == max_rounds)
+        save_draft(repo, draft=draft)
         if action != "next":
             return draft, "saved" if action == "save" else "quit"
     return draft, "saved"
@@ -522,7 +528,7 @@ def run_interview(
 SETUP_FILE = "setup.json"
 
 
-def slug(goal: str) -> str:
+def make_slug(goal: str) -> str:
     # Decompose accents first so "café" becomes "cafe" and not "caf" plus a word break.
     """A short branch-safe name from the goal: ascii, lowercase, at most five words."""
     plain = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode("ascii")
@@ -530,42 +536,41 @@ def slug(goal: str) -> str:
     return "-".join(words)[:40].strip("-") or "task"
 
 
-def unique_branch(repo: Path, wanted: str) -> str:
+def pick_unique_branch(repo: Path, *, wanted: str) -> str:
     """`wanted`, or `wanted-2`, `wanted-3`... whichever branch does not exist yet."""
     name, n = wanted, 2
-    while gitio.branch_exists(repo, name):
+    while gitio.has_branch(repo, name=name):
         name, n = f"{wanted}-{n}", n + 1
     return name
 
 
-def record_setup_files(repo: Path, paths: list[str]) -> None:
+def record_setup_files(repo: Path, *, paths: list[str]) -> None:
     """`init` remembers which files it touched outside .claimcheck so the first commit can include them."""
-    p = C.cc_dir(repo) / SETUP_FILE
+    path = config.resolve_cc_dir(repo) / SETUP_FILE
     have: list[str] = []
-    if p.is_file():
+    if path.is_file():
         try:
-            have = list(json.loads(p.read_text(encoding="utf-8")).get("files", []))
+            have = list(json.loads(path.read_text(encoding="utf-8")).get("files", []))
         except (json.JSONDecodeError, AttributeError):
             have = []
     merged = sorted(set(have) | set(paths))
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps({"files": merged}, indent=2) + "\n", encoding="utf-8", newline="\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"files": merged}, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
-def _setup_files(repo: Path) -> list[str]:
-    p = C.cc_dir(repo) / SETUP_FILE
+def _list_setup_files(repo: Path) -> list[str]:
+    path = config.resolve_cc_dir(repo) / SETUP_FILE
     try:
-        files = json.loads(p.read_text(encoding="utf-8")).get("files", [])
+        files = json.loads(path.read_text(encoding="utf-8")).get("files", [])
     except (OSError, json.JSONDecodeError, AttributeError):
         return []
-    return [f for f in files if isinstance(f, str) and (repo / f).exists()]
+    return [file for file in files if isinstance(file, str) and (repo / file).exists()]
 
 
-def finish(
+def apply_draft(
     repo: Path,
-    cfg: C.Config,
+    *, settings: config.Config,
     draft: Draft,
-    *,
     freeze: bool = True,
     branch: str | None = None,
     new_branch: bool = True,
@@ -577,28 +582,28 @@ def finish(
     Nothing is pushed. The commit holds .claimcheck plus the files `init` touched, and the commit
     hook runs as usual.
     """
-    path = write_spec(repo, draft, refuse_if=lambda r: S.open_code_paths(r, cfg, cfg["base"]))
-    result: dict = {
+    path = write_spec(repo, draft=draft, refuse_if=lambda checked_repo: spec.open_code_paths(checked_repo, settings=settings, base=settings["base"]))
+    summary: dict = {
         "spec_path": str(path),
         "criteria": len(draft["criteria"]),
         "frozen": False,
         "lock_sha256": None,
-        "branch": gitio.current_branch(repo) or None,
+        "branch": gitio.read_current_branch(repo) or None,
         "commit": None,
     }
     if not freeze:
-        return result
-    lock = S.freeze(repo, cfg)
-    result.update(frozen=True, lock_sha256=lock["spec_sha256"])
+        return summary
+    lock = spec.freeze(repo, settings=settings)
+    summary.update(frozen=True, lock_sha256=lock["spec_sha256"])
     if not commit:
-        return result
-    current = gitio.current_branch(repo)
-    has_commits = bool(gitio.git(repo, "rev-parse", "--verify", "--quiet", "HEAD", check=False).strip())
-    if has_commits and new_branch and (branch or current in (cfg["base"], "HEAD")):
-        name = unique_branch(repo, branch or f"task/{slug(draft['goal'])}")
-        gitio.switch_new_branch(repo, name)
-        result["branch"] = name
-    gitio.stage(repo, ".claimcheck", *_setup_files(repo))
+        return summary
+    current = gitio.read_current_branch(repo)
+    has_commits = bool(gitio.run_git(repo, "rev-parse", "--verify", "--quiet", "HEAD", check=False).strip())
+    if has_commits and new_branch and (branch or current in (settings["base"], "HEAD")):
+        name = pick_unique_branch(repo, wanted=branch or f"task/{make_slug(draft['goal'])}")
+        gitio.create_branch(repo, name=name)
+        summary["branch"] = name
+    gitio.add_all_to_index(repo, ".claimcheck", *_list_setup_files(repo))
     goal_line = " ".join(draft["goal"].split())[:60]
-    result["commit"] = gitio.commit(repo, f"Freeze acceptance criteria: {goal_line}")
-    return result
+    summary["commit"] = gitio.create_commit(repo, message=f"Freeze acceptance criteria: {goal_line}")
+    return summary

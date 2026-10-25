@@ -9,9 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import ClaimcheckError, ledger
-from claimcheck import claims as CL
-from claimcheck import spec as S
+from claimcheck import ClaimcheckError, claims, ledger, spec
 from conftest import PY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,28 +19,28 @@ TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"
 
 # ---- AC 28 ---------------------------------------------------------------
 
-def test_ac28_run_appends_one_line_per_claim(calc_repo, capsys):
+def test_ac28_run_appends_one_line_per_claim(calc_repo, *, capsys):
     code = calc_repo.cli("run", "--provider", "stub", "--test-cmd", TEST_CMD)
     assert code == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["ledger_lines_appended"] == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["ledger_lines_appended"] == 2
     lines = calc_repo.read(".claimcheck/ledger.jsonl").splitlines()
     assert len(lines) == 2
     recs = [ledger.validate_line(line_text) for line_text in lines]
-    assert [r["claim_id"] for r in recs] == ["c1", "c2"]
-    for r in recs:
-        assert r["type"] == "claim" and r["v"] == 1
-        assert r["outcome"] is None and r["outcome_source"] is None and r["outcome_ts"] is None
-        assert r["checker"]["verdict"] == "UNVERIFIABLE"
-        assert r["mutation"]["total"] == 3 and r["mutation"]["catch_rate"] == 1.0
-        assert r["run_id"] == out["run_id"]
-        assert len(r["repo"]) == 64
+    assert [rec["claim_id"] for rec in recs] == ["c1", "c2"]
+    for record in recs:
+        assert record["type"] == "claim" and record["v"] == 1
+        assert record["outcome"] is None and record["outcome_source"] is None and record["outcome_ts"] is None
+        assert record["checker"]["verdict"] == "UNVERIFIABLE"
+        assert record["mutation"]["total"] == 3 and record["mutation"]["catch_rate"] == 1.0
+        assert record["run_id"] == output["run_id"]
+        assert len(record["repo"]) == 64
         # Written sorted.
-        assert json.dumps(r, sort_keys=True, ensure_ascii=False) in lines
+        assert json.dumps(record, sort_keys=True, ensure_ascii=False) in lines
     assert calc_repo.read(".claimcheck/ledger.jsonl").endswith("\n")
 
 
-def test_ac28_exit_is_max_of_parts(calc_repo, monkeypatch):
+def test_ac28_exit_is_max_of_parts(calc_repo, *, monkeypatch):
     fixtures = Path(__file__).parent / "fixtures" / "stub_verdicts.json"
     monkeypatch.setenv("CLAIMCHECK_STUB_FILE", str(fixtures))
     assert calc_repo.cli("run", "--provider", "stub", "--test-cmd", "exit 0") == 2
@@ -56,7 +54,7 @@ def test_ac28_append_is_all_or_nothing(repo):
     repo.cli("init")
     good = json.loads((EXAMPLES / "ledger.jsonl").read_text(encoding="utf-8").splitlines()[0])
     with pytest.raises(ClaimcheckError):
-        ledger.append_atomic(repo.path, [good, {"v": 1, "type": "claim"}])
+        ledger.append_atomic(repo.path, records=[good, {"v": 1, "type": "claim"}])
     assert repo.read(".claimcheck/ledger.jsonl") == ""
     assert not list(repo.cc.glob(".ledger-*.tmp"))
 
@@ -66,9 +64,9 @@ def test_ac28_append_is_all_or_nothing(repo):
 def test_ac29_validate_line_rejects_bad_lines():
     with pytest.raises(ClaimcheckError):
         ledger.validate_line('{"v": 1, "type": "weird"}')
-    with pytest.raises(ClaimcheckError) as e:
+    with pytest.raises(ClaimcheckError) as error:
         ledger.validate_line('{"v": 1, "type": "outcome", "ts": "t"}')
-    assert "missing keys" in str(e.value)
+    assert "missing keys" in str(error.value)
     with pytest.raises(ClaimcheckError):
         ledger.validate_line("not json")
 
@@ -83,7 +81,7 @@ def test_ac29_example_ledger_round_trips():
 
 def test_ac30_attribution_everywhere():
     files = [ROOT / "README.md", ROOT / "pyproject.toml", *sorted((ROOT / "src" / "claimcheck").rglob("*.py"))]
-    missing = [str(f) for f in files if "@author Patrick Finazzo" not in f.read_text(encoding="utf-8")]
+    missing = [str(file) for file in files if "@author Patrick Finazzo" not in file.read_text(encoding="utf-8")]
     assert missing == []
     assert '{ name = "Patrick Finazzo" }' in (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -92,12 +90,12 @@ def test_ac30_attribution_everywhere():
 
 def test_ac31_examples_are_valid_fixtures(repo):
     repo.cli("init")
-    repo.write(".claimcheck/spec.md", (EXAMPLES / "spec.md").read_text(encoding="utf-8"))
+    repo.write(".claimcheck/spec.md", text=(EXAMPLES / "spec.md").read_text(encoding="utf-8"))
     repo.commit("example spec")
     assert repo.cli("spec", "freeze") == 0
-    lock_ids = S.lock_ids(S.read_lock(repo.path))
-    cf = CL.load_file(EXAMPLES / "claims.yaml", lock_ids)
-    assert [c["id"] for c in cf["claims"]] == ["c1", "c2", "c3"]
+    lock_ids = spec.list_lock_ids(spec.read_lock(repo.path))
+    claims_file = claims.load_file(EXAMPLES / "claims.yaml", lock_ids=lock_ids)
+    assert [claim["id"] for claim in claims_file["claims"]] == ["c1", "c2", "c3"]
     assert repo.cli("claims", "validate", str(EXAMPLES / "claims.yaml")) == 0
 
     cfg = tomllib.loads((EXAMPLES / "config.toml").read_text(encoding="utf-8"))

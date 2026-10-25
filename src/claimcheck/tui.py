@@ -50,7 +50,7 @@ def strip_ansi(s: str) -> str:
     return ANSI.sub("", s)
 
 
-def _enable_vt_on(kernel, std: int) -> None:
+def _set_vt_mode(kernel, *, std: int) -> None:
     """Add ENABLE_VIRTUAL_TERMINAL_PROCESSING to one standard handle's console mode, if it has one."""
     handle = kernel.GetStdHandle(std)
     mode = ctypes.c_uint32()
@@ -58,7 +58,7 @@ def _enable_vt_on(kernel, std: int) -> None:
         kernel.SetConsoleMode(handle, mode.value | 0x0004)
 
 
-def enable_windows_vt() -> None:
+def set_windows_vt() -> None:
     """Turn on ANSI escape handling in the classic Windows console. Harmless elsewhere."""
     if os.name != "nt":
         return
@@ -66,21 +66,21 @@ def enable_windows_vt() -> None:
         kernel = ctypes.windll.kernel32  # type: ignore[attr-defined]
         # -11 is stdout, -12 is stderr.
         for std in (-11, -12):
-            _enable_vt_on(kernel, std)
+            _set_vt_mode(kernel, std=std)
     except (AttributeError, OSError):
         # An old console without these calls keeps its default mode. The text still prints;
         # only the colors show up as escape codes.
         return
 
 
-def _bar_color(frac: float) -> str:
+def _pick_bar_color(frac: float) -> str:
     """Green from 70% up, yellow from 40%, red below."""
     if frac >= 0.7:
         return "green"
     return "yellow" if frac >= 0.4 else "red"
 
 
-def detect(stream=None, env: Mapping[str, str] | None = None) -> dict:
+def detect(stream=None, *, env: Mapping[str, str] | None = None) -> dict:
     """Which features this terminal gets: {"tty", "color", "animate", "unicode"}."""
     stream = stream if stream is not None else sys.stdout
     env = env if env is not None else os.environ
@@ -152,38 +152,38 @@ def compute_width(t: Term) -> int:
     return t["fixed_width"] or max(40, min(shutil.get_terminal_size((90, 24)).columns, 100))
 
 
-def write(t: Term, s: str) -> None:
+def write(t: Term, *, text: str) -> None:
     """Write `s` as is, with no newline, and flush."""
     try:
-        t["out"].write(s)
+        t["out"].write(text)
         t["out"].flush()
     except UnicodeEncodeError:
-        t["out"].write(s.encode("ascii", "replace").decode("ascii"))
+        t["out"].write(text.encode("ascii", "replace").decode("ascii"))
         t["out"].flush()
 
 
-def write_line(t: Term, s: str = "") -> None:
+def write_line(t: Term, *, text: str = "") -> None:
     """Write `s` and a newline."""
-    write(t, s + "\n")
+    write(t, text=text + "\n")
 
 
-def format_styled(t: Term, text: str, *names: str) -> str:
+def format_styled(t: Term, *, text: str, styles: tuple[str, ...] = ()) -> str:
     """`text` wrapped in the named styles ("bold", "cyan", ...), or plain when the terminal has no color."""
-    if not t["color"] or not names:
+    if not t["color"] or not styles:
         return text
     codes = []
-    for n in names:
-        if n.isdigit():
-            codes.append(f"38;5;{n}")
+    for style in styles:
+        if style.isdigit():
+            codes.append(f"38;5;{style}")
         else:
-            codes.append(_STYLES[n])
+            codes.append(_STYLES[style])
     return f"{CSI}{';'.join(codes)}m{text}{CSI}0m"
 
 
 def hide_cursor(t: Term) -> None:
     """Hide the cursor while something animates; show_cursor brings it back."""
     if t["animate"] and not t["cursor_hidden"]:
-        write(t, HIDE_CURSOR)
+        write(t, text=HIDE_CURSOR)
         t["cursor_hidden"] = True
 
 
@@ -193,69 +193,69 @@ def show_cursor(t: Term) -> None:
         return
     t["cursor_hidden"] = False
     try:
-        write(t, SHOW_CURSOR)
+        write(t, text=SHOW_CURSOR)
     except (OSError, ValueError):
         # The terminal is already gone (a closed pipe or stream), so there is no cursor to show.
         return
 
 
-def sleep_briefly(t: Term, seconds: float) -> None:
+def sleep_briefly(t: Term, *, seconds: float) -> None:
     """Pause for `seconds`, but only when the terminal animates."""
     if t["animate"]:
         t["sleep"](seconds)
 
 # -- text effects ----------------------------------------------------
-def write_typed(t: Term, text: str, *styles: str, delay: float = 0.014, end: str = "\n") -> None:
+def write_typed(t: Term, *, text: str, styles: tuple[str, ...] = (), delay: float = 0.014, end: str = "\n") -> None:
     """Print text a character at a time. Without animation: the whole line at once."""
     if not t["animate"]:
-        write(t, format_styled(t, text, *styles) + end)
+        write(t, text=format_styled(t, text=text, styles=styles) + end)
         return
     hide_cursor(t)
     try:
-        for ch in text:
-            write(t, format_styled(t, ch, *styles))
-            t["sleep"](delay if ch not in ".,;:" else delay * 6)
-        write(t, end)
+        for char in text:
+            write(t, text=format_styled(t, text=char, styles=styles))
+            t["sleep"](delay if char not in ".,;:" else delay * 6)
+        write(t, text=end)
     finally:
         show_cursor(t)
 
 
-def show_shimmer(t: Term, text: str, *, passes: int = 2, base: int = 244, delay: float = 0.012, indent: str = "") -> None:
+def show_shimmer(t: Term, *, text: str, passes: int = 2, base: int = 244, delay: float = 0.012, indent: str = "") -> None:
     """A bright highlight sweeps across the text. Ends on the settled, colored line."""
     palette = [39, 45, 51, 87, 123, 159, 195, 231]
-    settled = format_gradient(t, text)
+    settled = format_gradient(t, text=text)
     if not t["animate"]:
-        write_line(t, indent + settled)
+        write_line(t, text=indent + settled)
         return
     hide_cursor(t)
     try:
         heads = range(-len(palette), len(text) + len(palette))
         for head in [*heads] * passes:
-            write(t, "\r" + indent + _render_shimmer_frame(t, text, head, palette, base))
+            write(t, text="\r" + indent + _render_shimmer_frame(t, text=text, head=head, palette=palette, base=base))
             t["sleep"](delay)
-        write(t, "\r" + CLEAR_LINE + indent + settled + "\n")
+        write(t, text="\r" + CLEAR_LINE + indent + settled + "\n")
     finally:
         show_cursor(t)
 
 
-def _render_shimmer_frame(t: Term, text: str, head: int, palette: list[int], base: int) -> str:
+def _render_shimmer_frame(t: Term, *, text: str, head: int, palette: list[int], base: int) -> str:
     """The text with the highlight's bright end at position `head`, fading behind it."""
     return "".join(
-        format_styled(t, ch, str(palette[head - i])) if 0 <= head - i < len(palette) else format_styled(t, ch, str(base))
-        for i, ch in enumerate(text)
+        format_styled(t, text=char, styles=(str(palette[head - index]),)) if 0 <= head - index < len(palette) else format_styled(t, text=char, styles=(str(base),))
+        for index, char in enumerate(text)
     )
 
 
-def format_gradient(t: Term, text: str) -> str:
+def format_gradient(t: Term, *, text: str) -> str:
     """`text` shaded across a color gradient, or plain without color."""
     if not t["color"]:
         return text
     stops = [33, 39, 45, 51, 50, 49, 48, 47]
-    n = max(1, len(text) - 1)
-    return "".join(format_styled(t, ch, str(stops[int(i / n * (len(stops) - 1))])) for i, ch in enumerate(text))
+    count = max(1, len(text) - 1)
+    return "".join(format_styled(t, text=char, styles=(str(stops[int(index / count * (len(stops) - 1))]),)) for index, char in enumerate(text))
 
 # -- bars ----------------------------------------------------------
-def render_bar(t: Term, frac: float, width: int = 24) -> str:
+def render_bar(t: Term, *, frac: float, width: int = 24) -> str:
     """A progress bar `width` cells wide, filled to `frac` (0 to 1)."""
     frac = max(0.0, min(1.0, frac))
     full = int(frac * width)
@@ -265,35 +265,35 @@ def render_bar(t: Term, frac: float, width: int = 24) -> str:
         body = t["glyphs"]["bar_full"] * full + partial.strip() + t["glyphs"]["bar_empty"] * (width - full - (1 if partial.strip() else 0))
     else:
         body = t["glyphs"]["bar_full"] * full + t["glyphs"]["bar_empty"] * (width - full)
-    color = _bar_color(frac)
-    return format_styled(t, body[: max(full + 1, 0)], color) + format_styled(t, body[max(full + 1, 0):], "grey") if t["color"] else body
+    color = _pick_bar_color(frac)
+    return format_styled(t, text=body[: max(full + 1, 0)], styles=(color,)) + format_styled(t, text=body[max(full + 1, 0):], styles=("grey",)) if t["color"] else body
 
 
-def show_bar_filling(t: Term, label: str, to: float, *, width: int = 24, duration: float = 0.9, suffix: Callable[[float], str] | None = None) -> None:
+def show_bar_filling(t: Term, *, label: str, to: float, width: int = 24, duration: float = 0.9, suffix: Callable[[float], str] | None = None) -> None:
     """Fill a bar from 0 to `to` in place; the last frame stays on screen."""
-    def frame(v: float) -> str:
+    def render_frame(v: float) -> str:
         tail = suffix(v) if suffix else f"{v:.2f}"
-        return f"{label} {render_bar(t, v, width)} {tail}"
+        return f"{label} {render_bar(t, frac=v, width=width)} {tail}"
 
     if not t["animate"]:
-        write_line(t, frame(to))
+        write_line(t, text=render_frame(to))
         return
     hide_cursor(t)
     try:
         steps = max(8, int(duration / 0.03))
-        for i in range(steps + 1):
-            progress = i / steps
+        for index in range(steps + 1):
+            progress = index / steps
             # Ease out.
-            v = to * (1 - (1 - progress) ** 3)
-            write(t, "\r" + CLEAR_LINE + frame(v))
+            value = to * (1 - (1 - progress) ** 3)
+            write(t, text="\r" + CLEAR_LINE + render_frame(value))
             t["sleep"](duration / steps)
-        write(t, "\n")
+        write(t, text="\n")
     finally:
         show_cursor(t)
 
 # -- spinner ---------------------------------------------------------
 @contextmanager
-def show_spinner(t: Term, label: str, *, keep: bool = True) -> Iterator[Spin]:
+def show_spinner(t: Term, *, label: str, keep: bool = True) -> Iterator[Spin]:
     """A line that spins while work happens. `keep=False` erases it afterwards (waiting, not a result)."""
     spin: Spin = {
         "term": t,
@@ -315,57 +315,57 @@ def show_spinner(t: Term, label: str, *, keep: bool = True) -> Iterator[Spin]:
         _stop_spin(spin, ok=spin["result"] is not False)
 
 
-def show_decode(t: Term, label: str, final: str, *, duration: float = 1.1) -> None:
+def show_decode(t: Term, *, label: str, final: str, duration: float = 1.1) -> None:
     """Random hex settles, left to right, into the real value. Used for hashes."""
     hexchars = "0123456789abcdef"
     if not t["animate"]:
-        write_line(t, f"{label} {format_styled(t, final, 'cyan')}")
+        write_line(t, text=f"{label} {format_styled(t, text=final, styles=('cyan',))}")
         return
     hide_cursor(t)
     try:
         steps = max(10, int(duration / 0.03))
-        for i in range(steps + 1):
-            locked = int(len(final) * i / steps)
+        for index in range(steps + 1):
+            locked = int(len(final) * index / steps)
             noise = "".join(t["rng"].choice(hexchars) for _ in range(len(final) - locked))
-            write(t, "\r" + CLEAR_LINE + f"{label} " + format_styled(t, final[:locked], "cyan", "bold") + format_styled(t, noise, "grey"))
+            write(t, text="\r" + CLEAR_LINE + f"{label} " + format_styled(t, text=final[:locked], styles=("cyan", "bold")) + format_styled(t, text=noise, styles=("grey",)))
             t["sleep"](duration / steps)
-        write(t, "\n")
+        write(t, text="\n")
     finally:
         show_cursor(t)
 
 # -- layout ----------------------------------------------------------
-def draw_box(t: Term, lines: list[str], *, title: str = "", style: str = "cyan", indent: str = "  ") -> None:
+def draw_box(t: Term, *, lines: list[str], title: str = "", style: str = "cyan", indent: str = "  ") -> None:
     """Draw `lines` inside a box, with an optional title in the top edge."""
     inner = max([len(strip_ansi(line_text)) for line_text in lines] + [len(title) + 2, 20])
-    g = t["glyphs"]
+    glob = t["glyphs"]
     # the rule between the corners is inner + 2 wide; the title takes " title " out of it
-    top = g["tl"] + g["h"] + (f" {title} " if title else g["h"]) + g["h"] * (inner + 2 - 1 - (len(title) + 2 if title else 1)) + g["tr"]
-    write_line(t, indent + format_styled(t, top, style))
+    top = glob["tl"] + glob["h"] + (f" {title} " if title else glob["h"]) + glob["h"] * (inner + 2 - 1 - (len(title) + 2 if title else 1)) + glob["tr"]
+    write_line(t, text=indent + format_styled(t, text=top, styles=(style,)))
     for line_text in lines:
         pad = " " * (inner - len(strip_ansi(line_text)))
-        write_line(t, indent + format_styled(t, g["v"], style) + " " + line_text + pad + " " + format_styled(t, g["v"], style))
-    write_line(t, indent + format_styled(t, g["bl"] + g["h"] * (inner + 2) + g["br"], style))
+        write_line(t, text=indent + format_styled(t, text=glob["v"], styles=(style,)) + " " + line_text + pad + " " + format_styled(t, text=glob["v"], styles=(style,)))
+    write_line(t, text=indent + format_styled(t, text=glob["bl"] + glob["h"] * (inner + 2) + glob["br"], styles=(style,)))
 
 
-def draw_rule(t: Term, label: str = "") -> None:
+def draw_rule(t: Term, *, label: str = "") -> None:
     """Draw a horizontal rule across the width, with an optional label in it."""
-    g = t["glyphs"]["h"]
+    glob = t["glyphs"]["h"]
     text = f" {label} " if label else ""
-    write_line(t, format_styled(t, g * 2 + text + g * max(2, compute_width(t) - len(text) - 2), "grey"))
+    write_line(t, text=format_styled(t, text=glob * 2 + text + glob * max(2, compute_width(t) - len(text) - 2), styles=("grey",)))
 
 
-def show_step(t: Term, n: int, total: int, title: str) -> None:
+def show_step(t: Term, *, number: int, total: int, title: str) -> None:
     """Print a step heading: progress dots for step `n` of `total`, then the title."""
     write_line(t)
-    write_line(t, format_styled(t, f"{n}/{total}", "grey") + "  " + format_styled(t, title, "bold", "white"))
+    write_line(t, text=format_styled(t, text=f"{number}/{total}", styles=("grey",)) + "  " + format_styled(t, text=title, styles=("bold", "white")))
 
 
-def render_dots(t: Term, n: int, total: int) -> str:
+def render_dots(t: Term, *, count: int, total: int) -> str:
     """Progress dots: `n` filled out of `total`."""
-    return " ".join(format_styled(t, t["glyphs"]["dot"], "cyan") if i < n else format_styled(t, t["glyphs"]["ring"], "grey") for i in range(total))
+    return " ".join(format_styled(t, text=t["glyphs"]["dot"], styles=("cyan",)) if index < count else format_styled(t, text=t["glyphs"]["ring"], styles=("grey",)) for index in range(total))
 
 # -- input -----------------------------------------------------------
-def ask(t: Term, prompt: str) -> str:
+def ask(t: Term, *, prompt: str) -> str:
     """Ask for a line of input with `prompt` and return what was typed."""
     show_cursor(t)
     return t["read_input"](prompt)
@@ -381,7 +381,7 @@ def wait_for_continue(t: Term, *, more: str | None = None, skip_label: str | Non
     shown_more = False
     while True:
         try:
-            raw = ask(t, format_styled(t, f"  {t['glyphs']['next']} " + "  ·  ".join(hints) + " ", "grey")).strip().lower()
+            raw = ask(t, prompt=format_styled(t, text=f"  {t['glyphs']['next']} " + "  ·  ".join(hints) + " ", styles=("grey",))).strip().lower()
         except EOFError:
             return "next"
         if raw in ("", "n", "next"):
@@ -390,24 +390,24 @@ def wait_for_continue(t: Term, *, more: str | None = None, skip_label: str | Non
             return "skip"
         if raw in ("m", "more") and more and not shown_more:
             shown_more = True
-            hints = [h for h in hints if h != "m for more"]
-            _show_more(t, more)
+            hints = [hint for hint in hints if hint != "m for more"]
+            _show_more(t, more=more)
         else:
-            write_line(t, format_styled(t, "    (press Enter to go on)", "grey"))
+            write_line(t, text=format_styled(t, text="    (press Enter to go on)", styles=("grey",)))
 
 
-def _show_more(t: Term, more: str) -> None:
+def _show_more(t: Term, *, more: str) -> None:
     """The extra text `m` reveals, indented and grey, then a blank line."""
     for line in more.splitlines():
-        write_line(t, "    " + format_styled(t, line, "grey"))
+        write_line(t, text="    " + format_styled(t, text=line, styles=("grey",)))
     write_line(t)
 
 
-def ask_yes_no(t: Term, question: str, *, default: bool = True) -> bool:
+def ask_yes_no(t: Term, *, question: str, default: bool = True) -> bool:
     """Ask a yes/no question; Enter takes `default`."""
     suffix = "[Y/n]" if default else "[y/N]"
     try:
-        raw = ask(t, f"  {format_styled(t, '?', 'cyan', 'bold')} {question} {format_styled(t, suffix, 'grey')} ").strip().lower()
+        raw = ask(t, prompt=f"  {format_styled(t, text='?', styles=('cyan', 'bold'))} {question} {format_styled(t, text=suffix, styles=('grey',))} ").strip().lower()
     except EOFError:
         return default
     if raw == "":
@@ -437,7 +437,7 @@ def _start_spin(spin: Spin) -> None:
     """Print the line, and if the terminal animates, spin it on a background thread."""
     t = spin["term"]
     if not t["animate"]:
-        write_line(t, f"  {t['glyphs']['next']} {spin['label']} ...")
+        write_line(t, text=f"  {t['glyphs']['next']} {spin['label']} ...")
         return
     hide_cursor(t)
     frames = itertools.cycle(t["glyphs"]["spin"])
@@ -445,8 +445,8 @@ def _start_spin(spin: Spin) -> None:
     def run() -> None:
         while not spin["stop"].is_set():
             with spin["lock"]:
-                detail = format_styled(t, f"  {spin['detail']}", "grey") if spin["detail"] else ""
-                write(t, "\r" + CLEAR_LINE + f"  {format_styled(t, next(frames), 'cyan')} {spin['label']}" + detail)
+                detail = format_styled(t, text=f"  {spin['detail']}", styles=("grey",)) if spin["detail"] else ""
+                write(t, text="\r" + CLEAR_LINE + f"  {format_styled(t, text=next(frames), styles=('cyan',))} {spin['label']}" + detail)
             time.sleep(0.08)
 
     thread = threading.Thread(target=run, daemon=True)
@@ -477,13 +477,13 @@ def _stop_spin(spin: Spin, *, ok: bool) -> None:
     if not spin["keep"] and ok:
         if thread:
             # Transient: leave no trace of the wait.
-            write(t, "\r" + CLEAR_LINE)
+            write(t, text="\r" + CLEAR_LINE)
         show_cursor(t)
         return
     if ok:
-        mark = format_styled(t, t["glyphs"]["ok"], "green", "bold")
+        mark = format_styled(t, text=t["glyphs"]["ok"], styles=("green", "bold"))
     else:
-        mark = format_styled(t, t["glyphs"]["bad"], "red", "bold")
-    tail = format_styled(t, f"  {spin['detail']}", "grey") if spin["detail"] else ""
-    write(t, ("\r" + CLEAR_LINE if thread else "") + f"  {mark} {spin['label']}{tail}\n")
+        mark = format_styled(t, text=t["glyphs"]["bad"], styles=("red", "bold"))
+    tail = format_styled(t, text=f"  {spin['detail']}", styles=("grey",)) if spin["detail"] else ""
+    write(t, text=("\r" + CLEAR_LINE if thread else "") + f"  {mark} {spin['label']}{tail}\n")
     show_cursor(t)
