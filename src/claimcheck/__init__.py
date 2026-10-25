@@ -35,6 +35,12 @@ class ProviderError(ClaimcheckError):
     code = 5
 
 
+class EmptyDiffError(ClaimcheckError):
+    """There is nothing to verify: the diff is empty (exit 7)."""
+
+    code = 7
+
+
 class MutateLockError(ClaimcheckError):
     """A stale mutate sentinel is present (exit 6)."""
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import checker, ledger, mutate
+from . import checker, gitio, ledger, mutate
 from . import claims as CL
 from . import config as C
 from . import spec as S
@@ -27,6 +27,7 @@ def run_all(
 ) -> tuple[dict, int]:
     base = base or cfg.base
     mutate.check_sentinel(repo)  # before paying for a checker call
+    gitio.require_diff(repo, base, worktree)  # nothing to verify: stop before the checker, mutation or ledger
     S.enforce_open_diff_rules(repo, cfg, base)
     criteria = S.verify(repo)
     lock = S.read_lock(repo)

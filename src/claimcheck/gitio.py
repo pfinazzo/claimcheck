@@ -9,7 +9,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from . import ClaimcheckError
+from . import ClaimcheckError, EmptyDiffError
 
 
 # Fixed settings for every call, so a person's git config cannot change what we parse:
@@ -105,6 +105,21 @@ def diff_text(repo: Path, base: str, worktree: bool) -> str:
         # --no-index exits 1 when the files differ, which is the point here.
         text += git(repo, "diff", *_DIFF_FLAGS, "--no-index", "--", "/dev/null", name, check=False)
     return text
+
+
+def require_diff(repo: Path, base: str, worktree: bool) -> str:
+    """The diff under test, or a refusal when it is empty so no run is recorded for nothing."""
+    text = diff_text(repo, base, worktree)
+    if text.strip():
+        return text
+    if worktree:
+        raise EmptyDiffError(
+            f"the diff is empty: the working tree has no changes against '{base}'. Make a change first."
+        )
+    raise EmptyDiffError(
+        f"the diff is empty: nothing in HEAD differs from '{base}'. "
+        "Commit the change first, or pass --worktree to check uncommitted work."
+    )
 
 
 def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:

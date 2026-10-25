@@ -199,6 +199,8 @@ def run_check(
     provider_name = provider_name or cfg.checker_provider
     model = model or cfg.checker_model
 
+    raw_diff = gitio.require_diff(repo, base, worktree)  # before any spec, claims or provider work
+
     if criteria is None:
         S.enforce_open_diff_rules(repo, cfg, base)
         criteria = S.verify(repo)
@@ -208,7 +210,7 @@ def run_check(
 
     # Whatever leaves this process is filtered first: secret files withheld, secret-looking values
     # redacted, size capped. What was held back is recorded in the result (never its content).
-    diff, sent = redact.filter_diff(gitio.diff_text(repo, base, worktree))
+    diff, sent = redact.filter_diff(raw_diff)
     system, user = build_prompt(criteria, diff, claims_file)
     claim_ids = [c.id for c in claims_file.claims]
 

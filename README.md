@@ -428,6 +428,7 @@ Options shared by `check`, `mutate` and `run`:
 | 4 | claims file invalid, or the pre-commit hook rejected the commit |
 | 5 | provider error, unknown provider, the baseline tests fail, or the working tree no longer matches the diff |
 | 6 | a previous `mutate` left its lock behind, or `--restore` refused to overwrite a file |
+| 7 | the diff is empty, so there is nothing to verify (commit the change, or pass `--worktree`) |
 
 ### Files
 
