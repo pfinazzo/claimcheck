@@ -16,6 +16,20 @@ AI coding assistants write code and then say it works. Sometimes they're wrong, 
 
 At the end you can see which claims were actually verified and which were only confident.
 
+## The problem it solves
+
+When an AI writes code and then writes the tests for that code, the tests check the cases the AI thought of. The bugs that reach production live in the cases it didn't. So "all tests pass" and "I'm 95% sure" say very little about the part that matters.
+
+Here is the shape of it, with a made-up example. You ask for a "Delete my account" button that leaves none of the user's personal data behind. The AI deletes the user's row, posts and comments, then writes one test that checks the user is gone. The test passes and the AI reports 95% confidence. The app also stores uploaded photos and saved card details. The AI never thought of them, so no test mentions them. Everything is green and the data is still there.
+
+claimcheck pushes on that gap in three ways:
+
+- **The goal is locked first.** "No photos, payment details, posts or comments remain" is written down before any code exists, so the AI can't shrink it to "the user row is gone."
+- **The tests get tested.** claimcheck plants small bugs in the new code and reruns the tests. A bug that nobody notices marks a place the tests don't really look.
+- **The claim is read against the code by a reader who doesn't know how sure the AI was.** A claim of "all personal data is removed" next to a change that touches three tables is the kind of mismatch a fresh reader can see.
+
+claimcheck can't see what the change doesn't show, and it can't know about data nobody told it about. What it does is stop "the tests pass" and "I'm confident" from standing in for proof. [Limits, stated plainly](#limits-stated-plainly) has the rest.
+
 **Without claimcheck**
 
 ```mermaid
@@ -180,6 +194,7 @@ Each run writes one JSON line per claim. This is the second run, trimmed:
 
 ## Contents
 
+- [The problem it solves](#the-problem-it-solves)
 - [Use it in your own repo](#use-it-in-your-own-repo)
 - [A real catch](#a-real-catch)
 - [Example: the weak-test catch](#example-the-weak-test-catch)
