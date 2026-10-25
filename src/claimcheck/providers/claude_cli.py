@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .. import ProviderError, config, redact
+from .shapes import Provider, Request, make_provider
 
 DEFAULT_TIMEOUT_S = 300
 # Tools off: the model gets text in and gives text out, nothing else.
@@ -91,45 +92,54 @@ def parse_output(stdout: str) -> str:
     raise ProviderError("claude CLI returned no result")
 
 
-class ClaudeCliProvider:
-    def __init__(self, model: str | None = None, binary: str | None = None, timeout_s: int = DEFAULT_TIMEOUT_S):
-        self.model = model
-        found = binary or find_claude()
-        self.timeout_s = timeout_s
-        if not found:
-            raise ProviderError(
-                "the claude CLI was not found on PATH. Install Claude Code and sign in, "
-                "or set ANTHROPIC_API_KEY to use the API provider."
-            )
-        self.binary: str = found
+def make_claude_cli_provider(*, model: str | None = None, binary: str | None = None, timeout_s: int = DEFAULT_TIMEOUT_S) -> Provider:
+    """A provider that asks the person's own Claude Code sign-in through the `claude` CLI.
 
-    def complete(self, system: str, user: str, *, schema: dict) -> str:
-        # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
-        system, user = redact.redact_text(system)[0], redact.redact_text(user)[0]
-        prefix, direct = resolve_launch(self.binary)
-        args = [
-            *prefix, "-p", "--output-format", "json", "--system-prompt", system,
-            "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", *DISALLOWED,
-        ]
-        if self.model:
-            args += ["--model", self.model]
-        if direct:
-            args += ["--json-schema", json.dumps(schema)]
-        # Without --json-schema (shim fallback) the schema has to ride in the prompt itself.
-        stdin = user if direct else user + "\n\nReply with JSON only, matching this schema:\n" + json.dumps(schema)
-        try:
-            proc = subprocess.run(
-                args, input=stdin, capture_output=True, text=True, encoding="utf-8",
-                timeout=self.timeout_s, cwd=config.temp_dir(),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
-            )
-        except subprocess.TimeoutExpired:
-            raise ProviderError(f"claude CLI did not answer within {self.timeout_s}s") from None
-        except OSError as e:
-            raise ProviderError(f"claude CLI could not be started: {e}") from e
-        if proc.returncode != 0 and not proc.stdout.strip():
-            err = (proc.stderr or "").strip()
-            if SIGN_IN.search(err):
-                raise ProviderError("Claude Code is not signed in. Run `claude` once and sign in, then retry.")
-            raise ProviderError(f"claude CLI exited {proc.returncode}: {err[:300]}")
-        return parse_output(proc.stdout)
+    Raises ProviderError when the CLI cannot be found.
+    """
+    found = binary or find_claude()
+    if not found:
+        raise ProviderError(
+            "the claude CLI was not found on PATH. Install Claude Code and sign in, "
+            "or set ANTHROPIC_API_KEY to use the API provider."
+        )
+
+    def complete(request: Request) -> str:
+        """Run `claude -p` once, read-only and without tools, and return its reply."""
+        return _run_claude(request, binary=found, model=model, timeout_s=timeout_s)
+
+    return make_provider("claude-cli", complete=complete, model=model)
+
+
+def _run_claude(request: Request, *, binary: str, model: str | None, timeout_s: int) -> str:
+    """One `claude -p` call. Raises ProviderError, saying what to do, when it fails."""
+    # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
+    system, user = redact.redact_text(request["system"])[0], redact.redact_text(request["user"])[0]
+    schema = request["schema"]
+    prefix, direct = resolve_launch(binary)
+    args = [
+        *prefix, "-p", "--output-format", "json", "--system-prompt", system,
+        "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", *DISALLOWED,
+    ]
+    if model:
+        args += ["--model", model]
+    if direct:
+        args += ["--json-schema", json.dumps(schema)]
+    # Without --json-schema (shim fallback) the schema has to ride in the prompt itself.
+    stdin = user if direct else user + "\n\nReply with JSON only, matching this schema:\n" + json.dumps(schema)
+    try:
+        proc = subprocess.run(
+            args, input=stdin, capture_output=True, text=True, encoding="utf-8",
+            timeout=timeout_s, cwd=config.temp_dir(),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
+        )
+    except subprocess.TimeoutExpired:
+        raise ProviderError(f"claude CLI did not answer within {timeout_s}s") from None
+    except OSError as e:
+        raise ProviderError(f"claude CLI could not be started: {e}") from e
+    if proc.returncode != 0 and not proc.stdout.strip():
+        err = (proc.stderr or "").strip()
+        if SIGN_IN.search(err):
+            raise ProviderError("Claude Code is not signed in. Run `claude` once and sign in, then retry.")
+        raise ProviderError(f"claude CLI exited {proc.returncode}: {err[:300]}")
+    return parse_output(proc.stdout)

@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 from . import ClaimcheckError, SpecError, gitio
 from . import config as C
@@ -17,14 +17,13 @@ from . import config as C
 CRITERION_RE = re.compile(r"^- \[[ xX]\] (\d+)\. (.+)$")
 
 
-@dataclass(frozen=True)
-class Criterion:
-    id: int
-    text: str
+# One numbered criterion from spec.md. `sha256` is of its stripped text, as the lock records it.
+Criterion = TypedDict("Criterion", {"id": int, "text": str, "sha256": str})
 
-    @property
-    def sha256(self) -> str:
-        return C.sha256_text(self.text.strip())
+
+def make_criterion(*, id: int, text: str) -> Criterion:
+    """A Criterion, with its hash worked out from the text."""
+    return {"id": id, "text": text, "sha256": C.sha256_text(text.strip())}
 
 
 def parse_criteria(text: str) -> list[Criterion]:
@@ -33,10 +32,10 @@ def parse_criteria(text: str) -> list[Criterion]:
     for line in text.splitlines():
         m = CRITERION_RE.match(line)
         if m:
-            found.append(Criterion(int(m.group(1)), m.group(2)))
+            found.append(make_criterion(id=int(m.group(1)), text=m.group(2)))
     if not found:
         raise SpecError("spec has zero criteria (lines must match '- [ ] N. text')")
-    ids = [c.id for c in found]
+    ids = [c["id"] for c in found]
     dups = sorted({i for i in ids if ids.count(i) > 1})
     if dups:
         raise SpecError(f"duplicate criterion ids: {dups}")
@@ -106,7 +105,7 @@ def build_lock(repo: Path, spec_text: str, criteria: list[Criterion]) -> dict:
         "frozen_at": C.utc_now_iso(),
         "git_head": gitio.head_sha(repo),
         "spec_sha256": spec_digest(repo),
-        "criteria": [{"id": c.id, "sha256": c.sha256} for c in criteria],
+        "criteria": [{"id": c["id"], "sha256": c["sha256"]} for c in criteria],
     }
 
 
@@ -120,14 +119,14 @@ def open_code_paths(repo: Path, cfg: C.Config, base: str) -> list[str]:
     except ClaimcheckError:
         # No commits yet, or no base: nothing can be open.
         names = []
-    return [n for n in names if not C.is_ignored(n, cfg.ignore)]
+    return [n for n in names if not C.is_ignored(n, cfg["ignore"])]
 
 
 def freeze(repo: Path, cfg: C.Config) -> dict:
     """Write spec.lock. With an existing lock, refuse unless the tree is clean and at base."""
     spec_text, criteria = read_spec(repo)
     if lock_path(repo).exists():
-        open_paths = open_code_paths(repo, cfg, cfg.base)
+        open_paths = open_code_paths(repo, cfg, cfg["base"])
         if open_paths:
             shown = ", ".join(open_paths[:3]) + ("..." if len(open_paths) > 3 else "")
             raise SpecError(
@@ -142,7 +141,7 @@ def freeze(repo: Path, cfg: C.Config) -> dict:
 def diff_against_lock(criteria: list[Criterion], lock: dict) -> dict[str, list[int]]:
     """Criterion ids added, changed or removed since the lock: {kind: [ids]}."""
     locked = {int(c["id"]): c["sha256"] for c in lock["criteria"]}
-    current = {c.id: c.sha256 for c in criteria}
+    current = {c["id"]: c["sha256"] for c in criteria}
     return {
         "late addition": sorted(i for i in current if i not in locked),
         "modified": sorted(i for i in current if i in locked and current[i] != locked[i]),
@@ -169,7 +168,7 @@ def enforce_open_diff_rules(repo: Path, cfg: C.Config, base: str | None = None) 
     `base` is the ref the diff under test is measured against (the CLI's --base
     when given, else the config's base).
     """
-    base = base or cfg.base
+    base = base or cfg["base"]
     rel_lock = f"{C.CLAIMCHECK_DIR}/{C.LOCK_FILE}"
     rel_spec = f"{C.CLAIMCHECK_DIR}/{C.SPEC_FILE}"
 

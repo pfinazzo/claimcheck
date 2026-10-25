@@ -26,7 +26,7 @@ def run_all(
     seed: int = 0,
 ) -> tuple[dict, int]:
     """`check` then `mutate` on the same diff. Returns the combined result and the worse exit code."""
-    base = base or cfg.base
+    base = base or cfg["base"]
     # Before paying for a checker call.
     mutate.check_sentinel(repo)
     # Nothing to verify: stop before the checker, mutation or ledger.
@@ -51,8 +51,8 @@ def run_all(
     ts = C.utc_now_iso()
     rid = C.repo_id(repo)
     records = []
-    for c in cf.claims:
-        v = verdict_by_id.get(c.id, {"verdict": "UNVERIFIABLE", "reason": "no verdict", "evidence": []})
+    for c in cf["claims"]:
+        v = verdict_by_id.get(c["id"], {"verdict": "UNVERIFIABLE", "reason": "no verdict", "evidence": []})
         records.append(
             ledger.claim_record(
                 ts=ts,
@@ -61,13 +61,13 @@ def run_all(
                 base=check_result["base"],
                 head=check_result["head"],
                 spec_lock=check_result["spec_lock"],
-                author=cf.author,
-                claim_id=c.id,
-                claim=c.claim,
-                confidence=c.confidence,
-                criteria=c.criteria,
-                files=c.files,
-                kill_condition=c.kill_condition,
+                author=cf["author"],
+                claim_id=c["id"],
+                claim=c["claim"],
+                confidence=c["confidence"],
+                criteria=c["criteria"],
+                files=c["files"],
+                kill_condition=c["kill_condition"],
                 checker={
                     "provider": check_result["provider"],
                     "model": check_result["model"],
@@ -75,7 +75,7 @@ def run_all(
                     "reason": v["reason"],
                     "evidence": v.get("evidence", []),
                 },
-                mutation=per_claim.get(c.id, mutate._summary([])),
+                mutation=per_claim.get(c["id"], mutate._summary([])),
             )
         )
     appended = ledger.append_atomic(repo, records)

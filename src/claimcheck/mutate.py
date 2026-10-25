@@ -15,8 +15,8 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from . import ClaimsError, MutateLockError, ProviderError, SpecError, gitio
 from . import claims as CL
@@ -36,13 +36,13 @@ _UNARY_PREV_WORDS = {
 }
 
 
-@dataclass
-class Mutant:
-    file: str
-    line_no: int
-    cls: str
-    original: str
-    mutated: str
+# One planted bug: the `cls` mutation of the line at `line_no` in `file`.
+Mutant = TypedDict("Mutant", {"file": str, "line_no": int, "cls": str, "original": str, "mutated": str})
+
+
+def make_mutant(*, file: str, line_no: int, cls: str, original: str, mutated: str) -> Mutant:
+    """A Mutant from its parts."""
+    return {"file": file, "line_no": line_no, "cls": cls, "original": original, "mutated": mutated}
 
 
 def _string_spans(line: str) -> list[tuple[int, int]]:
@@ -140,7 +140,7 @@ def generate(line: str, file: str = "", line_no: int = 0) -> list[Mutant]:
         ("boundary", _boundary),
     )
     return [
-        Mutant(file, line_no, cls, line, mutated)
+        make_mutant(file=file, line_no=line_no, cls=cls, original=line, mutated=mutated)
         for cls, fn in mutations
         for mutated in fn(line, spans)
         if mutated != line
@@ -331,21 +331,19 @@ def _run_tests(repo: Path, cmd: str, timeout: int) -> tuple[str, float]:
 _UTF8_BOM = b"\xef\xbb\xbf"
 
 
-@dataclass
-class _FileState:
-    data: bytes
-    sha: str
-    atime_ns: int
-    mtime_ns: int
-    bom: bool
-    # (content without its line ending, that line's own ending)
-    lines: list[tuple[bytes, bytes]]
+# A file as read before any mutant touched it. `lines` holds (content without its line
+# ending, that line's own ending), so a file renders back byte for byte.
+_FileState = TypedDict(
+    "_FileState",
+    {"data": bytes, "sha": str, "atime_ns": int, "mtime_ns": int, "bom": bool, "lines": list[tuple[bytes, bytes]]},
+)
 
-    def render(self, idx: int, new_content: bytes) -> bytes:
-        parts = [_UTF8_BOM] if self.bom else []
-        for i, (content, eol) in enumerate(self.lines):
-            parts.append(new_content + eol if i == idx else content + eol)
-        return b"".join(parts)
+
+def _render_with_line(state: _FileState, *, index: int, new_content: bytes) -> bytes:
+    """The file's bytes with line `index` (0-based) replaced, every line ending and the BOM kept."""
+    bom = [_UTF8_BOM] if state["bom"] else []
+    body = [(new_content if i == index else content) + eol for i, (content, eol) in enumerate(state["lines"])]
+    return b"".join(bom + body)
 
 
 def _sha(data: bytes) -> str:
@@ -361,7 +359,7 @@ def _parse_bytes(data: bytes, atime_ns: int = 0, mtime_ns: int = 0) -> _FileStat
     lines = [(part[:-1], b"\r\n") if part.endswith(b"\r") else (part, b"\n") for part in ended]
     # A last line with no newline is kept; an empty tail is just the final newline.
     lines += [(tail, b"")] if tail else []
-    return _FileState(data, _sha(data), atime_ns, mtime_ns, bom, lines)
+    return {"data": data, "sha": _sha(data), "atime_ns": atime_ns, "mtime_ns": mtime_ns, "bom": bom, "lines": lines}
 
 
 def _load(repo: Path, rel: str) -> _FileState:
@@ -377,18 +375,18 @@ def _check(state: _FileState | None, m: Mutant) -> str:
     """'ok', 'undecodable' (skip the line), or 'mismatch' (the file is not what the diff says)."""
     if state is None:
         return "mismatch"
-    idx = m.line_no - 1
-    if idx < 0 or idx >= len(state.lines):
+    idx = m["line_no"] - 1
+    if idx < 0 or idx >= len(state["lines"]):
         return "mismatch"
     try:
-        text = state.lines[idx][0].decode("utf-8")
+        text = state["lines"][idx][0].decode("utf-8")
     except UnicodeDecodeError:
         return "undecodable"
-    return "ok" if text == m.original else "mismatch"
+    return "ok" if text == m["original"] else "mismatch"
 
 
 def _drift_message(m: Mutant) -> str:
-    return f"{m.file} line {m.line_no} no longer matches the diff; commit or stash your edits and rerun"
+    return f"{m['file']} line {m['line_no']} no longer matches the diff; commit or stash your edits and rerun"
 
 
 def _write_times(path: Path, atime_ns: int, mtime_ns: int) -> None:
@@ -543,19 +541,19 @@ def _prepare(repo: Path, all_mutants: list[Mutant]) -> tuple[list[Mutant], dict[
     Returns (usable mutants, file states, number skipped). A file that cannot be read stays
     in the map as None so validation can name it.
     """
-    states = {rel: _load_or_none(repo, rel) for rel in dict.fromkeys(m.file for m in all_mutants)}
-    usable = [m for m in all_mutants if _check(states[m.file], m) != "undecodable"]
+    states = {rel: _load_or_none(repo, rel) for rel in dict.fromkeys(m["file"] for m in all_mutants)}
+    usable = [m for m in all_mutants if _check(states[m["file"]], m) != "undecodable"]
     return usable, states, len(all_mutants) - len(usable)
 
 
 def _per_claim_summaries(claims_file: CL.ClaimsFile, records: list[dict], all_mutants: list[Mutant]) -> dict[str, dict]:
     """Each claim's catch summary over the mutants in its files, plus how many candidates it had."""
     return {
-        c.id: {
-            **_summary([r for r in records if r["file"] in c.files]),
-            "candidates": sum(1 for m in all_mutants if m.file in c.files),
+        c["id"]: {
+            **_summary([r for r in records if r["file"] in c["files"]]),
+            "candidates": sum(1 for m in all_mutants if m["file"] in c["files"]),
         }
-        for c in claims_file.claims
+        for c in claims_file["claims"]
     }
 
 
@@ -584,10 +582,10 @@ def run_mutate(
     claims_file: CL.ClaimsFile | None = None,
 ) -> tuple[dict, int]:
     """Plant each sampled mutant, run the tests, and restore. Returns the result and exit code (2 below min_catch_rate)."""
-    base = base or cfg.base
-    test_cmd = test_cmd or cfg.test_cmd
-    max_mutants = cfg.mutate_max_mutants if max_mutants is None else max_mutants
-    timeout = cfg.mutate_timeout_s
+    base = base or cfg["base"]
+    test_cmd = test_cmd or cfg["test_cmd"]
+    max_mutants = cfg["mutate_max_mutants"] if max_mutants is None else max_mutants
+    timeout = cfg["mutate_timeout_s"]
 
     check_sentinel(repo)
     sentinel = C.cc_dir(repo) / C.MUTATE_SENTINEL
@@ -605,17 +603,17 @@ def run_mutate(
             claims_file = None
 
     diff = gitio.diff_text(repo, base, worktree)
-    all_mutants, states, skipped = _prepare(repo, collect(diff, cfg.ignore))
+    all_mutants, states, skipped = _prepare(repo, collect(diff, cfg["ignore"]))
     rng = random.Random(seed)
     selected = list(all_mutants)
     rng.shuffle(selected)
     selected = selected[:max_mutants]
-    selected.sort(key=lambda m: (m.file, m.line_no, CLASSES.index(m.cls), m.mutated))
+    selected.sort(key=lambda m: (m["file"], m["line_no"], CLASSES.index(m["cls"]), m["mutated"]))
 
     # Validate every mutant against the bytes on disk BEFORE touching anything or writing the
     # sentinel: a file edited after the commit must fail here, with nothing left to clean up.
     for m in selected:
-        if _check(states[m.file], m) != "ok":
+        if _check(states[m["file"]], m) != "ok":
             raise ProviderError(_drift_message(m))
 
     baseline, baseline_s = _run_tests(repo, test_cmd, timeout)
@@ -630,7 +628,7 @@ def run_mutate(
 
     per_claim = None if claims_file is None else _per_claim_summaries(claims_file, records, all_mutants)
     for claim_id, s in (per_claim or {}).items():
-        if cfg.mutate_min_catch_rate > 0 and s["total"] == 0:
+        if cfg["mutate_min_catch_rate"] > 0 and s["total"] == 0:
             _warn_unjudged(claim_id, s["candidates"])
 
     summary = _summary(records)
@@ -655,7 +653,7 @@ def run_mutate(
     (runs / f"{result['run_id']}-mutate.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     rate = summary["catch_rate"]
-    code = 0 if rate is None or rate >= cfg.mutate_min_catch_rate else 2
+    code = 0 if rate is None or rate >= cfg["mutate_min_catch_rate"] else 2
     return result, code
 
 
@@ -666,8 +664,8 @@ def _retry_restore(path: Path, state: _FileState) -> bool:
     behind, and `claimcheck mutate --restore` finishes the job.
     """
     try:
-        _restore_file(path, state.data, (state.atime_ns, state.mtime_ns))
-        return _sha(path.read_bytes()) == state.sha
+        _restore_file(path, state["data"], (state["atime_ns"], state["mtime_ns"]))
+        return _sha(path.read_bytes()) == state["sha"]
     except OSError:
         return False
 
@@ -685,13 +683,13 @@ def _run_planted(
     """Plant each mutant, run the tests, put the file back. Cleans up only when all is restored."""
     C.cc_dir(repo).mkdir(parents=True, exist_ok=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    recorded = {rel: _back_up(states[rel], backup_dir / rel) for rel in dict.fromkeys(m.file for m in selected)}
+    recorded = {rel: _back_up(states[rel], backup_dir / rel) for rel in dict.fromkeys(m["file"] for m in selected)}
     _write_sentinel(sentinel, recorded)
     # Files that may currently hold a planted bug.
     dirty: set[str] = set()
     try:
         for k, m in enumerate(selected):
-            records.append(_plant_and_test(repo, m, k, states[m.file], test_cmd, timeout, sentinel, recorded, dirty))
+            records.append(_plant_and_test(repo, m, k, states[m["file"]], test_cmd, timeout, sentinel, recorded, dirty))
     finally:
         # Even after an exception or Ctrl-C: one more try at anything still dirty, then clean
         # up only if every file is back. A failed restore leaves backup + sentinel for --restore.
@@ -704,12 +702,12 @@ def _run_planted(
 def _back_up(st: _FileState, dest: Path) -> dict:
     """Copy the original into the backup folder; returns its sentinel entry."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(st.data)
+    dest.write_bytes(st["data"])
     return {
-        "original_sha256": st.sha,
-        "mutated_sha256": st.sha,
-        "atime_ns": st.atime_ns,
-        "mtime_ns": st.mtime_ns,
+        "original_sha256": st["sha"],
+        "mutated_sha256": st["sha"],
+        "atime_ns": st["atime_ns"],
+        "mtime_ns": st["mtime_ns"],
     }
 
 
@@ -725,21 +723,21 @@ def _plant_and_test(
     dirty: set[str],
 ) -> dict:
     """Plant mutant number `k`, run the tests, and put the file back. Returns its record."""
-    path = repo / m.file
-    mutated = st.render(m.line_no - 1, m.mutated.encode("utf-8"))
+    path = repo / m["file"]
+    mutated = _render_with_line(st, index=m["line_no"] - 1, new_content=m["mutated"].encode("utf-8"))
     # Record what is about to be written BEFORE writing it, so --restore can always
     # recognise the file as ours.
-    recorded[m.file]["mutated_sha256"] = _sha(mutated)
+    recorded[m["file"]]["mutated_sha256"] = _sha(mutated)
     _write_sentinel(sentinel, recorded)
-    dirty.add(m.file)
+    dirty.add(m["file"])
     path.write_bytes(mutated)
     # A distinct mtime second per mutant, so no stale .pyc keyed on the original's
     # (mtime, size) can be mistaken for the mutant's.
-    _write_times(path, st.atime_ns, st.mtime_ns + (k + 1) * 2_000_000_000)
+    _write_times(path, st["atime_ns"], st["mtime_ns"] + (k + 1) * 2_000_000_000)
     try:
         outcome, dur = _run_tests(repo, test_cmd, timeout)
     finally:
-        _restore_file(path, st.data, (st.atime_ns, st.mtime_ns))
-        if _sha(path.read_bytes()) == st.sha:
-            dirty.discard(m.file)
-    return {**asdict(m), "outcome": outcome, "duration_s": dur}
+        _restore_file(path, st["data"], (st["atime_ns"], st["mtime_ns"]))
+        if _sha(path.read_bytes()) == st["sha"]:
+            dirty.discard(m["file"])
+    return {**m, "outcome": outcome, "duration_s": dur}

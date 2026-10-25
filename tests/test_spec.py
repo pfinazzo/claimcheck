@@ -16,8 +16,8 @@ from conftest import TWO_CRITERIA_SPEC
 
 def test_ac4_parse_ok():
     crit = S.parse_criteria(TWO_CRITERIA_SPEC)
-    assert [c.id for c in crit] == [1, 2]
-    assert crit[0].text.startswith("sub(a, b)")
+    assert [c["id"] for c in crit] == [1, 2]
+    assert crit[0]["text"].startswith("sub(a, b)")
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,7 @@ def test_ac5_lock_shape(cc_repo):
     for c in lock["criteria"]:
         assert re.fullmatch(r"[0-9a-f]{64}", c["sha256"])
     crit = S.parse_criteria(TWO_CRITERIA_SPEC)
-    assert lock["criteria"][0]["sha256"] == crit[0].sha256
+    assert lock["criteria"][0]["sha256"] == crit[0]["sha256"]
 
 
 def test_ac5_refreeze_clean_overwrites(cc_repo):

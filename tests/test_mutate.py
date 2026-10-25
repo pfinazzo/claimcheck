@@ -48,9 +48,9 @@ def test_ac21_only_added_lines_in_non_ignored_files():
     added = mutate.added_lines(DIFF, C.DEFAULT_IGNORE)
     assert added == [("src/calc.py", 2, "    return a + 1"), ("src/calc.py", 3, "    # added")]
     muts = mutate.collect(DIFF, C.DEFAULT_IGNORE)
-    assert {m.file for m in muts} == {"src/calc.py"}
-    assert all(m.line_no in (2, 3) for m in muts)
-    assert not any("x < 2" in m.original or "<" in m.mutated for m in muts)
+    assert {m["file"] for m in muts} == {"src/calc.py"}
+    assert all(m["line_no"] in (2, 3) for m in muts)
+    assert not any("x < 2" in m["original"] or "<" in m["mutated"] for m in muts)
 
 
 # ---- AC 22 ---------------------------------------------------------------
@@ -73,9 +73,9 @@ def test_ac21_only_added_lines_in_non_ignored_files():
     ],
 )
 def test_ac22_exact_mutant_sets(line, expected):
-    got = {(m.cls, m.mutated) for m in mutate.generate(line)}
+    got = {(m["cls"], m["mutated"]) for m in mutate.generate(line)}
     assert got == expected
-    assert all(m.original == line for m in mutate.generate(line))
+    assert all(m["original"] == line for m in mutate.generate(line))
 
 
 # ---- AC 23 ---------------------------------------------------------------

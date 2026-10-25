@@ -15,7 +15,9 @@ import pytest
 from claimcheck import ClaimcheckError, checker, gitio, hook, ledger
 from claimcheck import claims as CL
 from claimcheck import config as C
+from claimcheck.providers import Provider
 from conftest import SUBPROCESS_TIMEOUT_S
+from fakes import make_sequence_provider
 
 # ---- config -----------------------------------------------------------------
 
@@ -43,7 +45,7 @@ def test_config_wrong_type_inside_a_table(cc_repo):
 
 def test_config_with_a_bom_loads(cc_repo):
     (cc_repo.cc / "config.toml").write_bytes(b"\xef\xbb\xbf" + b'version = 1\ntest_cmd = "make test"\n')
-    assert C.load(cc_repo.path).test_cmd == "make test"
+    assert C.load(cc_repo.path)["test_cmd"] == "make test"
 
 
 def test_double_star_prefix_matches_the_top_level_too():
@@ -130,13 +132,9 @@ def test_wrong_field_types_are_violations_not_crashes():
 
 # ---- checker ----------------------------------------------------------------
 
-class _Seq:
-    def __init__(self, *replies):
-        self.replies, self.calls = list(replies), 0
-
-    def complete(self, system, user, *, schema):
-        self.calls += 1
-        return self.replies.pop(0)
+def _seq(*replies: str) -> Provider:
+    """A provider that answers with each reply in turn."""
+    return make_sequence_provider(*replies)[0]
 
 
 def _v(cid, verdict):
@@ -152,7 +150,7 @@ def test_a_refutation_in_a_flawed_reply_survives_a_second_flawed_reply():
     # C2 missing: invalid.
     first = json.dumps({"verdicts": [_v("c1", "REFUTED")]})
     second = "not json at all"
-    out = checker.ask(_Seq(first, second), "s", "u", ["c1", "c2"])
+    out = checker.ask(_seq(first, second), "s", "u", ["c1", "c2"])
     assert out[0]["verdict"] == "REFUTED"
     assert out[1]["verdict"] == "UNVERIFIABLE"
 
@@ -160,7 +158,7 @@ def test_a_refutation_in_a_flawed_reply_survives_a_second_flawed_reply():
 def test_a_refutation_beats_a_support_for_the_same_claim_across_replies():
     first = json.dumps({"verdicts": [_v("c1", "SUPPORTED")]})
     second = json.dumps({"verdicts": [_v("c1", "REFUTED"), _v("c1", "REFUTED")]})
-    out = checker.ask(_Seq(first, second), "s", "u", ["c1", "c2"])
+    out = checker.ask(_seq(first, second), "s", "u", ["c1", "c2"])
     assert out[0]["verdict"] == "REFUTED"
 
 

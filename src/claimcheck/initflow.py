@@ -9,9 +9,13 @@ definition of "set up". It is safe to run twice: nothing that exists is overwrit
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TypeVar
 
 from . import agentdocs, ci, detect, gitio, hook, specdraft
 from . import config as C
+
+# Whatever one setup step produced; `step` hands it back unchanged.
+StepResult = TypeVar("StepResult")
 
 _INITIAL = (
     (C.SPEC_FILE, C.DEFAULT_SPEC_MD),
@@ -45,7 +49,7 @@ def run_setup(
 
     `test_cmd` overrides the detected test command when the config is first written.
     """
-    def step(name: str, value):
+    def step(name: str, value: StepResult) -> StepResult:
         """Report one finished setup step to `on_step` and pass its result through."""
         if on_step:
             on_step(name, value)
@@ -65,7 +69,7 @@ def run_setup(
     if not config_path.exists():
         text = detect.render_config(det)
         if test_cmd:
-            text = text.replace(f'test_cmd = "{det.test_cmd or "python -m pytest -q"}"', f'test_cmd = "{test_cmd}"', 1)
+            text = text.replace(f'test_cmd = "{det["test_cmd"] or "python -m pytest -q"}"', f'test_cmd = "{test_cmd}"', 1)
         config_path.write_text(text, encoding="utf-8", newline="\n")
         created.append(C.CONFIG_FILE)
         config_status = "created"
@@ -88,7 +92,7 @@ def run_setup(
 
     ci_info = None
     if ci_provider == "github":
-        path, action = ci.install_github(repo, det.stack.name if det.stack else None)
+        path, action = ci.install_github(repo, det["stack"]["name"] if det["stack"] else None)
         ci_info = {"path": path, "action": action}
     step("ci", ci_info)
 
@@ -105,16 +109,16 @@ def run_setup(
         "created": created,
         "config": config_status,
         "stack": {
-            "name": det.stack.name if det.stack else None,
-            "test_cmd": C.load(repo).test_cmd,
-            "others": det.others,
+            "name": det["stack"]["name"] if det["stack"] else None,
+            "test_cmd": C.load(repo)["test_cmd"],
+            "others": det["others"],
         },
         "hook": hook_info,
         "secrets": secrets,
         "gitignore_added": added,
         "agent_docs": docs,
         "ci": ci_info,
-        "base": cfg.base,
+        "base": cfg["base"],
         "branch": gitio.current_branch(repo) or None,
         "next": "write_spec",
     }

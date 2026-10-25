@@ -10,7 +10,9 @@ import builtins
 import io
 import json
 import re
+import subprocess
 import sys
+import types
 
 import pytest
 import yaml
@@ -26,7 +28,7 @@ from claimcheck import (
 )
 from claimcheck import config as C
 from claimcheck.providers import claude_cli
-from claimcheck.providers.stub import StubProvider
+from claimcheck.providers.stub import make_stub_provider
 
 # ---- setup core -------------------------------------------------------------
 
@@ -40,7 +42,7 @@ def test_run_setup_does_everything_and_reports_it(repo):
     assert r["agent_docs"] == [{"path": "CLAUDE.md", "action": "added"}]
     assert r["ci"] == {"path": ".github/workflows/claimcheck.yml", "action": "created"}
     cfg = C.load(repo.path)
-    assert cfg.test_cmd == "npm test" and "*.test.*" in cfg.ignore and cfg.checker_provider == "auto"
+    assert cfg["test_cmd"] == "npm test" and "*.test.*" in cfg["ignore"] and cfg["checker_provider"] == "auto"
     assert "claimcheck:begin" in repo.read("CLAUDE.md")
     assert "claimcheck run" in repo.read(".github/workflows/claimcheck.yml")
     manifest = json.loads(repo.read(".claimcheck/setup.json"))["files"]
@@ -52,7 +54,7 @@ def test_run_setup_is_idempotent_and_never_overwrites(repo):
     repo.write(".claimcheck/config.toml", 'version = 1\ntest_cmd = "make check"\n')
     second = initflow.run_setup(repo.path)
     assert second["created"] == [] and second["config"] == "exists" and second["hook"]["status"] == "present"
-    assert second["gitignore_added"] == [] and C.load(repo.path).test_cmd == "make check"
+    assert second["gitignore_added"] == [] and C.load(repo.path)["test_cmd"] == "make check"
 
 
 def test_run_setup_uses_a_typed_test_command(repo):
@@ -191,17 +193,16 @@ def test_a_classic_npm_shim_with_node_beside_it_resolves_to_the_script(tmp_path)
 def test_provider_sends_the_prompt_on_stdin_with_tools_off(monkeypatch):
     seen = {}
 
-    class P:
-        returncode, stdout, stderr = 0, json.dumps({"structured_output": {"ok": True}}), ""
+    reply = json.dumps({"structured_output": {"ok": True}})
 
     def fake_run(args, **kw):
         """Stand-in for subprocess.run that records the call and reports success."""
         seen["args"], seen["input"] = args, kw["input"]
-        return P()
+        return subprocess.CompletedProcess(args, 0, stdout=reply, stderr="")
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
-    prov = claude_cli.ClaudeCliProvider(binary="/usr/bin/claude", model="m1")
-    assert json.loads(prov.complete("SYS", "USER", schema={"type": "object"})) == {"ok": True}
+    prov = claude_cli.make_claude_cli_provider(binary="/usr/bin/claude", model="m1")
+    assert json.loads(providers.ask_model(prov, system="SYS", user="USER", schema={"type": "object"})) == {"ok": True}
     a = seen["args"]
     assert "--system-prompt" in a and a[a.index("--system-prompt") + 1] == "SYS" and seen["input"] == "USER"
     assert "--disallowedTools" in a and "Bash" in a and "--model" in a and "m1" in a and "--json-schema" in a
@@ -210,7 +211,7 @@ def test_provider_sends_the_prompt_on_stdin_with_tools_off(monkeypatch):
 def test_provider_reports_a_missing_cli(monkeypatch):
     monkeypatch.setattr(claude_cli, "find_claude", lambda env=None: None)
     with pytest.raises(ProviderError, match="not found"):
-        claude_cli.ClaudeCliProvider()
+        claude_cli.make_claude_cli_provider()
 
 
 def test_auto_provider_prefers_the_key_then_the_cli_then_explains(monkeypatch):
@@ -219,29 +220,35 @@ def test_auto_provider_prefers_the_key_then_the_cli_then_explains(monkeypatch):
     with pytest.raises(ProviderError, match="no way to reach Claude"):
         providers.load("auto")
     monkeypatch.setattr(claude_cli, "find_claude", lambda env=None: "/usr/bin/claude")
-    assert type(providers.load("auto")).__name__ == "ClaudeCliProvider"
+    assert providers.load("auto")["name"] == "claude-cli"
     assert "claude-cli" in providers.NAMES
 
 
 # ---- terminal toolkit ----------------------------------------------------------
 
-def _term(**kw):
+def _term(*, inp=lambda p: "", animate=False, color=False, unicode=False, sleep=None, seed=None):
     out = io.StringIO()
-    kw.setdefault("animate", False)
-    kw.setdefault("color", False)
-    kw.setdefault("unicode", False)
-    return tui.Term(out=out, inp=kw.pop("inp", lambda p: ""), **kw), out
+    term = tui.make_term(
+        out,
+        read_input=inp,
+        animate=animate,
+        color=color,
+        unicode=unicode,
+        sleep=sleep or (lambda s: None),
+        seed=seed,
+    )
+    return term, out
 
 
 def test_plain_terminal_has_no_escape_codes():
     t, out = _term()
-    t.typewriter("hello")
-    t.shimmer("claimcheck")
-    t.animate_bar("bar", 0.5)
-    t.decode("lock", "abcdef")
-    t.box(["line one", "line two"], title="t")
-    with t.spinner("working") as s:
-        s.ok("done")
+    tui.write_typed(t, "hello")
+    tui.show_shimmer(t, "claimcheck")
+    tui.show_bar_filling(t, "bar", 0.5)
+    tui.show_decode(t, "lock", "abcdef")
+    tui.draw_box(t, ["line one", "line two"], title="t")
+    with tui.show_spinner(t, "working") as s:
+        tui.set_spin_result(s, ok=True, note="done")
     text = out.getvalue()
     assert "\x1b" not in text and "hello" in text and "abcdef" in text and "working" in text and "+ working" in text
 
@@ -249,30 +256,28 @@ def test_plain_terminal_has_no_escape_codes():
 def test_animated_terminal_ends_on_the_final_frame_and_restores_the_cursor():
     sleeps: list = []
     t, out = _term(animate=True, color=True, unicode=True, sleep=sleeps.append, seed=1)
-    t.shimmer("claimcheck", passes=1)
-    t.animate_bar("conf", 0.92, suffix=lambda v: f"{v:.2f}")
-    t.decode("lock", "0123456789abcdef", duration=0.3)
-    t.typewriter("done.")
-    t.restore()
+    tui.show_shimmer(t, "claimcheck", passes=1)
+    tui.show_bar_filling(t, "conf", 0.92, suffix=lambda v: f"{v:.2f}")
+    tui.show_decode(t, "lock", "0123456789abcdef", duration=0.3)
+    tui.write_typed(t, "done.")
+    tui.show_cursor(t)
     text = out.getvalue()
     assert sleeps and "0.92" in tui.strip_ansi(text) and "0123456789abcdef" in tui.strip_ansi(text)
     assert text.count(tui.HIDE_CURSOR) >= 1 and text.rstrip("\n").endswith(tui.SHOW_CURSOR) or tui.SHOW_CURSOR in text
 
 
 def test_detect_respects_no_color_ci_and_dumb_terminals():
-    class Tty(io.StringIO):
-        encoding = "utf-8"
-
-        def isatty(self):
-            return True
+    def tty():
+        """A stand-in stream that says it is a UTF-8 terminal."""
+        return types.SimpleNamespace(encoding="utf-8", isatty=lambda: True)
 
     real = sys.stdin
-    sys.stdin = Tty()
+    sys.stdin = tty()
     try:
-        assert tui.detect(Tty(), {})["animate"] is True
-        assert tui.detect(Tty(), {"NO_COLOR": "1"})["color"] is False
-        assert tui.detect(Tty(), {"CI": "true"})["animate"] is False
-        assert tui.detect(Tty(), {"TERM": "dumb"})["color"] is False
+        assert tui.detect(tty(), {})["animate"] is True
+        assert tui.detect(tty(), {"NO_COLOR": "1"})["color"] is False
+        assert tui.detect(tty(), {"CI": "true"})["animate"] is False
+        assert tui.detect(tty(), {"TERM": "dumb"})["color"] is False
         assert tui.detect(io.StringIO(), {})["tty"] is False
     finally:
         sys.stdin = real
@@ -281,17 +286,17 @@ def test_detect_respects_no_color_ci_and_dumb_terminals():
 def test_pause_more_and_skip():
     answers = iter(["m", "", ])
     t, out = _term(inp=lambda p: next(answers))
-    assert t.pause(more="deeper text") == "next" and "deeper text" in out.getvalue()
+    assert tui.wait_for_continue(t, more="deeper text") == "next" and "deeper text" in out.getvalue()
     t2, _ = _term(inp=lambda p: "s")
-    assert t2.pause(skip_label="skip the tour") == "skip"
+    assert tui.wait_for_continue(t2, skip_label="skip the tour") == "skip"
     t3, _ = _term(inp=lambda p: (_ for _ in ()).throw(EOFError()))
-    assert t3.pause() == "next"
+    assert tui.wait_for_continue(t3) == "next"
 
 
 def test_yes_no_defaults_and_answers():
     for typed, default, expected in (("", True, True), ("", False, False), ("n", True, False), ("Yes", False, True)):
         t, _ = _term(inp=lambda p, v=typed: v)
-        assert t.yes_no("ok?", default=default) is expected
+        assert tui.ask_yes_no(t, "ok?", default=default) is expected
 
 
 # ---- the onboarding, end to end ------------------------------------------------
@@ -310,7 +315,7 @@ def _scripted_term(inputs):
 
 
 def test_onboarding_runs_the_whole_journey(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
     inputs = [
         # The two tour screens.
         "", "",
@@ -344,7 +349,7 @@ def test_onboarding_runs_the_whole_journey(repo, monkeypatch):
 
 
 def test_onboarding_tour_can_be_skipped_and_goal_left_blank(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
     # Skip tour at screen 1; setup prompts; blank goal.
     inputs = ["s", "", "", "", "", ""]
     t, out, _, rest = _scripted_term(inputs)
@@ -374,7 +379,7 @@ def test_ctrl_c_stops_cleanly_and_setup_can_resume(repo, monkeypatch):
 
 
 def test_ansi_never_leaks_into_the_plain_transcript(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
     t, out, _, _ = _scripted_term(["s", "", "", "", "", ""])
     onboard.run_onboarding(t, repo.path)
     assert not re.search(r"\x1b\[", out.getvalue())

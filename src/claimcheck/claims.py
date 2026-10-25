@@ -1,4 +1,4 @@
-"""claims.yaml: dataclasses, validation, and the redaction the checker sees.
+"""claims.yaml: typed records, validation, and the redaction the checker sees.
 
 @author Patrick Finazzo
 """
@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import yaml
 
@@ -19,23 +19,27 @@ KILL_PREFIXES = ("cmd:", "test:", "obs:")
 ID_RE = re.compile(r"^[a-z0-9_-]+$")
 
 
-@dataclass
-class Claim:
-    id: str
-    claim: str
-    confidence: float
-    criteria: list[int]
-    files: list[str]
-    kill_condition: str
-    verified_by: list[str]
+# One claim from claims.yaml. `confidence` and `verified_by` hold whatever the YAML had,
+# so validate() can report a bad value; the checker never sees either.
+Claim = TypedDict(
+    "Claim",
+    {
+        "id": str,
+        "claim": str,
+        "confidence": float,
+        "criteria": list[int],
+        "files": list[str],
+        "kill_condition": str,
+        "verified_by": list[str],
+    },
+)
+
+ClaimsFile = TypedDict("ClaimsFile", {"version": int, "author": str, "base": str, "claims": list[Claim]})
 
 
-@dataclass
-class ClaimsFile:
-    version: int
-    author: str
-    base: str
-    claims: list[Claim] = field(default_factory=list)
+def make_claims_file(*, version: int, author: str, base: str, claims: list[Claim] | None = None) -> ClaimsFile:
+    """A ClaimsFile; no claims unless given."""
+    return {"version": version, "author": author, "base": base, "claims": [] if claims is None else claims}
 
 
 def claims_path(repo: Path) -> Path:
@@ -91,17 +95,17 @@ def load_text(text: str) -> tuple[ClaimsFile | None, list[str]]:
         raw_confidence: Any = rc.get("confidence")
         raw_verified_by: Any = rc.get("verified_by")
         claims.append(
-            Claim(
-                id=text_fields["id"][0],
-                claim=text_fields["claim"][0],
-                confidence=raw_confidence,
-                criteria=list(criteria_raw),
-                files=[f.replace("\\", "/") for f in files_raw],
-                kill_condition=text_fields["kill_condition"][0],
-                verified_by=raw_verified_by,
-            )
+            {
+                "id": text_fields["id"][0],
+                "claim": text_fields["claim"][0],
+                "confidence": raw_confidence,
+                "criteria": list(criteria_raw),
+                "files": [f.replace("\\", "/") for f in files_raw],
+                "kill_condition": text_fields["kill_condition"][0],
+                "verified_by": raw_verified_by,
+            }
         )
-    cf = ClaimsFile(
+    cf = make_claims_file(
         version=data.get("version", 0),
         author=str(data.get("author", "") or ""),
         base=str(data.get("base", "") or ""),
@@ -123,30 +127,30 @@ def validate(cf: ClaimsFile, lock_ids: set[int] | None) -> list[str]:
     no_lock = lock_ids is None
     frozen: set[int] = set() if no_lock else lock_ids  # type: ignore[assignment]
     seen: set[str] = set()
-    for c in cf.claims:
-        tag = f"claim {c.id or '<no id>'}"
-        if not c.id or not ID_RE.match(c.id):
+    for c in cf["claims"]:
+        tag = f"claim {c['id'] or '<no id>'}"
+        if not c["id"] or not ID_RE.match(c["id"]):
             out.append(f"{tag}: id must match [a-z0-9_-]+")
-        if c.id in seen:
+        if c["id"] in seen:
             out.append(f"{tag}: duplicate id")
-        seen.add(c.id)
-        if not c.claim.strip():
+        seen.add(c["id"])
+        if not c["claim"].strip():
             out.append(f"{tag}: claim text is empty")
-        conf = c.confidence
+        conf = c["confidence"]
         if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not (0.0 <= float(conf) <= 1.0):
             out.append(f"{tag}: confidence must be a float in [0.0, 1.0] (got {conf!r})")
-        kc = c.kill_condition
+        kc = c["kill_condition"]
         prefix = next((p for p in KILL_PREFIXES if kc.startswith(p)), None)
         if prefix is None:
             out.append(f"{tag}: kill_condition must start with one of {list(KILL_PREFIXES)}")
-        elif kc[len(prefix):].strip() == c.claim.strip():
+        elif kc[len(prefix):].strip() == c["claim"].strip():
             out.append(f"{tag}: kill_condition must differ from the claim text")
-        vb = c.verified_by
+        vb = c["verified_by"]
         if not isinstance(vb, list) or not vb or any(not isinstance(v, str) or not v.strip() for v in vb):
             out.append(f"{tag}: verified_by must be a non-empty list of non-empty strings")
-        if not c.files:
+        if not c["files"]:
             out.append(f"{tag}: files must be non-empty")
-        bad = [i for i in c.criteria if not isinstance(i, int) or isinstance(i, bool) or i not in frozen]
+        bad = [i for i in c["criteria"] if not isinstance(i, int) or isinstance(i, bool) or i not in frozen]
         if bad:
             out.append(f"{tag}: criteria ids not in the frozen lock: {bad}" + (NO_LOCK_HINT if no_lock else ""))
     return out
@@ -170,15 +174,15 @@ def load_file(path: Path, lock_ids: set[int] | None) -> ClaimsFile:
     return load_and_validate(path.read_text(encoding="utf-8"), lock_ids)
 
 
+# What the independent checker is allowed to see of a claim: no confidence, no verified_by.
+CHECKER_KEYS = ("id", "claim", "criteria", "files", "kill_condition")
+
+
 def redact(cf: ClaimsFile) -> list[dict]:
-    """What the independent checker is allowed to see: no confidence, no verified_by."""
-    return [
-        {
-            "id": c.id,
-            "claim": c.claim,
-            "criteria": list(c.criteria),
-            "files": list(c.files),
-            "kill_condition": c.kill_condition,
-        }
-        for c in cf.claims
-    ]
+    """The file's claims as the independent checker may see them."""
+    return redact_claims(cf["claims"])
+
+
+def redact_claims(claims: Sequence[Mapping[str, Any]]) -> list[dict]:
+    """Each claim cut down to CHECKER_KEYS, lists copied so the checker never shares the originals."""
+    return [{key: list(c[key]) if isinstance(c[key], list) else c[key] for key in CHECKER_KEYS if key in c} for c in claims]

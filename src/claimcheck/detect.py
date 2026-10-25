@@ -8,8 +8,8 @@ Detection is a best guess from marker files. It never runs anything and never re
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypedDict
 
 from . import gitio, redact
 
@@ -40,26 +40,28 @@ _TEST_DIRS = ["tests/**", "**/tests/**", "test/**", "**/test/**"]
 _NPM_DEFAULT_TEST = "no test specified"
 
 
-@dataclass
-class Stack:
-    name: str
-    test_cmd: str
-    test_globs: list[str] = field(default_factory=list)
+# A project type: its name, the command that runs its tests, and where its tests live.
+Stack = TypedDict("Stack", {"name": str, "test_cmd": str, "test_globs": list[str]})
+
+# The stack `init` found (first match), the other stacks also present, and what follows from
+# the stack: its test command (None when nothing matched) and the ignore globs for config.toml.
+Detection = TypedDict("Detection", {"stack": Stack | None, "others": list[str], "test_cmd": str | None, "ignore": list[str]})
 
 
-@dataclass
-class Detection:
-    stack: Stack | None
-    others: list[str]
+def make_stack(name: str, *, test_cmd: str, test_globs: list[str]) -> Stack:
+    """A Stack from its parts."""
+    return {"name": name, "test_cmd": test_cmd, "test_globs": test_globs}
 
-    @property
-    def test_cmd(self) -> str | None:
-        return self.stack.test_cmd if self.stack else None
 
-    @property
-    def ignore(self) -> list[str]:
-        extra = self.stack.test_globs if self.stack else list(_TEST_DIRS)
-        return BASE_IGNORE + [g for g in extra if g not in BASE_IGNORE]
+def make_detection(*, stack: Stack | None, others: list[str]) -> Detection:
+    """A Detection, with the test command and ignore globs worked out from the stack."""
+    extra = stack["test_globs"] if stack else list(_TEST_DIRS)
+    return {
+        "stack": stack,
+        "others": others,
+        "test_cmd": stack["test_cmd"] if stack else None,
+        "ignore": BASE_IGNORE + [g for g in extra if g not in BASE_IGNORE],
+    }
 
 
 def _node(repo: Path) -> Stack | None:
@@ -78,7 +80,7 @@ def _node(repo: Path) -> Stack | None:
         runner = "pnpm test"
     elif (repo / "yarn.lock").is_file():
         runner = "yarn test"
-    return Stack("node", runner, _TEST_DIRS + ["__tests__/**", "**/__tests__/**", "*.test.*", "*.spec.*"])
+    return make_stack("node", test_cmd=runner, test_globs=_TEST_DIRS + ["__tests__/**", "**/__tests__/**", "*.test.*", "*.spec.*"])
 
 
 def _python(repo: Path) -> Stack | None:
@@ -86,10 +88,10 @@ def _python(repo: Path) -> Stack | None:
     if not any((repo / m).is_file() for m in markers):
         return None
     cmd = "python -m unittest" if _has_unittest_only(repo) else "python -m pytest -q"
-    return Stack(
+    return make_stack(
         "python",
-        cmd,
-        _TEST_DIRS + ["test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
+        test_cmd=cmd,
+        test_globs=_TEST_DIRS + ["test_*.py", "*/test_*.py", "*_test.py", "conftest.py", "*/conftest.py"],
     )
 
 
@@ -112,23 +114,23 @@ def _has_unittest_only(repo: Path) -> bool:
 
 def _go(repo: Path) -> Stack | None:
     if (repo / "go.mod").is_file():
-        return Stack("go", "go test ./...", ["*_test.go"])
+        return make_stack("go", test_cmd="go test ./...", test_globs=["*_test.go"])
     return None
 
 
 def _rust(repo: Path) -> Stack | None:
     if (repo / "Cargo.toml").is_file():
-        return Stack("rust", "cargo test", ["tests/**", "**/tests/**"])
+        return make_stack("rust", test_cmd="cargo test", test_globs=["tests/**", "**/tests/**"])
     return None
 
 
 def _jvm(repo: Path) -> Stack | None:
     if (repo / "pom.xml").is_file():
-        return Stack("maven", "mvn -q test", ["src/test/**", "**/src/test/**"])
+        return make_stack("maven", test_cmd="mvn -q test", test_globs=["src/test/**", "**/src/test/**"])
     for name in ("build.gradle", "build.gradle.kts"):
         if (repo / name).is_file():
             wrapper = "gradlew.bat" if (repo / "gradlew.bat").is_file() and not (repo / "gradlew").is_file() else "./gradlew"
-            return Stack("gradle", f"{wrapper} test", ["src/test/**", "**/src/test/**"])
+            return make_stack("gradle", test_cmd=f"{wrapper} test", test_globs=["src/test/**", "**/src/test/**"])
     return None
 
 
@@ -138,13 +140,13 @@ _DETECTORS = (_node, _python, _go, _rust, _jvm)
 def detect(repo: Path) -> Detection:
     """First match wins. Other stacks found are named so `init` can mention them."""
     found = [s for s in (d(repo) for d in _DETECTORS) if s is not None]
-    return Detection(found[0] if found else None, [s.name for s in found[1:]])
+    return make_detection(stack=found[0] if found else None, others=[s["name"] for s in found[1:]])
 
 
 def render_config(det: Detection) -> str:
     """The config.toml text `init` writes. Falls back to the stock pytest command when nothing matched."""
-    test_cmd = det.test_cmd or "python -m pytest -q"
-    ignore = ", ".join(json.dumps(g) for g in det.ignore)
+    test_cmd = det["test_cmd"] or "python -m pytest -q"
+    ignore = ", ".join(json.dumps(g) for g in det["ignore"])
     return f"""\
 # claimcheck configuration — written by `claimcheck init`, edit freely.
 version = 1
