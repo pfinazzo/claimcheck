@@ -10,7 +10,7 @@ import type { Claim, LedgerRecord, Proposal } from '../shared/types.ts';
 import { h, type Child } from './dom.ts';
 import { FLAG_TEXT, caughtWords, factsLine, pct, verdictWord } from './format.ts';
 
-export interface DetailActions {
+export type DetailActions = {
   fix: (claimId: string) => void;
   useApproach: (claimId: string, runId: string, choice: number) => void;
   copyPrompt: (claimId: string) => void;
@@ -20,7 +20,7 @@ export interface DetailActions {
   openPr: (claimId: string, runId: string) => void;
   openPath: (target: string) => void;
   connect: () => void;
-}
+};
 
 const section = (title: string, ...children: Child[]): HTMLElement => h('section', { class: 'block' }, h('h3', {}, title), ...children);
 const muted = (...c: Child[]): HTMLElement => h('p', { class: 'muted' }, ...c);

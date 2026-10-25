@@ -74,12 +74,12 @@ const SAFE_TEST_ID = /^[\w./:[\]-]+$/;
 
 const tail = (text: unknown, n = 40): string => String(text ?? '').split(/\r?\n/).filter(Boolean).slice(-n).join('\n');
 
-export interface ShellResult {
+export type ShellResult = {
   ok: boolean | 'manual';
   code: number | null;
   tail: string;
   timedOut?: boolean;
-}
+};
 
 /**
  * Runs a shell command in a folder; never rejects. The timeout resolves the
@@ -169,7 +169,7 @@ export const dirtyFiles = (porcelain: unknown): string[] =>
 export type RunStatus = 'running' | 'done' | 'failed' | 'resolved';
 
 /** The fix run as the renderer sees it. */
-export interface PublicRun {
+export type PublicRun = {
   id: string;
   kind: 'propose' | 'implement';
   claimId: string;
@@ -189,9 +189,9 @@ export interface PublicRun {
   summary: string | null;
   prompt: string | null;
   prUrl: string | null;
-}
+};
 
-interface FixRun extends Omit<PublicRun, 'proposals' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> {
+type FixRun = Omit<PublicRun, 'proposals' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> & {
   mode?: 'cli' | 'api';
   proposals?: Proposal[] | null;
   proposal?: Proposal;
@@ -205,9 +205,9 @@ interface FixRun extends Omit<PublicRun, 'proposals' | 'proposal' | 'branch' | '
   prompt?: string;
   prUrl?: string | null;
   startHead?: string;
-}
+};
 
-export interface FixerOptions {
+export type FixerOptions = {
   cliModule?: Pick<typeof cli, 'findClaude' | 'runClaude' | 'describeEvent'>;
   apiModule?: Pick<typeof api, 'proposeWithStore'>;
   keyStore?: api.KeyStore | null;
@@ -215,7 +215,7 @@ export interface FixerOptions {
   execFn?: ExecFn;
   claudeBin?: string | null;
   onUpdate?: (run: PublicRun) => void;
-}
+};
 
 export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn as SpawnFn, execFn = execFileP as unknown as ExecFn, claudeBin = null, onUpdate = () => {} }: FixerOptions = {}) => {
   const runs = new Map<string, FixRun>();

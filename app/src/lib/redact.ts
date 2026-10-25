@@ -75,11 +75,11 @@ const looksLikeSecretValue = (value: string, quoted: boolean): boolean => {
 };
 
 /** Replaces secret-looking values with [REDACTED:kind]. Returns { text, count, kinds }. */
-export interface Redaction {
+export type Redaction = {
   text: string;
   count: number;
   kinds: Record<string, number>;
-}
+};
 
 export const redactText = (input: unknown): Redaction => {
   let text = String(input ?? '');
@@ -117,12 +117,12 @@ export const PER_FILE_CHARS = 40_000;
 export const TOTAL_CHARS = 250_000;
 
 /** Makes a unified diff safe to send. Returns { text, sent: { filesOmitted, redactions, kinds, truncated } }. */
-export interface Sent {
+export type Sent = {
   filesOmitted: string[];
   redactions: number;
   kinds: Record<string, number>;
   truncated: boolean;
-}
+};
 
 export const filterDiff = (diff: unknown): { text: string; sent: Sent } => {
   const sent: Sent = { filesOmitted: [], redactions: 0, kinds: {}, truncated: false };

@@ -21,11 +21,11 @@ export const ghReady = async ({ execFn = execFileP as unknown as ExecFn }: { exe
   }
 };
 
-export interface PrBodyInput {
+export type PrBodyInput = {
   claim: { id: string; claim: string; flags: string[] };
   proposal: { title: string; summary: string };
   run: { tests?: { ok?: boolean }; killCondition?: { ok?: boolean | string } };
-}
+};
 
 export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
   [
@@ -40,14 +40,14 @@ export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
     'Built by Claude Code from claimcheck Desk\'s "Fix this" button. Review it like any other pull request before merging.',
   ].join('\n');
 
-export interface PrInput {
+export type PrInput = {
   cwd: string;
   base: string;
   head: string;
   title: string;
   body: string;
   execFn?: ExecFn;
-}
+};
 
 export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP as unknown as ExecFn }: PrInput): Promise<string> => {
   const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true });

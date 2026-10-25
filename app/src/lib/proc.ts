@@ -11,11 +11,11 @@ import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 
 /** Kills the child and everything it started. Never throws. */
-export interface KillOptions {
+export type KillOptions = {
   platform?: NodeJS.Platform;
   spawnFn?: typeof nodeSpawn;
   group?: boolean;
-}
+};
 
 export const killTree = (child: Pick<ChildProcess, 'pid' | 'kill'> | null | undefined, { platform = process.platform, spawnFn = nodeSpawn, group = false }: KillOptions = {}): void => {
   try {

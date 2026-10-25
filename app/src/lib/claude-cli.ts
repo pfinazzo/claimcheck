@@ -23,16 +23,16 @@ export type StreamEvent =
   | { type: 'tool'; name: string; input: Record<string, unknown> }
   | { type: 'result'; result: string; structured: unknown; isError: boolean; subtype: string | null };
 
-export interface RunResult {
+export type RunResult = {
   exitCode: number | null;
   result: string;
   structured: unknown;
   error: string | null;
   needsSignIn: boolean;
   stderr: string;
-}
+};
 
-export interface RunOptions {
+export type RunOptions = {
   prompt: string;
   args?: readonly string[];
   cwd?: string;
@@ -42,7 +42,7 @@ export interface RunOptions {
   model?: string;
   spawnFn?: SpawnFn;
   timeoutMs?: number;
-}
+};
 
 const rec = (v: unknown): Record<string, unknown> | null => (v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
@@ -229,12 +229,12 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
     });
   });
 
-export interface ConnectionResult {
+export type ConnectionResult = {
   ok: boolean;
   path: string | null;
   error: string | null;
   needsSignIn?: boolean;
-}
+};
 
 /** A cheap round trip that proves the CLI is installed and signed in. */
 export const testConnection = async ({ bin, spawnFn }: { bin?: string; spawnFn?: SpawnFn } = {}): Promise<ConnectionResult> => {

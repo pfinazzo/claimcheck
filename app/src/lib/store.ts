@@ -92,11 +92,11 @@ export const lockMatches = ({ specText, specBytes, lock }: { specText: string | 
   return sha256(normalised) === l.spec_sha256 || sha256(specBytes) === l.spec_sha256;
 };
 
-interface RiskInput {
+type RiskInput = {
   confidence: number | null | undefined;
   verdict: string | null | undefined;
   catchRate: number | null | undefined;
-}
+};
 
 /** AC 5: the number the queue sorts by. A missing confidence counts as 0, a verdict nobody knows as 0.75. */
 export const riskOf = ({ confidence, verdict, catchRate }: RiskInput): number => {
@@ -107,11 +107,11 @@ export const riskOf = ({ confidence, verdict, catchRate }: RiskInput): number =>
   return Number(((1 - conf) * 0.4 + verdictWeight * 0.4 + (1 - rate) * 0.2).toFixed(4));
 };
 
-interface FlagInput {
+type FlagInput = {
   confidence: number | null | undefined;
   verdict: string | null | undefined;
   mutation: Pick<MutationInfo, 'total' | 'catchRate'> | null | undefined;
-}
+};
 
 /** AC 6: why a claim needs a decision. A confidence that is missing or not a number counts as unsure. */
 export const flagsOf = ({ confidence, verdict, mutation }: FlagInput, appConfig: AppSettings = APP_DEFAULTS): string[] => {

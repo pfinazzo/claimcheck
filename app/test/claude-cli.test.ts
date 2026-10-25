@@ -34,12 +34,12 @@ test('resolveSpawn follows an npm .cmd shim to the real executable, or node for 
 });
 
 /** A fake spawn that plays canned stdout lines and exits with a code. */
-interface Call {
+type Call = {
   command: string;
   args: readonly string[];
   opts: { stdio?: unknown };
   stdin: string;
-}
+};
 
 const fakeSpawn = ({ lines, code = 0, stderr = '' }: { lines: string[]; code?: number; stderr?: string }) => {
   const calls: Call[] = [];

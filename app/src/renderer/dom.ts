@@ -19,13 +19,13 @@ export const getDocument = (): Document => {
 
 export type Child = Node | string | number | null | undefined | false;
 
-export interface Props {
+export type Props = {
   class?: string;
   /** Plain attributes: id, type, value, placeholder, title, href, disabled, hidden... */
   attrs?: Record<string, string | number | boolean | null | undefined>;
   data?: Record<string, string | number | null | undefined>;
   on?: Partial<Record<'click' | 'input' | 'change' | 'keydown' | 'submit' | 'toggle', (event: Event) => void>>;
-}
+};
 
 /** Create an element. `props` and children are all optional. */
 export const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...children: Child[]): HTMLElementTagNameMap[K] => {

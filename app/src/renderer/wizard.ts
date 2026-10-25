@@ -14,7 +14,7 @@ import {
 import { h, type Child } from './dom.ts';
 import { shortHash } from './format.ts';
 
-export interface WizardCtx {
+export type WizardCtx = {
   desk: DeskBridge;
   state: () => WizardState;
   /** Replaces the state and saves it. `render: false` keeps focus while someone types. */
@@ -26,14 +26,14 @@ export interface WizardCtx {
   /** Leaves the wizard for the board. */
   exit: () => void;
   reducedMotion: boolean;
-}
+};
 
-interface Local {
+type Local = {
   busy: 'init' | 'draft' | 'finish' | 'connect' | null;
   error: string | null;
   step: string;
   animation: number[];
-}
+};
 
 const local: Local = { busy: null, error: null, step: '', animation: [] };
 

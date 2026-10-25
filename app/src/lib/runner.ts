@@ -18,21 +18,21 @@ const execFileP = promisify(execFile);
  * Order: CLAIMCHECK_BIN (an executable, or a .js/.mjs/.cjs script run with node),
  * `claimcheck` on PATH, a saved path from the Connect screen, `<python> -m claimcheck`.
  */
-export interface Resolved {
+export type Resolved = {
   command: string;
   prefix: string[];
   env?: Record<string, string>;
-}
+};
 
 type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
 
-export interface ResolveOptions {
+export type ResolveOptions = {
   python?: string | null;
   bin?: string | null;
   env?: NodeJS.ProcessEnv;
   execFn?: ExecFn;
-}
+};
 
 export const resolveClaimcheck = async ({ python, bin = null, env = process.env, execFn = execFileP as unknown as ExecFn }: ResolveOptions = {}): Promise<Resolved | null> => {
   const override = env.CLAIMCHECK_BIN || bin;
@@ -52,14 +52,14 @@ export const resolveClaimcheck = async ({ python, bin = null, env = process.env,
   return null;
 };
 
-export interface RunOptions {
+export type RunOptions = {
   repoPath: string;
   provider?: string | null;
   resolved: Resolved | null;
   extraArgs?: string[];
   onLine?: (line: string) => void;
   spawnFn?: SpawnFn;
-}
+};
 
 export const runClaimcheck = ({ repoPath, provider, resolved, extraArgs = [], onLine = () => {}, spawnFn = nodeSpawn as SpawnFn }: RunOptions): Promise<{ exitCode: number | null }> =>
   new Promise((resolve) => {

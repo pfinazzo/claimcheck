@@ -56,7 +56,7 @@ const lastLines = (text: unknown, n = 3): string => String(text ?? '').trim().sp
 
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
 
-export interface StartOptions {
+export type StartOptions = {
   resolved: Resolved | null;
   args: string[];
   input?: unknown;
@@ -64,12 +64,12 @@ export interface StartOptions {
   env?: Record<string, string>;
   timeoutMs?: number;
   spawnFn?: SpawnFn;
-}
+};
 
-export interface CcRun {
+export type CcRun = {
   promise: Promise<unknown>;
   cancel: () => void;
-}
+};
 
 /**
  * Starts one claimcheck command. Returns `{ promise, cancel }`; the promise

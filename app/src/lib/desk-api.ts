@@ -48,7 +48,7 @@ export class NeedsTrustError extends Error {
   }
 }
 
-interface Settings {
+type Settings = {
   mode: ConnectionMode;
   model: string;
   cliPath?: string | null;
@@ -56,7 +56,7 @@ interface Settings {
   apiOk?: boolean | null;
   claimcheckBin?: string | null;
   useAuto?: boolean;
-}
+};
 
 const loadSettings = (file: string): Settings => {
   const defaults: Settings = { mode: 'cli', model: 'claude-opus-5-5' };
@@ -75,15 +75,15 @@ const isWithin = (child: string, parent: string): boolean => {
 
 const wizardKey = (repoPath: string): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
 
-export interface ViewPayload {
+export type ViewPayload = {
   view: ViewName;
   board: Board | null;
   wizard: WizardState | null;
   connection: ConnectionSummary;
   repoPath: string | null;
-}
+};
 
-export interface DeskApiOptions {
+export type DeskApiOptions = {
   userDir: string;
   keyStore: KeyStore | null;
   clipboard?: { writeText?: (text: string) => void } | null;
@@ -100,7 +100,7 @@ export interface DeskApiOptions {
   ccModule?: typeof ccDefault;
   spawnFn?: SpawnFn;
   execFn?: ExecFn;
-}
+};
 
 export const createDeskApi = ({
   userDir,
@@ -328,7 +328,7 @@ export const createDeskApi = ({
     return { text };
   };
 
-  interface ConnectInput {
+  type ConnectInput = {
     action?: 'save-key' | 'clear-key' | 'sign-in' | 'detect';
     mode?: ConnectionMode;
     apiKey?: string;
@@ -336,7 +336,7 @@ export const createDeskApi = ({
     cliPath?: string | null;
     claimcheckBin?: string | null;
     useAuto?: boolean;
-  }
+  };
 
   const connect = async ({ action, mode, apiKey, model, cliPath, claimcheckBin, useAuto }: ConnectInput = {}): Promise<ConnectionSummary> => {
     if (mode) state.settings.mode = mode;

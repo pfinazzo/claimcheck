@@ -24,25 +24,25 @@ export const STEP_LABELS: Record<WizardStep, string> = {
 export const BEATS = 3;
 export const MAX_CRITERIA = 40;
 
-export interface WizardCriterion {
+export type WizardCriterion = {
   text: string;
   check: string;
   lint: LintNote[];
-}
+};
 
-export interface WizardDraft {
+export type WizardDraft = {
   criteria: WizardCriterion[];
   out_of_scope: string[];
   concerns: string[];
   ready: boolean;
-}
+};
 
-export interface WizardRound {
+export type WizardRound = {
   questions: DraftQuestion[];
   answers: string[];
-}
+};
 
-export interface WizardState {
+export type WizardState = {
   v: 1;
   repo: string;
   entry: 'first-run' | 'board';
@@ -56,7 +56,7 @@ export interface WizardState {
   current: WizardRound | null;
   draft: WizardDraft;
   freeze: { makeBranch: boolean; branch: string; result: CcFinish | null };
-}
+};
 
 const emptyDraft = (): WizardDraft => ({ criteria: [], out_of_scope: [], concerns: [], ready: false });
 

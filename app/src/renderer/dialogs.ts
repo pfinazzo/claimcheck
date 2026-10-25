@@ -8,12 +8,12 @@ import type { DeskBridge } from '../shared/ipc.ts';
 import type { ConnectionSummary } from '../shared/types.ts';
 import { h, mount, type Child } from './dom.ts';
 
-export interface DialogHost {
+export type DialogHost = {
   /** Fills the dialog and shows it. */
   show: (title: string, ...body: Child[]) => void;
   close: () => void;
   toast: (text: string, bad?: boolean) => void;
-}
+};
 
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-5-5'];
 
