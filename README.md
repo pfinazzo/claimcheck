@@ -14,15 +14,98 @@ claimcheck init
 
 ![The first setup screen: the problem, in one picture](docs/screenshots/setup-1-problem.png)
 
+## A real catch
+
+This one is from claimcheck's own history. The task was a small change to claimcheck itself: make `claimcheck run` stop when the diff is empty. Claude Code wrote the change and a claim about it, then `claimcheck run` checked it.
+
+The claim, stated at 0.93 confidence:
+
+> `claimcheck run` on an empty diff exits with code 7 and prints on stderr that the diff is empty, naming committing the change and `--worktree` as the ways forward.
+
+The independent checker saw the frozen criteria, the diff and the claim text. It never saw the 0.93. It answered REFUTED:
+
+> In default mode, run raises an error with code 7 and the message names both ways forward. But the claim covers any empty diff, and the `--worktree` branch raises a different message. That message says only "Make a change first." and names neither commit nor `--worktree`. The kill-condition test only covers default mode.
+
+That is the ledger line for the run, trimmed:
+
+```json
+{
+  "claim_id": "c1",
+  "confidence": 0.93,
+  "kill_condition": "test: tests/test_empty_diff.py::test_run_refuses_an_empty_diff_and_says_what_to_do",
+  "checker": {
+    "provider": "auto",
+    "model": "claude-opus-5-5",
+    "verdict": "REFUTED",
+    "evidence": ["    if worktree:", "        raise EmptyDiffError(", "            f\"the diff is empty: the working tree has no changes against '{base}'. Make a change first.\""]
+  },
+  "mutation": { "catch_rate": 1.0, "killed": 1, "survived": 0, "total": 1 },
+  "run_id": "20261025T000841Z-96b2"
+}
+```
+
+The checker was right. The test only exercised the default mode, so a green test run hid the gap. The fix changed the message and added a test for the other mode, and the next run (`20261025T001442Z-2dee`) supported both of the narrowed claims. The change is [pull request 6](https://github.com/pfinazzo/claimcheck/pull/6), and every run above is in this repo's [ledger](.claimcheck/ledger.jsonl).
+
+Two things to read this fairly:
+
+- The planted bugs did not find this. The diff gave them one line to change, an exit code, and the tests caught it. The catch came from the checker reading the diff against the claim.
+- A verdict is one reading, not a proof. A later run on the same unfixed code came back SUPPORTED (`20261025T001147Z-6741`). That run is marked invalid in its commit message, because a rejected commit meant it judged older code than I thought. It also shows the checker does not always give the same answer twice.
+
+## Example: the weak-test catch
+
+A real planted-bug run on a small demo project. The change adds free shipping for orders of $50 or more:
+
+```python
+def shipping_fee(total):
+    """Orders of $50 or more ship free; everything else costs $5."""
+    if total >= 50:
+        return 0
+    return 5
+```
+
+The author's tests cover a big order and a small order and nothing near the boundary. They pass, and the author states 0.92 confidence. When `claimcheck run` planted four bugs in `src/shipping.py`:
+
+| Outcome | Planted bug | Real bug? |
+| --- | --- | --- |
+| survived | `if total >= 50:` became `if total >= 51:` | Yes, $50 would now pay shipping |
+| survived | `if total >= 50:` became `if total > 50:` | Yes, $50 would now pay shipping |
+| killed | `return 0` became `return 1` | Caught |
+| killed | `return 5` became `return 6` | Caught |
+
+The catch rate is 50%. Two real boundary bugs would have shipped with a green test run.
+
+![The board before the fix: 50% of planted bugs caught](docs/screenshots/desk-board-weak.png)
+
+Pinning the boundary with three tests (exactly $50, just under, just over) catches all four:
+
+![The board after the fix: nothing needs a decision](docs/screenshots/desk-board-strong.png)
+
+*This is a demo project, not claimcheck's own code. The planted-bug numbers and the board come from real runs. Both boards use the offline stand-in for the checker, so the "supported" verdict was scripted. The section above is the run where the real checker caught something.*
+
+Each run writes one JSON line per claim. This is the second run, trimmed:
+
+```json
+{
+  "claim_id": "c1",
+  "confidence": 0.95,
+  "checker": { "provider": "stub", "verdict": "SUPPORTED", "reason": "The comparison is >= 50 returning 0, else 5.", "evidence": ["+    if total >= 50:"] },
+  "mutation": { "catch_rate": 1.0, "killed": 4, "survived": 0, "timeout": 0, "total": 4 },
+  "outcome": null
+}
+```
+
+`outcome` stays `null` until something happens in the real world, such as a later bug fix that touches the same lines. The Desk app writes it when you resolve a claim.
+
 ## Contents
 
+- [A real catch](#a-real-catch)
+- [Example: the weak-test catch](#example-the-weak-test-catch)
 - [How it works](#how-it-works)
 - [Install](#install)
 - [Setup: `claimcheck init`](#setup-claimcheck-init)
 - [Writing the spec with Claude](#writing-the-spec-with-claude)
 - [What is sent to Claude](#what-is-sent-to-claude)
 - [Using it day to day](#using-it-day-to-day)
-- [Example: the weak-test catch](#example-the-weak-test-catch)
 - [Using it on a team](#using-it-on-a-team)
 - [The Desk app](#the-desk-app)
 - [Writing good claims](#writing-good-claims)
@@ -257,51 +340,6 @@ After setup, a task looks like this.
 4. **Decide.** Look at the board (below), fix what is weak, accept a risk with a reason, or narrow a claim.
 5. **Merge.** Commit `ledger.jsonl` with the merge so the history travels with the code.
 
-## Example: the weak-test catch
-
-A real run on a small demo project. The change adds free shipping for orders of $50 or more:
-
-```python
-def shipping_fee(total):
-    """Orders of $50 or more ship free; everything else costs $5."""
-    if total >= 50:
-        return 0
-    return 5
-```
-
-The author's tests cover a big order and a small order and nothing near the boundary. They pass, and the author states 0.92 confidence. When `claimcheck run` planted four bugs in `src/shipping.py`:
-
-| Outcome | Planted bug | Real bug? |
-| --- | --- | --- |
-| survived | `if total >= 50:` became `if total >= 51:` | Yes, $50 would now pay shipping |
-| survived | `if total >= 50:` became `if total > 50:` | Yes, $50 would now pay shipping |
-| killed | `return 0` became `return 1` | Caught |
-| killed | `return 5` became `return 6` | Caught |
-
-The catch rate is 50%. Two real boundary bugs would have shipped with a green test run.
-
-![The board before the fix: 50% of planted bugs caught](docs/screenshots/desk-board-weak.png)
-
-Pinning the boundary with three tests (exactly $50, just under, just over) catches all four:
-
-![The board after the fix: nothing needs a decision](docs/screenshots/desk-board-strong.png)
-
-*Both boards use the offline stand-in for the checker, so the "supported" verdict was scripted for the demo. The planted-bug numbers are real runs.*
-
-Each run writes one JSON line per claim. This is the second run, trimmed:
-
-```json
-{
-  "claim_id": "c1",
-  "confidence": 0.95,
-  "checker": { "provider": "stub", "verdict": "SUPPORTED", "reason": "The comparison is >= 50 returning 0, else 5.", "evidence": ["+    if total >= 50:"] },
-  "mutation": { "catch_rate": 1.0, "killed": 4, "survived": 0, "timeout": 0, "total": 4 },
-  "outcome": null
-}
-```
-
-`outcome` stays `null` until something happens in the real world, such as a later bug fix that touches the same lines. The Desk app writes it when you resolve a claim.
-
 ## Using it on a team
 
 | Role | Does | Owns |
@@ -390,6 +428,7 @@ claimcheck claims validate [path]  schema-check a claims file against the frozen
 claimcheck check                   independent verdict per claim
 claimcheck mutate                  planted-bug catch rate on the changed lines
 claimcheck run                     verify, validate, check, mutate, then append to the ledger
+claimcheck verify-ledger [--base REF]  fail if a ledger line was removed, edited, moved or inserted
 claimcheck hook pre-commit         what the installed git hook runs
 ```
 
@@ -428,6 +467,8 @@ Options shared by `check`, `mutate` and `run`:
 | 4 | claims file invalid, or the pre-commit hook rejected the commit |
 | 5 | provider error, unknown provider, the baseline tests fail, or the working tree no longer matches the diff |
 | 6 | a previous `mutate` left its lock behind, or `--restore` refused to overwrite a file |
+| 7 | the diff is empty, so there is nothing to verify (commit the change, or pass `--worktree`) |
+| 8 | `verify-ledger` found a ledger line that was removed, edited, moved or inserted |
 
 ### Files
 
@@ -436,7 +477,7 @@ Options shared by `check`, `mutate` and `run`:
 | `.claimcheck/spec.md` | Acceptance criteria as `- [ ] 1. text` lines |
 | `.claimcheck/spec.lock` | JSON with a hash per criterion and the freeze time. The spec is hashed with line endings and any BOM normalised, so Windows and Linux agree |
 | `.claimcheck/claims.yaml` | One entry per claim. See [`examples/claims.yaml`](examples/claims.yaml) |
-| `.claimcheck/ledger.jsonl` | Append-only. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
+| `.claimcheck/ledger.jsonl` | Append-only and hash-chained: each new line carries `prev`, the SHA-256 of the line before it, and `claimcheck verify-ledger` checks the chain. Lines written before chaining existed are sealed by the first chained line. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
 | `.claimcheck/config.toml` | Settings. See [`examples/config.toml`](examples/config.toml) |
 | `.claimcheck/setup.json` | The files `init` changed outside `.claimcheck/`, so the first commit includes them |
 
@@ -522,6 +563,7 @@ Use `--no-animation`, or set `NO_COLOR=1`. On older Windows consoles, Windows Te
 - **Equivalent mutants exist.** Some planted bugs do not change behavior and always survive. Judge survivors, do not just count them.
 - **Only added lines are mutated.** Bugs in untouched code that the change relies on are out of scope. Files that are not valid UTF-8 are skipped and counted.
 - **The secret filter is a safety net.** See [What is sent to Claude](#what-is-sent-to-claude).
+- **The ledger is tamper-evident, not tamper-proof.** The hash chain catches a line that was removed from the middle, edited, moved or inserted. It cannot see the last line being cut off, so CI also runs `verify-ledger --base` to require that the ledger on the base branch is an unchanged beginning of yours. Someone with write access to the whole file can still rewrite every line and recompute the chain, and nothing here signs it. The protection is that the rewrite shows up in the git history.
 - **Confidence is not calibrated yet.** Version 1 makes sure the data exists. The calibration curve comes once the ledger has real outcomes in it.
 - **The spec is only as good as the person who wrote it.** claimcheck proves the code matches the frozen spec and that the spec was not bent afterward. It cannot tell you the spec was the right one.
 - **The animated setup is verified by tests and rendered frames, not by every terminal.** If something looks wrong in yours, `--no-animation` gives the plain flow.

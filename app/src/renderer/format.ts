@@ -56,14 +56,17 @@ export const summaryLine = (board: Board): string => {
   if (n === 0) return 'No claims yet.';
   const needs = board.queue.length;
   const head = `${plural(n, 'claim')}, ${needs === 0 ? 'none need a decision' : `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`}.`;
-  let caught = 0;
-  let total = 0;
+  // Claims that list the same file carry the same planted bugs, so count each bug once per run.
+  const bugs = new Map<string, boolean>();
   for (const c of board.claims) {
-    if (c.mutation && c.mutation.total > 0) {
-      caught += c.mutation.killed + c.mutation.timeout;
-      total += c.mutation.total;
+    const run = c.mutation?.runId ?? '';
+    for (const m of c.mutation?.mutants ?? []) {
+      if (m.outcome !== 'killed' && m.outcome !== 'timeout' && m.outcome !== 'survived') continue;
+      bugs.set(JSON.stringify([run, m.file, m.line_no, m.cls, m.mutated]), m.outcome !== 'survived');
     }
   }
+  const total = bugs.size;
+  const caught = [...bugs.values()].filter(Boolean).length;
   return total === 0 ? head : `${head} ${caught} of ${total} planted bugs caught.`;
 };
 

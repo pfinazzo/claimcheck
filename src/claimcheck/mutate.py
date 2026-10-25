@@ -538,6 +538,7 @@ def run_mutate(
 
     check_sentinel(repo)
     sentinel = C.cc_dir(repo) / C.MUTATE_SENTINEL
+    gitio.require_diff(repo, base, worktree)  # an empty diff has nothing to plant bugs in
 
     if not criteria_checked:
         S.enforce_open_diff_rules(repo, cfg, base)

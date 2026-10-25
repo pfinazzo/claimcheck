@@ -2,23 +2,35 @@
   "criteria": [
     {
       "id": 1,
-      "sha256": "45354f10d43c15d1c01aa5f2c9e6f7335a5042d9b1a559023656623e9d5e3965"
+      "sha256": "2947368176af3378d1da1184d454082ab75b8b9c10e43b0422b59511d16b8077"
     },
     {
       "id": 2,
-      "sha256": "811fc6399230524c730c2148bdd99d27dd8829f49d62959ceca0c5453dc642ac"
+      "sha256": "587f591ae4f250948eaa05dab76f1eac34527a4737a588b32c5a22e18fe222f2"
     },
     {
       "id": 3,
-      "sha256": "9e8cc86f112fc23ebf7260bc9614a3b53f0e2660ba09d6816a9aa7f5b1e6eca9"
+      "sha256": "30c64c9f2a961887ad8b2c5b0db9746881594552d4f893db99e7288d1f14367c"
     },
     {
       "id": 4,
-      "sha256": "cbe724ebaedeae853d48f4bdbe351f0907f3c36fa7503a6fe2a1333d771fe8cf"
+      "sha256": "8b3e2fb4f3e0aae580f6a0ac7e336b3861b4d61df21464312cffb6d31004e7be"
+    },
+    {
+      "id": 5,
+      "sha256": "c326fbf692d566c360b65bfc529c5399bffcb087337d4cd5d9a65e883c0662d8"
+    },
+    {
+      "id": 6,
+      "sha256": "a24ee2056a9448120ff5c7f143c4fcc23d69e1bf9c78f8d7e589be822e81f467"
+    },
+    {
+      "id": 7,
+      "sha256": "0f7546376d7163e8bd14cd071e774515fd84cc9b83a7fc254255738b83036adf"
     }
   ],
-  "frozen_at": "2026-10-24T23:43:08Z",
-  "git_head": "e1fd5e1c22e745c38646647ae5d7aff45398d3c4",
-  "spec_sha256": "fa103f747f7c132477cb7d9786e53fdf4923899f9ac53ad1665cc55286ba6adb",
+  "frozen_at": "2026-10-25T00:21:49Z",
+  "git_head": "102a0759e26ab26b5797e16c8685d20877d9d10a",
+  "spec_sha256": "1e1fe3b9eb4015ad398bab3b0ad1c7736fac36ad96957283d15b246615bf8500",
   "version": 1
 }

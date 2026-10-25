@@ -4,29 +4,46 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "slug() turns accented Latin letters into their plain letters, so Café menu gives cafe-menu and Überprüfung der Preise gives uberprufung-der-preise"
-    confidence: 0.95
-    criteria: [1, 2]
-    files: ["src/claimcheck/specdraft.py"]
-    kill_condition: "test: tests/test_specdraft.py::test_slug_keeps_accented_letters_as_plain_letters"
+    claim: "Every ledger line claimcheck writes carries prev, the SHA-256 of the previous line's text; the first chained line carries the hash of all older lines joined by newlines, or 64 zeros for an empty ledger"
+    confidence: 0.9
+    criteria: [1]
+    files: ["src/claimcheck/ledger.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_the_first_chained_line_seals_all_older_lines"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_specdraft.py -k slug"
-      - "obs: ran slug on five accented goals before and after the change and compared the output"
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'hash_of_the_line or continues or seals or pins'"
 
   - id: c2
-    claim: "A goal with no Latin letters or digits, such as Japanese text or only punctuation, still produces the branch slug task"
-    confidence: 0.9
-    criteria: [3]
-    files: ["src/claimcheck/specdraft.py"]
-    kill_condition: "test: tests/test_specdraft.py::test_slug_without_latin_letters_falls_back_to_task"
+    claim: "claimcheck verify-ledger exits 0 on an untouched ledger, including one that starts with older lines that have no prev, and refuses an unchained line that comes after chained lines"
+    confidence: 0.88
+    criteria: [2, 5]
+    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_an_unchained_line_after_chained_lines_is_refused"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_specdraft.py -k falls_back"
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'verifies or refused'"
 
   - id: c3
-    claim: "Plain ASCII goals produce the same slug as before: at most five words, at most 40 characters, no leading or trailing hyphen"
+    claim: "verify-ledger exits 8 and names the first line that does not fit when a middle line is deleted, a line other than the last is edited (an older line counts), or two lines are swapped"
+    confidence: 0.85
+    criteria: [3]
+    files: ["src/claimcheck/__init__.py", "src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_middle_line_is_found"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'found or named'"
+
+  - id: c4
+    claim: "With --base REF, verify-ledger also exits 8 when the last line was deleted or edited, and passes when the ledger only gained lines"
     confidence: 0.85
     criteria: [4]
-    files: ["src/claimcheck/specdraft.py"]
-    kill_condition: "obs: slug of a 100-character single word is longer than 40 characters, or the five-word cut changes for an ASCII goal"
+    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_last_line_passes_alone_but_not_against_the_committed_base"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_specdraft.py -k slug"
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'base'"
+
+  - id: c5
+    claim: "A line Desk appends carries the same prev the Python code would give, and verify-ledger accepts a ledger Desk appended to (Desk's own files are not listed because the commit hook only accepts non-ignored paths in a claim)"
+    confidence: 0.75
+    criteria: [6]
+    files: ["src/claimcheck/ledger.py"]
+    kill_condition: "test: app/test/ledger.test.ts::an outcome line continues the chain: prev is the hash the next line must carry"
+    verified_by:
+      - "cmd: cd app && npm test"

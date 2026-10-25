@@ -35,6 +35,18 @@ class ProviderError(ClaimcheckError):
     code = 5
 
 
+class EmptyDiffError(ClaimcheckError):
+    """There is nothing to verify: the diff is empty (exit 7)."""
+
+    code = 7
+
+
+class LedgerError(ClaimcheckError):
+    """The ledger failed verification: a line was removed, edited, moved or inserted (exit 8)."""
+
+    code = 8
+
+
 class MutateLockError(ClaimcheckError):
     """A stale mutate sentinel is present (exit 6)."""
 

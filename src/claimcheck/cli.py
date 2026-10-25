@@ -240,6 +240,25 @@ def cmd_run(args: argparse.Namespace) -> int:
     return code
 
 
+def cmd_verify_ledger(args: argparse.Namespace) -> int:
+    repo = C.find_repo_root()
+    path = ledger.ledger_path(repo)
+    lines = ledger.ledger_lines(path.read_bytes() if path.exists() else b"")
+    result = ledger.verify_chain(lines)
+    if args.base:
+        gitio.rev_parse(repo, args.base)  # a base that does not exist is an error, not "no ledger there"
+        text = gitio.show_file_at(repo, args.base, f"{C.CLAIMCHECK_DIR}/{C.LEDGER_FILE}")
+        ledger.verify_grew_only(lines, ledger.ledger_lines((text or "").encode("utf-8")), args.base)
+    result["base"] = args.base
+    _err(
+        f"ledger ok: {result['lines']} lines, {result['chained']} chained"
+        + (f", {result['legacy']} older without a hash" if result["legacy"] else "")
+        + (f", unchanged beginning of {args.base}" if args.base else "")
+    )
+    _out(result)
+    return 0
+
+
 def cmd_hook_pre_commit(args: argparse.Namespace) -> int:
     repo = C.find_repo_root()
     return hook.pre_commit(repo, C.load(repo))
@@ -317,6 +336,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
     p.add_argument("--seed", type=int, default=0)
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("verify-ledger", help="fail if a ledger line was removed, edited, moved or inserted")
+    p.add_argument("--base", default=None, help="also require the ledger at this git ref to be an unchanged beginning of the current one")
+    p.set_defaults(func=cmd_verify_ledger)
 
     p = sub.add_parser("hook", help="git hook entry points")
     hs = p.add_subparsers(dest="hook_command")
