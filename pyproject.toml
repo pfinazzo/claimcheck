@@ -2,7 +2,7 @@
 # @author Patrick Finazzo
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,7 +10,8 @@ name = "claimcheck"
 version = "0.1.0"
 description = "Frozen acceptance criteria, blind-checked claims, and a planted-bug catch rate for every AI-written diff."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Patrick Finazzo" }]
 maintainers = [{ name = "Patrick Finazzo" }]
 
