@@ -11,7 +11,7 @@ import { promisify } from 'node:util';
 import type { SpawnOptions, ChildProcess } from 'node:child_process';
 import { createLineSplitter, findOnPath } from './proc.ts';
 
-const execFileP = promisify(execFile);
+const runExecFile = promisify(execFile);
 
 /**
  * How to start claimcheck: `{ command, prefix }`, or null when it cannot be found.
@@ -20,12 +20,12 @@ const execFileP = promisify(execFile);
  */
 export type Resolved = {
   command: string;
-  prefix: string[];
+  prefix: readonly string[];
   env?: Record<string, string>;
 };
 
-type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
-type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+type ExecFn = (file: string, argList: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
+type SpawnFn = (command: string, argList: readonly string[], options: SpawnOptions) => ChildProcess;
 
 export type ResolveOptions = {
   python?: string | null;
@@ -34,7 +34,7 @@ export type ResolveOptions = {
   execFn?: ExecFn;
 };
 
-export const resolveClaimcheck = async ({ python, bin = null, env = process.env, execFn = execFileP }: ResolveOptions = {}): Promise<Resolved | null> => {
+export const resolveClaimcheck = async ({ python, bin = null, env = process.env, execFn = runExecFile }: ResolveOptions = {}): Promise<Resolved | null> => {
   const override = env.CLAIMCHECK_BIN || bin;
   if (override) {
     if (/\.(c|m)?js$/i.test(override)) return { command: process.execPath, prefix: [override], env: process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} };
@@ -50,7 +50,7 @@ export type RunOptions = {
   repoPath: string;
   provider?: string | null;
   resolved: Resolved | null;
-  extraArgs?: string[];
+  extraArgs?: readonly string[];
   onLine?: (line: string) => void;
   spawnFn?: SpawnFn;
 };
@@ -62,20 +62,20 @@ export const runClaimcheck = ({ repoPath, provider, resolved, extraArgs = [], on
       resolve({ exitCode: null });
       return;
     }
-    const args = [...resolved.prefix, 'run', ...(provider ? ['--provider', provider] : []), ...extraArgs];
-    const child = spawnFn(resolved.command, args, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const argList = [...resolved.prefix, 'run', ...(provider ? ['--provider', provider] : []), ...extraArgs];
+    const child = spawnFn(resolved.command, argList, { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     // One splitter per stream: a line (or a multi-byte character) may arrive in two chunks.
-    const out = createLineSplitter((l) => l && onLine(l));
-    const err = createLineSplitter((l) => l && onLine(l));
-    child.stdout?.on('data', (c: Buffer | string) => out.push(c));
-    child.stderr?.on('data', (c: Buffer | string) => err.push(c));
-    child.on('error', (e: Error) => {
-      onLine(`could not start: ${e.message}`);
+    const out = createLineSplitter({ onLine: (line) => line && onLine(line) });
+    const error = createLineSplitter({ onLine: (line) => line && onLine(line) });
+    child.stdout?.on('data', (chunk: Buffer | string) => out.write(chunk));
+    child.stderr?.on('data', (chunk: Buffer | string) => error.write(chunk));
+    child.on('error', (error: Error) => {
+      onLine(`could not start: ${error.message}`);
       resolve({ exitCode: null });
     });
     child.on('close', (code) => {
       out.flush();
-      err.flush();
+      error.flush();
       resolve({ exitCode: code });
     });
   });

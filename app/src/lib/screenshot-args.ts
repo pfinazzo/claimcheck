@@ -16,19 +16,19 @@ export type ScreenshotArgs = {
 };
 
 /** The options, or null when the app was not started in screenshot mode. */
-export const parseScreenshotArgs = (args: readonly string[]): ScreenshotArgs | null => {
-  const at = args.indexOf('--screenshot');
+export const parseScreenshotArgs = ({ argList }: { argList: readonly string[] }): ScreenshotArgs | null => {
+  const at = argList.indexOf('--screenshot');
   if (at < 0) return null;
-  const rest = args.slice(at + 1);
-  const positional: string[] = [];
+  const rest = argList.slice(at + 1);
   const flags: Record<string, string | undefined> = {};
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i] ?? '';
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index] ?? '';
     if (VALUE_FLAGS.includes(arg)) {
-      flags[arg] = rest[i + 1];
-      i += 1;
-    } else if (!arg.startsWith('--')) positional.push(arg);
+      flags[arg] = rest[index + 1];
+      index += 1;
+    }
   }
+  const positional = rest.filter((arg, index) => !arg.startsWith('--') && !VALUE_FLAGS.includes(rest[index - 1] ?? ''));
   const size = /^(\d{3,4})x(\d{3,4})$/.exec(flags['--size'] ?? '1440x900');
   const requestedView = flags['--view'] ?? 'board';
   const view = /^(board|wizard:[1-6](:[0-2])?)$/.test(requestedView) ? requestedView : 'board';

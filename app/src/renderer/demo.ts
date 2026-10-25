@@ -29,7 +29,7 @@ const finish: CcFinish = {
 };
 
 /** The wizard as it looks at step N (1 to 6). Welcome has three beats: 1 is the first, the others come from the URL. */
-export const demoWizard = (step: number, beat = 0): WizardState => {
+export const runDemoWizard = ({ step, beat = 0 }: { step: number; beat?: number }): WizardState => {
   const base = initialWizard({ entry: 'first-run', repo: 'C:/work/checkout-service' });
   const withSetup: WizardState = { ...base, setup: { init, testCmd: 'npm test', ci: false } };
   const draft = {
@@ -46,7 +46,7 @@ export const demoWizard = (step: number, beat = 0): WizardState => {
     { id: 'q1', text: 'What should an order of exactly $50 pay for shipping?', why: 'It decides which side of the boundary criterion 1 lands on.' },
     { id: 'q2', text: 'Does the $50 include tax and discounts, or only the item subtotal?', why: 'The threshold has to be measured on one agreed number.' },
   ];
-  const doneState = (): WizardState => ({ ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', result: finish } });
+  const doneState = (): WizardState => ({ ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', outcome: finish } });
   const stateByStep = new Map<number, () => WizardState>([
     [1, () => ({ ...base, beat: Math.min(Math.max(beat, 0), 2) })],
     [2, () => ({ ...withSetup, step: 'setup' })],

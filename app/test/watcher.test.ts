@@ -15,15 +15,15 @@ import { buildFixtureRepo } from './fixture-repo.ts';
 test('AC 9: debounced to one call per burst; outside paths ignored', async () => {
   const repo = buildFixtureRepo({ withRuns: false });
   let calls = 0;
-  const w = watch(repo, () => {
+  const width = watch({ repoPath: repo, onChange: () => {
     calls += 1;
-  });
+  } });
   // Let the OS watcher settle.
   await sleep(200);
   const runs = path.join(repo, '.claimcheck', 'runs');
   mkdirSync(runs, { recursive: true });
-  for (let i = 0; i < 3; i += 1) {
-    writeFileSync(path.join(runs, 'x.json'), `{"i":${i}}`, 'utf8');
+  for (let index = 0; index < 3; index += 1) {
+    writeFileSync(path.join(runs, 'x.json'), `{"i":${index}}`, 'utf8');
     // The writes must be spaced in time to form a burst, so each one waits for the last.
     // eslint-disable-next-line no-await-in-loop
     await sleep(15);
@@ -38,19 +38,19 @@ test('AC 9: debounced to one call per burst; outside paths ignored', async () =>
   writeFileSync(path.join(repo, '.claimcheck', 'worktrees-not', 'ignored.txt').replace('worktrees-not', 'runs'), 'y', 'utf8');
   await sleep(500);
   assert.equal(calls, 2);
-  w.close();
+  width.close();
 });
 
 test('changes under worktrees/ and mutate-backup/ do not fire', async () => {
   const repo = buildFixtureRepo({ withRuns: false });
   let calls = 0;
-  const w = watch(repo, () => {
+  const width = watch({ repoPath: repo, onChange: () => {
     calls += 1;
-  });
+  } });
   await sleep(200);
   mkdirSync(path.join(repo, '.claimcheck', 'worktrees', 'r1'), { recursive: true });
   writeFileSync(path.join(repo, '.claimcheck', 'worktrees', 'r1', 'f.py'), 'x', 'utf8');
   await sleep(500);
   assert.equal(calls, 0);
-  w.close();
+  width.close();
 });

@@ -20,7 +20,7 @@ export type VerdictInfo = {
   /** Kept as text: a record written by something else may hold any word. */
   verdict: string;
   reason: string;
-  evidence: string[];
+  evidence: readonly string[];
   provider: string;
   model: string | null;
   ts: string;
@@ -42,7 +42,7 @@ export type MutationInfo = {
   survived: number;
   timeout: number;
   catchRate: number | null;
-  mutants: Mutant[];
+  mutants: readonly Mutant[];
   ts: string;
   runId: string;
 };
@@ -56,7 +56,7 @@ export type AppSettings = {
 export type BoardConfig = {
   base: string;
   test_cmd: string;
-  ignore: string[];
+  ignore: readonly string[];
   checker: { provider: string; model: string };
   app: AppSettings;
 };
@@ -82,19 +82,19 @@ export type Claim = {
   id: string;
   claim: string;
   confidence: number | null;
-  criteria: Criterion[];
-  files: string[];
+  criteria: readonly Criterion[];
+  files: readonly string[];
   killCondition: string;
-  verifiedBy: string[];
+  verifiedBy: readonly string[];
   verdict: VerdictInfo | null;
   mutation: MutationInfo | null;
   status: ClaimStatus;
   reopened: boolean;
   note: string;
   fix: FixState | null;
-  history: LedgerRecord[];
+  history: readonly LedgerRecord[];
   risk: number;
-  flags: string[];
+  flags: readonly string[];
   /** The exact text Copy prompt would copy; attached by the main process. */
   promptText?: string;
 };
@@ -117,24 +117,24 @@ export type CheckRun = {
   ts: string;
   provider: string;
   model: string | null;
-  verdicts: { id: string; verdict: string; reason: string; evidence: string[] }[];
+  verdicts: readonly { id: string; verdict: string; reason: string; evidence: readonly string[] }[];
 };
 
 export type MutateRun = {
   file: string;
   run_id: string;
   ts: string;
-  mutants: Mutant[];
+  mutants: readonly Mutant[];
   per_claim: Record<string, unknown>;
 };
 
 export type Board = {
   repo: RepoInfo;
   config: BoardConfig;
-  criteria: Criterion[];
-  claims: Claim[];
-  queue: string[];
-  runs: { check: CheckRun | null; mutate: MutateRun | null; fixes?: unknown[] };
+  criteria: readonly Criterion[];
+  claims: readonly Claim[];
+  queue: readonly string[];
+  runs: { check: CheckRun | null; mutate: MutateRun | null; fixes?: readonly unknown[] };
   ledgerCount: number;
   /** Attached by the main process after the board is read. */
   connection?: ConnectionSummary;
@@ -174,10 +174,10 @@ export type OutcomeRecord = {
 export type Proposal = {
   title: string;
   summary: string;
-  pros: string[];
-  cons: string[];
+  pros: readonly string[];
+  cons: readonly string[];
   effort: 'small' | 'medium' | 'large';
-  touches: string[];
+  touches: readonly string[];
 };
 
 /** What the prompts need to know about one claim in one repo. */
@@ -203,18 +203,18 @@ export type CcStatus = {
 
 export type CcSecrets = {
   created: boolean;
-  added: string[];
-  tracked: string[];
+  added: readonly string[];
+  tracked: readonly string[];
 };
 
 export type CcInit = {
   repo: string;
   config: 'created' | 'exists';
-  stack: { name: Stack | null; test_cmd: string; others: string[] };
+  stack: { name: Stack | null; test_cmd: string; others: readonly string[] };
   hook: { status: 'installed' | 'present'; path: string };
   secrets: CcSecrets;
-  gitignore_added: string[];
-  agent_docs: { path: string; action: 'added' | 'updated' | 'unchanged' | 'created' }[];
+  gitignore_added: readonly string[];
+  agent_docs: readonly { path: string; action: 'added' | 'updated' | 'unchanged' | 'created' }[];
   ci: { path: string; action: 'created' | 'exists' } | null;
   next: string;
 };
@@ -236,10 +236,10 @@ export type LintNote = {
 };
 
 export type CcStep = {
-  questions: DraftQuestion[];
-  criteria: DraftCriterion[];
-  out_of_scope: string[];
-  concerns: string[];
+  questions: readonly DraftQuestion[];
+  criteria: readonly DraftCriterion[];
+  out_of_scope: readonly string[];
+  concerns: readonly string[];
   ready: boolean;
   lint: Record<string, LintNote[]>;
 };
@@ -254,15 +254,15 @@ export type CcFinish = {
 };
 
 export type DraftRound = {
-  questions: DraftQuestion[];
-  answers: string[];
+  questions: readonly DraftQuestion[];
+  answers: readonly string[];
 };
 
 export type DraftInput = {
   goal: string;
-  rounds: DraftRound[];
-  criteria: DraftCriterion[];
-  out_of_scope: string[];
+  rounds: readonly DraftRound[];
+  criteria: readonly DraftCriterion[];
+  out_of_scope: readonly string[];
 };
 
 // ---- app state the main process sends to the renderer ---------------------------
@@ -283,7 +283,7 @@ export type ConnectionSummary = {
 
 export type TrustInfo = {
   trusted: boolean;
-  commands: { label: string; command: string }[];
+  commands: readonly { label: string; command: string }[];
 };
 
 export type ViewName = 'empty' | 'board' | 'wizard';

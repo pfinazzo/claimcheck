@@ -12,7 +12,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { toText } from '../shared/text.ts';
 import { FINDER_TIMEOUT_MS } from './timeouts.ts';
 
-export type FinderExec = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
+export type FinderExec = (file: string, argList: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
 
 /** Kills the child and everything it started. Never throws. */
 export type KillOptions = {
@@ -44,7 +44,7 @@ export const findOnPath = async ({ name, execFn, env }: { name: string; execFn: 
   }
 };
 
-export const killTree = (child: Pick<ChildProcess, 'pid' | 'kill'> | null | undefined, { platform = process.platform, spawnFn = nodeSpawn, group = false }: KillOptions = {}): void => {
+export const killTree = ({ child, platform = process.platform, spawnFn = nodeSpawn, group: isGroup = false }: Partial<KillOptions> & { child: Pick<ChildProcess, 'pid' | 'kill'> | null | undefined }): void => {
   if (platform === 'win32' && child?.pid) {
     const killer = spawnFn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
     // If taskkill can't start, killing the child itself is the most that is left to do.
@@ -53,39 +53,39 @@ export const killTree = (child: Pick<ChildProcess, 'pid' | 'kill'> | null | unde
     return;
   }
   // On POSIX a child started with { detached: true } leads its own process group.
-  if (group && child?.pid) {
+  if (isGroup && child?.pid) {
     killGroup({ child, pid: child.pid });
     return;
   }
   child?.kill('SIGKILL');
 };
 
-/** A line splitter fed with raw Buffers. `push(chunk)` emits whole lines; `flush()` emits the rest. */
-export const createLineSplitter = (onLine: (line: string) => void) => {
+/** A line splitter fed with raw Buffers. `write(chunk)` emits whole lines; `flush()` emits the rest. */
+export const createLineSplitter = ({ onLine }: { onLine: (line: string) => void }) => {
   const decoder = new StringDecoder('utf8');
   let pending = '';
-  const emit = (line: string): void => onLine(line.endsWith('\r') ? line.slice(0, -1) : line);
+  const emit = ({ line }: { line: string }): void => onLine(line.endsWith('\r') ? line.slice(0, -1) : line);
   return {
-    push(chunk: Buffer | string): void {
+    write(chunk: Buffer | string): void {
       pending += typeof chunk === 'string' ? chunk : decoder.write(chunk);
       const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      lines.forEach(emit);
+      pending = lines.at(-1) ?? '';
+      lines.slice(0, -1).forEach((line) => emit({ line }));
     },
     flush(): void {
       pending += decoder.end();
-      if (pending) emit(pending);
+      if (pending) emit({ line: pending });
       pending = '';
     },
   };
 };
 
 /** Collects raw chunks into one string, decoding once at the end so no character is split. */
-export const createTextCollector = (limit = 4 * 1024 * 1024) => {
+export const createTextCollector = ({ limit = 4 * 1024 * 1024 }: { limit?: number } = {}) => {
   const decoder = new StringDecoder('utf8');
   let text = '';
   return {
-    push(chunk: Buffer | string): void {
+    write(chunk: Buffer | string): void {
       text += typeof chunk === 'string' ? chunk : decoder.write(chunk);
       if (text.length > limit) text = text.slice(text.length - limit);
     },

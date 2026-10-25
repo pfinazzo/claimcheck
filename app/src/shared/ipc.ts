@@ -14,7 +14,7 @@ import type { Board } from './types.ts';
 
 type FullApi = ReturnType<typeof createDeskApi>;
 /** Only the callable members: the api object also carries state and the fixer. */
-type Api = { [K in keyof FullApi as FullApi[K] extends (...args: never[]) => unknown ? K : never]: FullApi[K] };
+type Api = { [K in keyof FullApi as FullApi[K] extends (...argList: never[]) => unknown ? K : never]: FullApi[K] };
 type Out<K extends keyof Api> = Promise<Awaited<ReturnType<Api[K]>>>;
 type In<K extends keyof Api> = Parameters<Api[K]>[0];
 

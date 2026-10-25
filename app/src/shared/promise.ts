@@ -7,4 +7,4 @@
  */
 
 /** Runs `work` now and returns its result as a promise; a throw becomes a rejection, as with `async`. */
-export const toPromise = <T>(work: () => T): Promise<T> => new Promise<T>((resolve) => resolve(work()));
+export const toPromise = <T>({ work }: { work: () => T }): Promise<T> => new Promise<T>((resolve) => resolve(work()));
