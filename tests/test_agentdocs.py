@@ -10,8 +10,8 @@ from claimcheck import agentdocs
 
 def test_adds_block_to_existing_files_only(tmp_path):
     (tmp_path / "CLAUDE.md").write_text("# Project\n\nUse tabs.\n", encoding="utf-8")
-    out = agentdocs.install(tmp_path)
-    assert out == [("CLAUDE.md", "added")]
+    output = agentdocs.install(tmp_path)
+    assert output == [("CLAUDE.md", "added")]
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# Project\n\nUse tabs.\n\n<!-- claimcheck:begin")
     assert "claimcheck spec draft" in text and text.rstrip().endswith(agentdocs.END)

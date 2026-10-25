@@ -46,7 +46,7 @@ jobs:
 """
 
 
-def install_github(repo: Path, stack_name: str | None) -> tuple[str, str]:
+def install_github(repo: Path, *, stack_name: str | None) -> tuple[str, str]:
     """Returns (relative path, action). Never overwrites an existing workflow."""
     path = repo / WORKFLOW_PATH
     if path.exists():

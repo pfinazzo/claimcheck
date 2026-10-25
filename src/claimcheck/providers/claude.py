@@ -10,10 +10,10 @@ from .shapes import Provider, Request, make_provider
 
 try:
     import anthropic
-except ImportError as e:  # pragma: no cover - exercised only without the extra installed
+except ImportError as error:  # pragma: no cover - exercised only without the extra installed
     raise ImportError(
         'the claude provider needs the anthropic SDK: pip install "claimcheck[claude]"'
-    ) from e
+    ) from error
 
 DEFAULT_MODEL = "claude-opus-5-5"
 # The same budget the Claude Code CLI provider gets. Without it the SDK waits up to ten minutes
@@ -26,7 +26,7 @@ def make_claude_provider(*, model: str | None = None) -> Provider:
     chosen = model or DEFAULT_MODEL
     client = anthropic.Anthropic(timeout=API_TIMEOUT_S)
 
-    def complete(request: Request) -> str:
+    def answer_request(request: Request) -> str:
         """One structured-output request; returns the reply's text."""
         # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
         system, user = redact.redact_text(request["system"])[0], redact.redact_text(request["user"])[0]
@@ -37,6 +37,6 @@ def make_claude_provider(*, model: str | None = None) -> Provider:
             messages=[{"role": "user", "content": user}],
             output_config={"format": {"type": "json_schema", "schema": request["schema"]}},
         )
-        return next(b.text for b in response.content if b.type == "text")
+        return next(part.text for part in response.content if part.type == "text")
 
-    return make_provider("claude", complete=complete, model=chosen)
+    return make_provider("claude", complete=answer_request, model=chosen)

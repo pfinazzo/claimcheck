@@ -44,7 +44,7 @@ Before finishing:
 """
 
 
-def block() -> str:
+def build_block() -> str:
     """The marked block of agent instructions, begin and end markers included."""
     return f"{BEGIN}\n{BLOCK_BODY}{END}\n"
 
@@ -58,9 +58,9 @@ def _read(path: Path) -> tuple[str, str, bool]:
     return text.replace("\r\n", "\n"), newline, bom
 
 
-def _write(path: Path, text: str, newline: str, bom: bool) -> None:
-    data = text.replace("\n", newline).encode("utf-8")
-    path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + data)
+def _write(path: Path, *, text: str, newline: str, bom: bool) -> None:
+    raw = text.replace("\n", newline).encode("utf-8")
+    path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + raw)
 
 
 def _find_block(text: str) -> tuple[int, int] | None:
@@ -73,7 +73,7 @@ def _find_block(text: str) -> tuple[int, int] | None:
     return start, end + 1 if text[end : end + 1] == "\n" else end
 
 
-def _separator_before_block(text: str) -> str:
+def _make_separator_before_block(text: str) -> str:
     """The blank line a new block needs after existing text: none for an empty file."""
     if not text:
         return ""
@@ -82,10 +82,10 @@ def _separator_before_block(text: str) -> str:
 
 def apply_to_text(text: str) -> tuple[str, str]:
     """Return (new_text, action) where action is added, updated or unchanged."""
-    new_block = block()
+    new_block = build_block()
     span = _find_block(text)
     if span is None:
-        return text + _separator_before_block(text) + new_block, "added"
+        return text + _make_separator_before_block(text) + new_block, "added"
     updated = text[: span[0]] + new_block + text[span[1] :]
     return updated, ("unchanged" if updated == text else "updated")
 
@@ -103,11 +103,11 @@ def install(repo: Path, *, create: str | None = None) -> list[tuple[str, str]]:
         text, newline, bom = _read(path)
         new_text, action = apply_to_text(text)
         if action != "unchanged":
-            _write(path, new_text, newline, bom)
+            _write(path, text=new_text, newline=newline, bom=bom)
         results.append((rel, action))
     if not results and create:
         rel = CREATABLE[create]
         path = repo / rel
-        path.write_text(f"# {repo.name}\n\n" + block(), encoding="utf-8", newline="\n")
+        path.write_text(f"# {repo.name}\n\n" + build_block(), encoding="utf-8", newline="\n")
         results.append((rel, "created"))
     return results

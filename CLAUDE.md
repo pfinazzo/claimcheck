@@ -27,7 +27,7 @@ npm test                         # typecheck, lint, build, then node --test
 ```
 
 Lint runs beside pytest, never inside it. `claimcheck run` uses pytest to catch planted bugs, and a lint failure would count as a catch.
-The lint rules live in `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`) and `app/eslint.config.ts`. Never turn a rule off to get green; a line where a rule truly cannot apply gets an inline disable with a comment above it saying why.
+The lint rules live in `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`) and `app/eslint.config.ts`. Never turn a rule off to get green; a line where a rule truly cannot apply gets an inline disable with a comment above it saying why. In Python the named-params convention is enforced by ruff's PLR0917 with `max-positional-args = 1`: one positional argument, everything after it keyword-only.
 
 CI runs the Desk tests under `xvfb-run -a` with `ELECTRON_DISABLE_SANDBOX=1`, because one test opens a real Electron window.
 

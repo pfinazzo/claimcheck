@@ -16,7 +16,7 @@ README = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding=
 STACKS = [None, "python", "node", "go", "rust", "maven", "gradle"]
 
 
-def _steps(stack):
+def _list_steps(stack):
     return yaml.safe_load(ci.render(stack))["jobs"]["claimcheck"]["steps"]
 
 
@@ -29,11 +29,11 @@ def test_the_workflow_does_not_assume_a_private_repo_or_a_token(stack):
 
 @pytest.mark.parametrize("stack", STACKS)
 def test_the_workflow_installs_from_the_public_address_and_runs_against_the_base(stack):
-    steps = _steps(stack)
-    install = [s["run"] for s in steps if s.get("run", "").startswith("pip install")]
+    steps = _list_steps(stack)
+    install = [step["run"] for step in steps if step.get("run", "").startswith("pip install")]
     assert install == [f'pip install "claimcheck[claude] @ git+{ci.INSTALL_URL}"']
     assert ci.INSTALL_URL == "https://github.com/pfinazzo/claimcheck.git"
-    run = next(s for s in steps if s.get("run", "").startswith("claimcheck run"))
+    run = next(workflow_step for workflow_step in steps if workflow_step.get("run", "").startswith("claimcheck run"))
     assert run["run"] == "claimcheck run --provider claude --base origin/${{ github.base_ref }}"
     assert run["env"] == {"ANTHROPIC_API_KEY": "${{ secrets.ANTHROPIC_API_KEY }}"}
 

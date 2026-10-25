@@ -9,7 +9,6 @@ Exit codes: 0 ok, 2 verdict/threshold failure, 3 spec refusal, 4 claims/hook fai
 from __future__ import annotations
 
 import argparse
-import functools
 import json
 import sys
 from pathlib import Path
@@ -18,6 +17,8 @@ from . import (
     ClaimcheckError,
     __version__,
     checker,
+    claims,
+    config,
     gitio,
     hook,
     initflow,
@@ -26,23 +27,21 @@ from . import (
     onboard,
     providers,
     run,
+    spec,
     specdraft,
     tui,
 )
-from . import claims as CL
-from . import config as C
-from . import spec as S
 
 
-def _out(obj: dict) -> None:
+def _write_out(obj: dict) -> None:
     sys.stdout.write(json.dumps(obj, indent=2, sort_keys=True) + "\n")
 
 
-def _err(msg: str) -> None:
+def _write_err(msg: str) -> None:
     sys.stderr.write(f"claimcheck: {msg}\n")
 
 
-def _write_if_missing(path: Path, content: str) -> bool:
+def _write_if_missing(path: Path, *, content: str) -> bool:
     if path.exists():
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,93 +49,93 @@ def _write_if_missing(path: Path, content: str) -> bool:
     return True
 
 
-def _interactive() -> bool:
+def _is_interactive() -> bool:
     return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
 
-def cmd_init(args: argparse.Namespace) -> int:
+def handle_init(args: argparse.Namespace) -> int:
     """`claimcheck init`: guided setup in a terminal, or a plain summary with --yes or --json."""
-    repo = C.find_repo_root()
+    repo = config.find_repo_root()
     if args.json:
-        _out(initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci))
+        _write_out(initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci))
         return 0
-    if _interactive() and not args.yes:
+    if _is_interactive() and not args.yes:
         term = tui.make_term(animate=False if args.no_animation else None)
-        tui.enable_windows_vt()
-        return onboard.run_onboarding(term, repo, tour=not args.no_tour, goal=args.goal)
+        tui.set_windows_vt()
+        return onboard.run_onboarding(term, repo=repo, tour=not args.no_tour, goal=args.goal)
     # Plain mode: same work, no prompts, no animation. This is what scripts and CI get.
-    r = initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci)
-    hook_word = "installed" if r["hook"]["status"] == "installed" else "already present"
-    _err(f"init: created {r['created'] or 'nothing new'}; hook {hook_word}")
-    sec = r["secrets"]
+    row = initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci)
+    hook_word = "installed" if row["hook"]["status"] == "installed" else "already present"
+    _write_err(f"init: created {row['created'] or 'nothing new'}; hook {hook_word}")
+    sec = row["secrets"]
     if sec["created"] or sec["added"]:
-        _err(f"init: secrets first: .gitignore {'created' if sec['created'] else 'updated'} so .env and key files are ignored")
+        _write_err(f"init: secrets first: .gitignore {'created' if sec['created'] else 'updated'} so .env and key files are ignored")
     for tracked in sec["tracked"]:
-        _err(f"init: WARNING {tracked} is already committed; ignoring does not remove it. Run: git rm --cached {tracked}")
-    if r["gitignore_added"]:
-        _err(f"init: added {len(r['gitignore_added'])} lines to .gitignore")
-    for doc in r["agent_docs"]:
-        _err(f"init: {doc['path']}: {doc['action']}")
-    if r["ci"]:
-        _err(f"init: {r['ci']['path']}: {r['ci']['action']}")
-    _err(f"init: test command is {r['stack']['test_cmd']!r}" + (f" (detected {r['stack']['name']})" if r["stack"]["name"] else " (nothing detected; edit .claimcheck/config.toml)"))
-    _err("init: next, write the spec with `claimcheck spec draft`")
+        _write_err(f"init: WARNING {tracked} is already committed; ignoring does not remove it. Run: git rm --cached {tracked}")
+    if row["gitignore_added"]:
+        _write_err(f"init: added {len(row['gitignore_added'])} lines to .gitignore")
+    for doc in row["agent_docs"]:
+        _write_err(f"init: {doc['path']}: {doc['action']}")
+    if row["ci"]:
+        _write_err(f"init: {row['ci']['path']}: {row['ci']['action']}")
+    _write_err(f"init: test command is {row['stack']['test_cmd']!r}" + (f" (detected {row['stack']['name']})" if row["stack"]["name"] else " (nothing detected; edit .claimcheck/config.toml)"))
+    _write_err("init: next, write the spec with `claimcheck spec draft`")
     return 0
 
 
 def _read_spec_state(repo: Path) -> tuple[str, int]:
     """("none" | "draft" | "frozen", number of criteria). A repo with no readable spec is ("none", 0)."""
     try:
-        text, crit = S.read_spec(repo)
+        text, crit = spec.read_spec(repo)
     except ClaimcheckError:
         return "none", 0
     try:
-        S.verify(repo)
+        spec.validate_spec(repo)
     except ClaimcheckError:
         return ("none" if "Replace this placeholder" in text else "draft"), len(crit)
     return "frozen", len(crit)
 
 
-def cmd_status(args: argparse.Namespace) -> int:
+def handle_status(args: argparse.Namespace) -> int:
     """`claimcheck status`: what is set up in this repo and where the spec stands."""
-    repo = C.find_repo_root()
-    cfg = C.load(repo)
-    initialized = (C.cc_dir(repo) / C.CONFIG_FILE).exists()
+    repo = config.find_repo_root()
+    cfg = config.load(repo)
+    initialized = (config.resolve_cc_dir(repo) / config.CONFIG_FILE).exists()
     spec_state, criteria = _read_spec_state(repo)
     try:
-        hook_on = "claimcheck" in hook.hook_file(repo).read_text(encoding="utf-8", errors="replace")
+        hook_on = "claimcheck" in hook.resolve_hook_file(repo).read_text(encoding="utf-8", errors="replace")
     except OSError:
         hook_on = False
-    info = {
+    details = {
         "initialized": initialized,
         "spec": spec_state,
         "criteria": criteria,
         "hook": hook_on,
         "base": cfg["base"],
-        "branch": gitio.current_branch(repo) or None,
+        "branch": gitio.read_current_branch(repo) or None,
         "provider": cfg["checker_provider"],
     }
     if args.json:
-        _out(info)
+        _write_out(details)
     else:
-        _err(f"initialized: {info['initialized']}; spec: {spec_state} ({criteria} criteria); hook: {hook_on}; branch: {info['branch']}")
+        _write_err(f"initialized: {details['initialized']}; spec: {spec_state} ({criteria} criteria); hook: {hook_on}; branch: {details['branch']}")
     return 0
 
 
 def _read_json_stdin() -> dict:
     try:
-        data = json.loads(sys.stdin.read())
-    except json.JSONDecodeError as e:
-        raise ClaimcheckError(f"stdin is not valid JSON: {e}") from e
-    if not isinstance(data, dict):
+        raw = json.loads(sys.stdin.read())
+    except json.JSONDecodeError as error:
+        raise ClaimcheckError(f"stdin is not valid JSON: {error}") from error
+    if not isinstance(raw, dict):
         raise ClaimcheckError("stdin must be a JSON object")
-    return data
+    return raw
 
 
-def cmd_spec_draft(args: argparse.Namespace) -> int:
+def handle_spec_draft(args: argparse.Namespace) -> int:
     """`claimcheck spec draft`: the spec interview, one stateless round (--step), or writing the result (--finish)."""
-    repo = C.find_repo_root()
-    cfg = C.load(repo)
+    repo = config.find_repo_root()
+    cfg = config.load(repo)
     provider_name = args.provider or "auto"
 
     # One round, stateless: the caller keeps the conversation.
@@ -145,15 +144,15 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
         if not round_draft["goal"].strip():
             raise ClaimcheckError("a goal is needed")
         provider = providers.load(provider_name, model=None)
-        reply = specdraft.next_round(provider, round_draft, specdraft.repo_files(repo), len(round_draft["rounds"]) + 1, args.max_rounds)
-        _out(
+        reply = specdraft.next_round(provider, draft=round_draft, files=specdraft.list_repo_files(repo), round_no=len(round_draft["rounds"]) + 1, max_rounds=args.max_rounds)
+        _write_out(
             {
-                "questions": [dict(q) for q in reply["questions"]],
-                "criteria": [dict(c) for c in reply["criteria"]],
+                "questions": [dict(question) for question in reply["questions"]],
+                "criteria": [dict(criterion) for criterion in reply["criteria"]],
                 "out_of_scope": reply["out_of_scope"],
                 "concerns": reply["concerns"],
                 "ready": reply["ready"],
-                "lint": {str(i): w for i, w in specdraft.lint(reply["criteria"]).items()},
+                "lint": {str(key): value for key, value in specdraft.check_criteria(reply["criteria"]).items()},
             }
         )
         return 0
@@ -162,137 +161,137 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
         piped_draft = specdraft.draft_from_dict(_read_json_stdin())
         if not piped_draft["criteria"]:
             raise ClaimcheckError("the draft has no criteria")
-        _out(
-            specdraft.finish(
-                repo, cfg, piped_draft, freeze=not args.no_freeze, branch=args.branch, new_branch=not args.no_branch
+        _write_out(
+            specdraft.apply_draft(
+                repo, settings=cfg, draft=piped_draft, freeze=not args.no_freeze, branch=args.branch, new_branch=not args.no_branch
             )
         )
         return 0
 
     # interactive conversation in the terminal
     term = tui.make_term()
-    tui.enable_windows_vt()
+    tui.set_windows_vt()
     draft = specdraft.load_draft(repo) if args.resume else None
     goal = args.goal or (draft["goal"] if draft else "")
     if not goal:
-        if not _interactive():
+        if not _is_interactive():
             raise ClaimcheckError("pass --goal, or run this in a terminal to be asked")
-        goal = tui.ask(term, f"{tui.format_styled(term, '?', 'cyan', 'bold')} What do you want built? A sentence or two> ").strip()
-    provider = onboard.with_spinner(providers.load(provider_name), term=term, label="Claude is thinking")
+        goal = tui.ask(term, prompt=f"{tui.format_styled(term, text='?', styles=('cyan', 'bold'))} What do you want built? A sentence or two> ").strip()
+    provider = onboard.wrap_with_spinner(providers.load(provider_name), term=term, label="Claude is thinking")
     draft, status = specdraft.run_interview(
-        provider, repo, goal, say=functools.partial(tui.write_line, term), ask=functools.partial(tui.ask, term), max_rounds=args.max_rounds, draft=draft
+        provider, repo=repo, goal=goal, say=lambda line: tui.write_line(term, text=line), ask=lambda question: tui.ask(term, prompt=question), max_rounds=args.max_rounds, draft=draft
     )
     if status == "quit":
-        tui.write_line(term, tui.format_styled(term, "Left without writing. `claimcheck spec draft --resume` picks up here.", "grey"))
+        tui.write_line(term, text=tui.format_styled(term, text="Left without writing. `claimcheck spec draft --resume` picks up here.", styles=("grey",)))
         return 0
-    freeze = not args.no_freeze and (args.yes or (_interactive() and tui.ask_yes_no(term, "Freeze these and commit them on a new branch?", default=True)))
-    out = specdraft.finish(repo, cfg, draft, freeze=freeze, branch=args.branch, new_branch=not args.no_branch)
-    if out["frozen"]:
-        tui.show_decode(term, "criteria locked", out["lock_sha256"])
-        if out["commit"]:
-            tui.write_line(term, f"Committed {out['commit'][:8]} on {out['branch']}.")
+    freeze = not args.no_freeze and (args.yes or (_is_interactive() and tui.ask_yes_no(term, question="Freeze these and commit them on a new branch?", default=True)))
+    output = specdraft.apply_draft(repo, settings=cfg, draft=draft, freeze=freeze, branch=args.branch, new_branch=not args.no_branch)
+    if output["frozen"]:
+        tui.show_decode(term, label="criteria locked", final=output["lock_sha256"])
+        if output["commit"]:
+            tui.write_line(term, text=f"Committed {output['commit'][:8]} on {output['branch']}.")
     else:
-        tui.write_line(term, tui.format_styled(term, "Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", "grey"))
+        tui.write_line(term, text=tui.format_styled(term, text="Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", styles=("grey",)))
     return 0
 
 
-def cmd_spec_freeze(args: argparse.Namespace) -> int:
+def handle_spec_freeze(args: argparse.Namespace) -> int:
     """`claimcheck spec freeze`: write spec.lock for the current criteria."""
-    repo = C.find_repo_root()
-    lock = S.freeze(repo, C.load(repo))
-    _out(lock)
+    repo = config.find_repo_root()
+    lock = spec.freeze(repo, settings=config.load(repo))
+    _write_out(lock)
     return 0
 
 
-def cmd_spec_verify(args: argparse.Namespace) -> int:
+def handle_spec_verify(args: argparse.Namespace) -> int:
     """`claimcheck spec verify`: fail when the spec no longer matches its lock."""
-    repo = C.find_repo_root()
-    criteria = S.verify(repo)
-    _err(f"spec verify: {len(criteria)} criteria match the lock")
+    repo = config.find_repo_root()
+    criteria = spec.validate_spec(repo)
+    _write_err(f"spec verify: {len(criteria)} criteria match the lock")
     return 0
 
 
-def cmd_claims_validate(args: argparse.Namespace) -> int:
+def handle_claims_validate(args: argparse.Namespace) -> int:
     """`claimcheck claims validate`: check the claims file against the schema and the lock."""
-    repo = C.find_repo_root()
-    path = Path(args.path) if args.path else CL.claims_path(repo)
+    repo = config.find_repo_root()
+    path = Path(args.path) if args.path else claims.resolve_claims_path(repo)
     lock_ids: set[int] | None
     try:
-        lock_ids = S.lock_ids(S.read_lock(repo))
+        lock_ids = spec.list_lock_ids(spec.read_lock(repo))
     except ClaimcheckError:
         # No lock: any cited criterion is a violation.
         lock_ids = None
-    cf = CL.load_file(path, lock_ids)
-    _err(f"claims validate: {len(cf['claims'])} claims ok")
+    claims_file = claims.load_file(path, lock_ids=lock_ids)
+    _write_err(f"claims validate: {len(claims_file['claims'])} claims ok")
     return 0
 
 
-def cmd_check(args: argparse.Namespace) -> int:
+def handle_check(args: argparse.Namespace) -> int:
     """`claimcheck check`: the blind check of each claim against the diff."""
-    repo = C.find_repo_root()
-    result, code = checker.run_check(
-        repo, C.load(repo), base=args.base, provider_name=args.provider, model=args.model,
+    repo = config.find_repo_root()
+    report, code = checker.run_check(
+        repo, settings=config.load(repo), base=args.base, provider_name=args.provider, model=args.model,
         worktree=args.worktree,
     )
-    _out(result)
+    _write_out(report)
     return code
 
 
-def cmd_mutate(args: argparse.Namespace) -> int:
+def handle_mutate(args: argparse.Namespace) -> int:
     """`claimcheck mutate`: plant bugs and run the tests, or put files back with --restore."""
-    repo = C.find_repo_root()
+    repo = config.find_repo_root()
     if args.restore:
-        restored = mutate.restore(repo)
+        restored = mutate.reset_from_backups(repo)
         # A file was refused: do not report success.
-        if (C.cc_dir(repo) / C.MUTATE_SENTINEL).exists():
-            _out({"restored": restored, "refused": True})
+        if (config.resolve_cc_dir(repo) / config.MUTATE_SENTINEL).exists():
+            _write_out({"restored": restored, "refused": True})
             return 6
-        _out({"restored": restored})
+        _write_out({"restored": restored})
         return 0
-    result, code = mutate.run_mutate(
-        repo, C.load(repo), base=args.base, worktree=args.worktree, test_cmd=args.test_cmd,
+    report, code = mutate.run_mutate(
+        repo, settings=config.load(repo), base=args.base, worktree=args.worktree, test_cmd=args.test_cmd,
         max_mutants=args.max_mutants, seed=args.seed,
     )
-    _out(result)
+    _write_out(report)
     return code
 
 
-def cmd_run(args: argparse.Namespace) -> int:
+def handle_run(args: argparse.Namespace) -> int:
     """`claimcheck run`: check, then mutate."""
-    repo = C.find_repo_root()
-    result, code = run.run_all(
-        repo, C.load(repo), base=args.base, worktree=args.worktree, provider_name=args.provider,
+    repo = config.find_repo_root()
+    report, code = run.run_all(
+        repo, settings=config.load(repo), base=args.base, worktree=args.worktree, provider_name=args.provider,
         model=args.model, test_cmd=args.test_cmd, max_mutants=args.max_mutants, seed=args.seed,
     )
-    _out(result)
+    _write_out(report)
     return code
 
 
-def cmd_verify_ledger(args: argparse.Namespace) -> int:
+def handle_verify_ledger(args: argparse.Namespace) -> int:
     """`claimcheck verify-ledger`: the hash chain is intact and, with --base, the ledger only grew."""
-    repo = C.find_repo_root()
-    path = ledger.ledger_path(repo)
-    lines = ledger.ledger_lines(path.read_bytes() if path.exists() else b"")
-    result = ledger.verify_chain(lines)
+    repo = config.find_repo_root()
+    path = ledger.resolve_ledger_path(repo)
+    lines = ledger.split_ledger_lines(path.read_bytes() if path.exists() else b"")
+    outcome = ledger.check_chain(lines)
     if args.base:
         # A base that does not exist is an error, not "no ledger there".
-        gitio.rev_parse(repo, args.base)
-        text = gitio.show_file_at(repo, args.base, f"{C.CLAIMCHECK_DIR}/{C.LEDGER_FILE}")
-        ledger.verify_grew_only(lines, ledger.ledger_lines((text or "").encode("utf-8")), args.base)
-    result["base"] = args.base
-    _err(
-        f"ledger ok: {result['lines']} lines, {result['chained']} chained"
-        + (f", {result['legacy']} older without a hash" if result["legacy"] else "")
+        gitio.resolve_ref(repo, ref=args.base)
+        text = gitio.show_file_at(repo, ref=args.base, path=f"{config.CLAIMCHECK_DIR}/{config.LEDGER_FILE}")
+        ledger.check_grew_only(lines, base_lines=ledger.split_ledger_lines((text or "").encode("utf-8")), ref=args.base)
+    outcome["base"] = args.base
+    _write_err(
+        f"ledger ok: {outcome['lines']} lines, {outcome['chained']} chained"
+        + (f", {outcome['legacy']} older without a hash" if outcome["legacy"] else "")
         + (f", unchanged beginning of {args.base}" if args.base else "")
     )
-    _out(result)
+    _write_out(outcome)
     return 0
 
 
-def cmd_hook_pre_commit(args: argparse.Namespace) -> int:
+def handle_hook_pre_commit(args: argparse.Namespace) -> int:
     """The pre-commit hook: refuse a commit whose code changes no claim covers."""
-    repo = C.find_repo_root()
-    return hook.pre_commit(repo, C.load(repo))
+    repo = config.find_repo_root()
+    return hook.run_pre_commit(repo, settings=config.load(repo))
 
 
 def _add_diff_args(p: argparse.ArgumentParser) -> None:
@@ -307,76 +306,76 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.required = True
 
-    p = sub.add_parser("init", help="guided setup: config, commit hook, .gitignore, agent instructions, first spec")
-    p.add_argument("--yes", "-y", action="store_true", help="no prompts and no animation; do the setup and print a summary")
-    p.add_argument("--json", action="store_true", help="no prompts; print what was done as one JSON document")
-    p.add_argument("--no-tour", action="store_true", help="skip the short explanation and go straight to setup")
-    p.add_argument("--no-animation", action="store_true", help="keep the guided flow but turn the animations off")
-    p.add_argument("--goal", default=None, help="what you want built; starts the spec conversation with it")
-    p.add_argument("--ci", choices=["github"], default=None, help="also write a CI workflow")
-    p.add_argument("--agent-doc", choices=["claude", "agents"], default=None, help="create CLAUDE.md or AGENTS.md when neither exists")
-    p.set_defaults(func=cmd_init)
+    command_parser = sub.add_parser("init", help="guided setup: config, commit hook, .gitignore, agent instructions, first spec")
+    command_parser.add_argument("--yes", "-y", action="store_true", help="no prompts and no animation; do the setup and print a summary")
+    command_parser.add_argument("--json", action="store_true", help="no prompts; print what was done as one JSON document")
+    command_parser.add_argument("--no-tour", action="store_true", help="skip the short explanation and go straight to setup")
+    command_parser.add_argument("--no-animation", action="store_true", help="keep the guided flow but turn the animations off")
+    command_parser.add_argument("--goal", default=None, help="what you want built; starts the spec conversation with it")
+    command_parser.add_argument("--ci", choices=["github"], default=None, help="also write a CI workflow")
+    command_parser.add_argument("--agent-doc", choices=["claude", "agents"], default=None, help="create CLAUDE.md or AGENTS.md when neither exists")
+    command_parser.set_defaults(func=handle_init)
 
-    p = sub.add_parser("status", help="where this repo is: set up, spec state, hook, branch")
-    p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_status)
+    command_parser = sub.add_parser("status", help="where this repo is: set up, spec state, hook, branch")
+    command_parser.add_argument("--json", action="store_true")
+    command_parser.set_defaults(func=handle_status)
 
-    p = sub.add_parser("spec", help="write, freeze or verify the acceptance criteria")
-    ss = p.add_subparsers(dest="spec_command")
-    ss.required = True
-    ss.add_parser("freeze", help="hash the criteria into spec.lock").set_defaults(func=cmd_spec_freeze)
-    ss.add_parser("verify", help="refuse if the spec drifted from the lock").set_defaults(func=cmd_spec_verify)
-    d = ss.add_parser("draft", help="write the spec as a conversation with Claude")
-    d.add_argument("--goal", default=None, help="what you want built")
-    d.add_argument("--resume", action="store_true", help="continue the saved conversation")
-    d.add_argument("--provider", default=None, help="auto | claude | claude-cli | stub (default auto)")
-    d.add_argument("--max-rounds", dest="max_rounds", type=int, default=6)
-    d.add_argument("--yes", "-y", action="store_true", help="freeze and commit without asking")
-    d.add_argument("--no-freeze", dest="no_freeze", action="store_true", help="write spec.md only")
-    d.add_argument("--no-branch", dest="no_branch", action="store_true", help="commit on the current branch")
-    d.add_argument("--branch", default=None, help="name for the task branch")
-    d.add_argument("--step", action="store_true", help="machine mode: one round, JSON on stdin and stdout")
-    d.add_argument("--finish", action="store_true", help="machine mode: write, freeze and commit a JSON draft from stdin")
-    d.set_defaults(func=cmd_spec_draft)
+    command_parser = sub.add_parser("spec", help="write, freeze or verify the acceptance criteria")
+    spec_commands = command_parser.add_subparsers(dest="spec_command")
+    spec_commands.required = True
+    spec_commands.add_parser("freeze", help="hash the criteria into spec.lock").set_defaults(func=handle_spec_freeze)
+    spec_commands.add_parser("verify", help="refuse if the spec drifted from the lock").set_defaults(func=handle_spec_verify)
+    draft_parser = spec_commands.add_parser("draft", help="write the spec as a conversation with Claude")
+    draft_parser.add_argument("--goal", default=None, help="what you want built")
+    draft_parser.add_argument("--resume", action="store_true", help="continue the saved conversation")
+    draft_parser.add_argument("--provider", default=None, help="auto | claude | claude-cli | stub (default auto)")
+    draft_parser.add_argument("--max-rounds", dest="max_rounds", type=int, default=6)
+    draft_parser.add_argument("--yes", "-y", action="store_true", help="freeze and commit without asking")
+    draft_parser.add_argument("--no-freeze", dest="no_freeze", action="store_true", help="write spec.md only")
+    draft_parser.add_argument("--no-branch", dest="no_branch", action="store_true", help="commit on the current branch")
+    draft_parser.add_argument("--branch", default=None, help="name for the task branch")
+    draft_parser.add_argument("--step", action="store_true", help="machine mode: one round, JSON on stdin and stdout")
+    draft_parser.add_argument("--finish", action="store_true", help="machine mode: write, freeze and commit a JSON draft from stdin")
+    draft_parser.set_defaults(func=handle_spec_draft)
 
-    p = sub.add_parser("claims", help="validate claims.yaml")
-    cs = p.add_subparsers(dest="claims_command")
-    cs.required = True
-    cv = cs.add_parser("validate", help="schema-check a claims file")
+    command_parser = sub.add_parser("claims", help="validate claims.yaml")
+    claims_commands = command_parser.add_subparsers(dest="claims_command")
+    claims_commands.required = True
+    cv = claims_commands.add_parser("validate", help="schema-check a claims file")
     cv.add_argument("path", nargs="?", default=None)
-    cv.set_defaults(func=cmd_claims_validate)
+    cv.set_defaults(func=handle_claims_validate)
 
-    p = sub.add_parser("check", help="independent model verdict per claim")
-    _add_diff_args(p)
-    p.add_argument("--provider", default=None, help="claude | stub")
-    p.add_argument("--model", default=None)
-    p.set_defaults(func=cmd_check)
+    command_parser = sub.add_parser("check", help="independent model verdict per claim")
+    _add_diff_args(command_parser)
+    command_parser.add_argument("--provider", default=None, help="claude | stub")
+    command_parser.add_argument("--model", default=None)
+    command_parser.set_defaults(func=handle_check)
 
-    p = sub.add_parser("mutate", help="planted-bug catch rate on the changed lines")
-    _add_diff_args(p)
-    p.add_argument("--test-cmd", dest="test_cmd", default=None)
-    p.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
-    p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--restore", action="store_true", help="put backed-up files back after a crashed run")
-    p.set_defaults(func=cmd_mutate)
+    command_parser = sub.add_parser("mutate", help="planted-bug catch rate on the changed lines")
+    _add_diff_args(command_parser)
+    command_parser.add_argument("--test-cmd", dest="test_cmd", default=None)
+    command_parser.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
+    command_parser.add_argument("--seed", type=int, default=0)
+    command_parser.add_argument("--restore", action="store_true", help="put backed-up files back after a crashed run")
+    command_parser.set_defaults(func=handle_mutate)
 
-    p = sub.add_parser("run", help="verify, validate, check, mutate, then append to the ledger")
-    _add_diff_args(p)
-    p.add_argument("--provider", default=None)
-    p.add_argument("--model", default=None)
-    p.add_argument("--test-cmd", dest="test_cmd", default=None)
-    p.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
-    p.add_argument("--seed", type=int, default=0)
-    p.set_defaults(func=cmd_run)
+    command_parser = sub.add_parser("run", help="verify, validate, check, mutate, then append to the ledger")
+    _add_diff_args(command_parser)
+    command_parser.add_argument("--provider", default=None)
+    command_parser.add_argument("--model", default=None)
+    command_parser.add_argument("--test-cmd", dest="test_cmd", default=None)
+    command_parser.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
+    command_parser.add_argument("--seed", type=int, default=0)
+    command_parser.set_defaults(func=handle_run)
 
-    p = sub.add_parser("verify-ledger", help="fail if a ledger line was removed, edited, moved or inserted")
-    p.add_argument("--base", default=None, help="also require the ledger at this git ref to be an unchanged beginning of the current one")
-    p.set_defaults(func=cmd_verify_ledger)
+    command_parser = sub.add_parser("verify-ledger", help="fail if a ledger line was removed, edited, moved or inserted")
+    command_parser.add_argument("--base", default=None, help="also require the ledger at this git ref to be an unchanged beginning of the current one")
+    command_parser.set_defaults(func=handle_verify_ledger)
 
-    p = sub.add_parser("hook", help="git hook entry points")
-    hs = p.add_subparsers(dest="hook_command")
-    hs.required = True
-    hs.add_parser("pre-commit", help="reject commits without a covering claims file").set_defaults(func=cmd_hook_pre_commit)
+    command_parser = sub.add_parser("hook", help="git hook entry points")
+    hook_commands = command_parser.add_subparsers(dest="hook_command")
+    hook_commands.required = True
+    hook_commands.add_parser("pre-commit", help="reject commits without a covering claims file").set_defaults(func=handle_hook_pre_commit)
 
     return parser
 
@@ -387,12 +386,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
-    except ClaimcheckError as e:
-        _err(str(e))
+    except ClaimcheckError as problem:
+        _write_err(str(problem))
         if getattr(args, "json", False) or getattr(args, "step", False) or getattr(args, "finish", False):
             # Machine callers read stdout.
-            _out({"error": str(e), "code": e.code})
-        return e.code
+            _write_out({"error": str(problem), "code": problem.code})
+        return problem.code
     except KeyboardInterrupt:
         return 130
 

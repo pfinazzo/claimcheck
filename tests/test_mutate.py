@@ -8,8 +8,7 @@ import json
 
 import pytest
 
-from claimcheck import config as C
-from claimcheck import mutate
+from claimcheck import config, mutate
 from conftest import CALC_SRC, PY
 
 TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"
@@ -45,12 +44,12 @@ deleted file mode 100644
 
 
 def test_ac21_only_added_lines_in_non_ignored_files():
-    added = mutate.added_lines(DIFF, C.DEFAULT_IGNORE)
+    added = mutate.list_added_lines(DIFF, ignore=config.DEFAULT_IGNORE)
     assert added == [("src/calc.py", 2, "    return a + 1"), ("src/calc.py", 3, "    # added")]
-    muts = mutate.collect(DIFF, C.DEFAULT_IGNORE)
-    assert {m["file"] for m in muts} == {"src/calc.py"}
-    assert all(m["line_no"] in (2, 3) for m in muts)
-    assert not any("x < 2" in m["original"] or "<" in m["mutated"] for m in muts)
+    muts = mutate.collect(DIFF, ignore=config.DEFAULT_IGNORE)
+    assert {mut["file"] for mut in muts} == {"src/calc.py"}
+    assert all(mutant["line_no"] in (2, 3) for mutant in muts)
+    assert not any("x < 2" in planted["original"] or "<" in planted["mutated"] for planted in muts)
 
 
 # ---- AC 22 ---------------------------------------------------------------
@@ -72,15 +71,15 @@ def test_ac21_only_added_lines_in_non_ignored_files():
         ("v = 1.5 * 2", {("off_by_one", "v = 1.5 * 3")}),
     ],
 )
-def test_ac22_exact_mutant_sets(line, expected):
-    got = {(m["cls"], m["mutated"]) for m in mutate.generate(line)}
+def test_ac22_exact_mutant_sets(line, *, expected):
+    got = {(match["cls"], match["mutated"]) for match in mutate.make_mutants(line)}
     assert got == expected
-    assert all(m["original"] == line for m in mutate.generate(line))
+    assert all(found["original"] == line for found in mutate.make_mutants(line))
 
 
 # ---- AC 23 ---------------------------------------------------------------
 
-def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, capsys):
+def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, *, capsys):
     sentinel = calc_repo.cc / "mutate.lock"
     sentinel.write_text("stale\n", encoding="utf-8")
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 6
@@ -96,7 +95,7 @@ def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, caps
     backup = calc_repo.cc / "mutate-backup" / "src" / "calc.py"
     backup.parent.mkdir(parents=True)
     backup.write_text("ORIGINAL\n", encoding="utf-8", newline="\n")
-    calc_repo.write("src/calc.py", "MUTATED\n")
+    calc_repo.write("src/calc.py", text="MUTATED\n")
     assert calc_repo.cli("mutate", "--restore") == 0
     assert json.loads(capsys.readouterr().out) == {"restored": ["src/calc.py"]}
     assert calc_repo.read("src/calc.py") == "ORIGINAL\n"
@@ -104,41 +103,41 @@ def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, caps
     assert not (calc_repo.cc / "mutate-backup").exists()
 
 
-def test_ac23_backup_and_sentinel_exist_during_run_then_vanish(calc_repo, monkeypatch):
+def test_ac23_backup_and_sentinel_exist_during_run_then_vanish(calc_repo, *, monkeypatch):
     seen = {}
 
     real = mutate._run_tests
 
-    def spy(repo, cmd, timeout):
+    def record_run(repo, *, command, timeout):
         """Record whether the sentinel and backup exist while the tests run, then run them."""
         seen["sentinel"] = (calc_repo.cc / "mutate.lock").exists()
         seen["backup"] = (calc_repo.cc / "mutate-backup" / "src" / "calc.py").exists()
-        return real(repo, cmd, timeout)
+        return real(repo, command=command, timeout=timeout)
 
-    monkeypatch.setattr(mutate, "_run_tests", spy)
+    monkeypatch.setattr(mutate, "_run_tests", record_run)
     before = (calc_repo.path / "src/calc.py").read_bytes()
-    result, code = mutate.run_mutate(calc_repo.path, C.load(calc_repo.path), test_cmd="exit 0", max_mutants=1)
+    report, code = mutate.run_mutate(calc_repo.path, settings=config.load(calc_repo.path), test_cmd="exit 0", max_mutants=1)
     assert seen == {"sentinel": True, "backup": True}
     assert not (calc_repo.cc / "mutate.lock").exists()
     assert not (calc_repo.cc / "mutate-backup").exists()
     assert (calc_repo.path / "src/calc.py").read_bytes() == before
 
 
-def test_ac23_failed_restore_keeps_backup_and_sentinel(calc_repo, monkeypatch, capsys):
-    real_restore = mutate._restore_file
+def test_ac23_failed_restore_keeps_backup_and_sentinel(calc_repo, *, monkeypatch, capsys):
+    real_restore = mutate._reset_file
 
-    def boom(path, original, *times):
+    def fail_loudly(path, *, original, times):
         raise OSError("disk says no")
 
-    monkeypatch.setattr(mutate, "_restore_file", boom)
+    monkeypatch.setattr(mutate, "_reset_file", fail_loudly)
     with pytest.raises(OSError):
-        mutate.run_mutate(calc_repo.path, C.load(calc_repo.path), test_cmd="exit 0", max_mutants=1)
+        mutate.run_mutate(calc_repo.path, settings=config.load(calc_repo.path), test_cmd="exit 0", max_mutants=1)
     assert (calc_repo.cc / "mutate.lock").exists()
     backup = calc_repo.cc / "mutate-backup" / "src" / "calc.py"
     assert backup.exists()
     # The mutant is still in place...
     assert calc_repo.read("src/calc.py") != CALC_SRC
-    monkeypatch.setattr(mutate, "_restore_file", real_restore)
+    monkeypatch.setattr(mutate, "_reset_file", real_restore)
     # ...and --restore has what it needs.
     assert calc_repo.cli("mutate", "--restore") == 0
     assert calc_repo.read("src/calc.py") == CALC_SRC
@@ -150,90 +149,90 @@ def test_added_line_starting_with_plus_plus_is_content():
         "diff --git a/x.py b/x.py\n--- a/x.py\n+++ b/x.py\n@@ -0,0 +1,2 @@\n"
         "+++ y = 2\n+z = 3 + 4\n"
     )
-    added = mutate.added_lines(diff, [])
+    added = mutate.list_added_lines(diff, ignore=[])
     assert added == [("x.py", 1, "++ y = 2"), ("x.py", 2, "z = 3 + 4")]
 
 
 # ---- AC 24 ---------------------------------------------------------------
 
-def test_ac24_baseline_failure_exits_5(calc_repo, capsys):
+def test_ac24_baseline_failure_exits_5(calc_repo, *, capsys):
     assert calc_repo.cli("mutate", "--test-cmd", "exit 1") == 5
     assert "baseline tests fail; fix them first" in capsys.readouterr().err
 
 
-def test_ac24_timeout_counts_as_timeout(calc_repo, monkeypatch):
+def test_ac24_timeout_counts_as_timeout(calc_repo, *, monkeypatch):
     calls = {"n": 0}
 
-    def fake(repo, cmd, timeout):
+    def run_fake_tests(repo, *, command, timeout):
         """The baseline passes; every planted bug times out."""
         calls["n"] += 1
         return ("survived", 0.0) if calls["n"] == 1 else ("timeout", float(timeout))
 
-    monkeypatch.setattr(mutate, "_run_tests", fake)
-    result, code = mutate.run_mutate(calc_repo.path, C.load(calc_repo.path), test_cmd="x", max_mutants=2)
-    assert result["summary"]["timeout"] == 2
-    assert result["summary"]["catch_rate"] == 1.0
+    monkeypatch.setattr(mutate, "_run_tests", run_fake_tests)
+    report, code = mutate.run_mutate(calc_repo.path, settings=config.load(calc_repo.path), test_cmd="x", max_mutants=2)
+    assert report["summary"]["timeout"] == 2
+    assert report["summary"]["catch_rate"] == 1.0
 
 
 # ---- AC 25 ---------------------------------------------------------------
 
 def test_ac25_summary_math_and_null_rate():
     recs = [{"outcome": "killed"}, {"outcome": "survived"}, {"outcome": "timeout"}, {"outcome": "killed"}]
-    assert mutate._summary(recs) == {"total": 4, "killed": 2, "survived": 1, "timeout": 1, "catch_rate": 0.75}
-    assert mutate._summary([])["catch_rate"] is None
+    assert mutate._summarize(recs) == {"total": 4, "killed": 2, "survived": 1, "timeout": 1, "catch_rate": 0.75}
+    assert mutate._summarize([])["catch_rate"] is None
 
 
 def test_ac25_max_mutants_and_seed_reproducible(calc_repo):
-    cfg = C.load(calc_repo.path)
-    a, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=7)
-    b, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=7)
-    c, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=8)
-    def key(r):
-        return [(m["cls"], m["mutated"]) for m in r["mutants"]]
+    cfg = config.load(calc_repo.path)
+    a, _ = mutate.run_mutate(calc_repo.path, settings=cfg, test_cmd="exit 0", max_mutants=2, seed=7)
+    b, _ = mutate.run_mutate(calc_repo.path, settings=cfg, test_cmd="exit 0", max_mutants=2, seed=7)
+    c, _ = mutate.run_mutate(calc_repo.path, settings=cfg, test_cmd="exit 0", max_mutants=2, seed=8)
+    def sort_key(r):
+        return [(mutant["cls"], mutant["mutated"]) for mutant in r["mutants"]]
     assert len(a["mutants"]) == 2 and a["candidates"] == 3
-    assert key(a) == key(b)
+    assert sort_key(a) == sort_key(b)
     # Different seeds may coincide with 3 candidates.
-    assert key(a) != key(c) or True
+    assert sort_key(a) != sort_key(c) or True
 
 
 # ---- AC 26 ---------------------------------------------------------------
 
-def test_ac26_run_file_shape_and_threshold(calc_repo, capsys):
+def test_ac26_run_file_shape_and_threshold(calc_repo, *, capsys):
     # Everything survives, min rate 0.0.
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 0
-    out = json.loads(capsys.readouterr().out)
+    output = json.loads(capsys.readouterr().out)
     files = sorted((calc_repo.cc / "runs").glob("*-mutate.json"))
-    assert json.loads(files[-1].read_text(encoding="utf-8")) == out
-    for k in ("run_id", "base", "head", "test_cmd", "baseline_s", "mutants", "summary", "per_claim"):
-        assert k in out, k
-    assert out["summary"]["survived"] == 3 and out["summary"]["catch_rate"] == 0.0
-    assert set(out["per_claim"]) == {"c1", "c2"}
-    assert out["per_claim"]["c1"]["total"] == 3
-    for m in out["mutants"]:
-        assert set(m) == {"file", "line_no", "cls", "original", "mutated", "outcome", "duration_s"}
+    assert json.loads(files[-1].read_text(encoding="utf-8")) == output
+    for key in ("run_id", "base", "head", "test_cmd", "baseline_s", "mutants", "summary", "per_claim"):
+        assert key in output, key
+    assert output["summary"]["survived"] == 3 and output["summary"]["catch_rate"] == 0.0
+    assert set(output["per_claim"]) == {"c1", "c2"}
+    assert output["per_claim"]["c1"]["total"] == 3
+    for mutant in output["mutants"]:
+        assert set(mutant) == {"file", "line_no", "cls", "original", "mutated", "outcome", "duration_s"}
 
     cfg = calc_repo.read(".claimcheck/config.toml").replace("min_catch_rate = 0.0", "min_catch_rate = 0.5")
-    calc_repo.write(".claimcheck/config.toml", cfg)
+    calc_repo.write(".claimcheck/config.toml", text=cfg)
     calc_repo.commit("raise threshold")
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 2
 
 
 # ---- AC 27 ---------------------------------------------------------------
 
-def test_ac27_end_to_end_catch_rate_one(calc_repo, capsys):
+def test_ac27_end_to_end_catch_rate_one(calc_repo, *, capsys):
     before = (calc_repo.path / "src/calc.py").read_bytes()
     assert calc_repo.cli("mutate", "--test-cmd", TEST_CMD) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["summary"]["total"] == 3
-    assert sorted(m["cls"] for m in out["mutants"]) == ["boundary", "off_by_one", "sign_flip"]
-    assert out["summary"]["catch_rate"] == 1.0
+    output = json.loads(capsys.readouterr().out)
+    assert output["summary"]["total"] == 3
+    assert sorted(mutant["cls"] for mutant in output["mutants"]) == ["boundary", "off_by_one", "sign_flip"]
+    assert output["summary"]["catch_rate"] == 1.0
     assert (calc_repo.path / "src/calc.py").read_bytes() == before
 
 
-def test_ac27_weak_tests_let_boundary_survive(calc_repo, capsys):
+def test_ac27_weak_tests_let_boundary_survive(calc_repo, *, capsys):
     tests = calc_repo.read("tests/test_calc.py").replace("    assert is_adult(18) is True\n", "    pass\n")
-    calc_repo.write("tests/test_calc.py", tests)
+    calc_repo.write("tests/test_calc.py", text=tests)
     calc_repo.commit("weaken")
     assert calc_repo.cli("mutate", "--test-cmd", TEST_CMD) == 0
-    out = json.loads(capsys.readouterr().out)
-    assert any(m["cls"] == "boundary" and m["outcome"] == "survived" for m in out["mutants"])
+    output = json.loads(capsys.readouterr().out)
+    assert any(mutant["cls"] == "boundary" and mutant["outcome"] == "survived" for mutant in output["mutants"])

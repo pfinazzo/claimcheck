@@ -37,12 +37,12 @@ def has_api_key() -> bool:
     return bool(os.environ.get(API_KEY_ENV))
 
 
-def stub_reply_file() -> str | None:
+def read_stub_reply_file() -> str | None:
     """The canned-reply file the stub provider returns verbatim, if one is set (tests use this)."""
     return os.environ.get(STUB_FILE_ENV) or None
 
 
-def temp_dir() -> str | None:
+def read_temp_dir() -> str | None:
     """The Windows TEMP folder, if set; the Claude CLI runs there so it never sees the repo."""
     return os.environ.get(TEMP_ENV) or None
 
@@ -130,106 +130,106 @@ def make_config(
 def find_repo_root(start: Path | None = None) -> Path:
     """Return the git top-level directory for `start` (default: cwd)."""
     cwd = Path(start) if start else Path.cwd()
-    out = gitio.git(cwd, "rev-parse", "--show-toplevel", check=False).strip()
-    if not out:
+    output = gitio.run_git(cwd, "rev-parse", "--show-toplevel", check=False).strip()
+    if not output:
         raise ClaimcheckError(f"not a git repository: {cwd}")
-    return Path(out).resolve()
+    return Path(output).resolve()
 
 
-def cc_dir(repo: Path) -> Path:
+def resolve_cc_dir(repo: Path) -> Path:
     """The repo's .claimcheck folder."""
     return repo / CLAIMCHECK_DIR
 
 
-def _want(table: dict, key: str, kind, where: str, default):
+def _read_typed(table: dict, *, key: str, kind, where: str, default):
     """table[key] if present and of the right type, else a ClaimcheckError that names the key."""
     if key not in table:
         return default
-    v = table[key]
-    ok = isinstance(v, kind) and not (kind is int and isinstance(v, bool))
+    value = table[key]
+    ok = isinstance(value, kind) and not (kind is int and isinstance(value, bool))
     if kind is float:
-        ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
     if not ok:
         want = {str: "a string", bool: "true or false", int: "a whole number", float: "a number", list: "a list of strings"}[kind]
-        raise ClaimcheckError(f"invalid config.toml: {where}{key} must be {want} (got {v!r})")
-    return v
+        raise ClaimcheckError(f"invalid config.toml: {where}{key} must be {want} (got {value!r})")
+    return value
 
 
 def load(repo: Path) -> Config:
     """Load `.claimcheck/config.toml`; missing file or keys fall back to defaults."""
-    path = cc_dir(repo) / CONFIG_FILE
+    path = resolve_cc_dir(repo) / CONFIG_FILE
     cfg = make_config()
     if not path.exists():
         return cfg
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
-    except tomllib.TOMLDecodeError as e:
-        raise ClaimcheckError(f"invalid config.toml: {e}") from e
-    cfg["base"] = _want(data, "base", str, "", cfg["base"])
-    cfg["test_cmd"] = _want(data, "test_cmd", str, "", cfg["test_cmd"])
-    ignore = _want(data, "ignore", list, "", cfg["ignore"])
-    if not all(isinstance(g, str) for g in ignore):
+        raw = tomllib.loads(path.read_text(encoding="utf-8-sig"))
+    except tomllib.TOMLDecodeError as error:
+        raise ClaimcheckError(f"invalid config.toml: {error}") from error
+    cfg["base"] = _read_typed(raw, key="base", kind=str, where="", default=cfg["base"])
+    cfg["test_cmd"] = _read_typed(raw, key="test_cmd", kind=str, where="", default=cfg["test_cmd"])
+    ignore = _read_typed(raw, key="ignore", kind=list, where="", default=cfg["ignore"])
+    if not all(isinstance(glob, str) for glob in ignore):
         raise ClaimcheckError("invalid config.toml: ignore must be a list of strings")
     cfg["ignore"] = list(ignore)
-    cfg["require_full_coverage"] = _want(data, "require_full_coverage", bool, "", cfg["require_full_coverage"])
+    cfg["require_full_coverage"] = _read_typed(raw, key="require_full_coverage", kind=bool, where="", default=cfg["require_full_coverage"])
     for name in ("checker", "mutate"):
-        if name in data and not isinstance(data[name], dict):
-            raise ClaimcheckError(f"invalid config.toml: [{name}] must be a table (got {data[name]!r})")
-    checker = data.get("checker", {})
-    cfg["checker_provider"] = _want(checker, "provider", str, "checker.", cfg["checker_provider"])
-    cfg["checker_model"] = _want(checker, "model", str, "checker.", cfg["checker_model"])
-    mutate = data.get("mutate", {})
-    cfg["mutate_max_mutants"] = _want(mutate, "max_mutants", int, "mutate.", cfg["mutate_max_mutants"])
-    cfg["mutate_timeout_s"] = _want(mutate, "timeout_s", int, "mutate.", cfg["mutate_timeout_s"])
-    cfg["mutate_min_catch_rate"] = float(_want(mutate, "min_catch_rate", float, "mutate.", cfg["mutate_min_catch_rate"]))
+        if name in raw and not isinstance(raw[name], dict):
+            raise ClaimcheckError(f"invalid config.toml: [{name}] must be a table (got {raw[name]!r})")
+    checker = raw.get("checker", {})
+    cfg["checker_provider"] = _read_typed(checker, key="provider", kind=str, where="checker.", default=cfg["checker_provider"])
+    cfg["checker_model"] = _read_typed(checker, key="model", kind=str, where="checker.", default=cfg["checker_model"])
+    mutate = raw.get("mutate", {})
+    cfg["mutate_max_mutants"] = _read_typed(mutate, key="max_mutants", kind=int, where="mutate.", default=cfg["mutate_max_mutants"])
+    cfg["mutate_timeout_s"] = _read_typed(mutate, key="timeout_s", kind=int, where="mutate.", default=cfg["mutate_timeout_s"])
+    cfg["mutate_min_catch_rate"] = float(_read_typed(mutate, key="min_catch_rate", kind=float, where="mutate.", default=cfg["mutate_min_catch_rate"]))
     return cfg
 
 
-def _glob_variants(g: str) -> list[str]:
+def _list_glob_variants(g: str) -> list[str]:
     """fnmatch cannot match zero directories for `**/`, so also try the pattern without it."""
-    out = [g]
+    output = [g]
     if g.startswith("**/"):
-        out.append(g[3:])
+        output.append(g[3:])
     if "/**/" in g:
-        out.append(g.replace("/**/", "/"))
-    return out
+        output.append(g.replace("/**/", "/"))
+    return output
 
 
-def is_ignored(path: str, globs: list[str]) -> bool:
+def is_ignored(path: str, *, globs: list[str]) -> bool:
     """fnmatch a repo-relative POSIX path against the ignore globs.
 
     `*` and `**` both match across separators (fnmatch semantics), so `docs/**`
     covers every depth and `*.md` covers nested markdown. A leading `**/` also
     matches no directory at all, so `**/*.md` covers `README.md`.
     """
-    p = path.replace("\\", "/")
-    if p.startswith(CLAIMCHECK_DIR + "/"):
+    normalized = path.replace("\\", "/")
+    if normalized.startswith(CLAIMCHECK_DIR + "/"):
         return True
-    return any(fnmatch.fnmatchcase(p, v) for g in globs for v in _glob_variants(g))
+    return any(fnmatch.fnmatchcase(normalized, value) for glob in globs for value in _list_glob_variants(glob))
 
 
-def utc_now_iso() -> str:
+def format_utc_now() -> str:
     """Now, in UTC, to the second, as written in ledger and run files."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def new_run_id() -> str:
+def make_run_id() -> str:
     """A run id that sorts by time: a UTC timestamp plus four random hex digits."""
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{os.urandom(2).hex()}"
 
 
-def sha256_bytes(data: bytes) -> str:
+def hash_bytes(data: bytes) -> str:
     """Hex SHA-256 of bytes."""
     return hashlib.sha256(data).hexdigest()
 
 
-def sha256_text(text: str) -> str:
+def hash_text(text: str) -> str:
     """Hex SHA-256 of text, encoded as UTF-8."""
-    return sha256_bytes(text.encode("utf-8"))
+    return hash_bytes(text.encode("utf-8"))
 
 
-def repo_id(repo: Path) -> str:
+def compute_repo_id(repo: Path) -> str:
     """sha256 of the origin URL, or of the absolute path when there is no origin."""
-    url = gitio.git(repo, "remote", "get-url", "origin", check=False).strip()
-    return sha256_text(url or str(repo.resolve()))
+    url = gitio.run_git(repo, "remote", "get-url", "origin", check=False).strip()
+    return hash_text(url or str(repo.resolve()))

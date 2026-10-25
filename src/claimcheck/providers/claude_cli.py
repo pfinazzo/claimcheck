@@ -60,7 +60,7 @@ def _read_shim_target(shim: Path) -> Path | None:
     text = shim.read_text(encoding="utf-8", errors="ignore")
     found = re.findall(r'"%~?dp0%?\\?([^"]+)"', text)
     # A classic npm shim names node.exe first and the real script last. Never pick node itself.
-    found = [f for f in found if Path(f.replace("\\", "/")).name.lower() not in ("node", "node.exe")]
+    found = [file for file in found if Path(file.replace("\\", "/")).name.lower() not in ("node", "node.exe")]
     return shim.parent / found[-1] if found else None
 
 
@@ -73,22 +73,22 @@ def _find_packaged_claude(shim: Path) -> Path | None:
 def parse_output(stdout: str) -> str:
     """The reply text from `--output-format json`. Prefers the structured field."""
     try:
-        data = json.loads(stdout)
+        raw = json.loads(stdout)
     except json.JSONDecodeError:
         raise ProviderError(f"claude CLI gave non-JSON output: {stdout[:200]!r}") from None
-    if not isinstance(data, dict):
+    if not isinstance(raw, dict):
         raise ProviderError("claude CLI output was not an object")
-    if data.get("is_error"):
-        msg = str(data.get("result") or data.get("subtype") or "unknown error")
+    if raw.get("is_error"):
+        msg = str(raw.get("result") or raw.get("subtype") or "unknown error")
         if SIGN_IN.search(msg):
             raise ProviderError("Claude Code is not signed in. Run `claude` once and sign in, then retry.")
         raise ProviderError(f"claude CLI reported an error: {msg[:300]}")
-    structured = data.get("structured_output")
+    structured = raw.get("structured_output")
     if isinstance(structured, (dict, list)):
         return json.dumps(structured)
-    result = data.get("result")
-    if isinstance(result, str) and result.strip():
-        return result
+    outcome = raw.get("result")
+    if isinstance(outcome, str) and outcome.strip():
+        return outcome
     raise ProviderError("claude CLI returned no result")
 
 
@@ -104,11 +104,11 @@ def make_claude_cli_provider(*, model: str | None = None, binary: str | None = N
             "or set ANTHROPIC_API_KEY to use the API provider."
         )
 
-    def complete(request: Request) -> str:
+    def answer_request(request: Request) -> str:
         """Run `claude -p` once, read-only and without tools, and return its reply."""
         return _run_claude(request, binary=found, model=model, timeout_s=timeout_s)
 
-    return make_provider("claude-cli", complete=complete, model=model)
+    return make_provider("claude-cli", complete=answer_request, model=model)
 
 
 def _run_claude(request: Request, *, binary: str, model: str | None, timeout_s: int) -> str:
@@ -130,13 +130,13 @@ def _run_claude(request: Request, *, binary: str, model: str | None, timeout_s: 
     try:
         proc = subprocess.run(
             args, input=stdin, capture_output=True, text=True, encoding="utf-8",
-            timeout=timeout_s, cwd=config.temp_dir(),
+            timeout=timeout_s, cwd=config.read_temp_dir(),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
         )
     except subprocess.TimeoutExpired:
         raise ProviderError(f"claude CLI did not answer within {timeout_s}s") from None
-    except OSError as e:
-        raise ProviderError(f"claude CLI could not be started: {e}") from e
+    except OSError as error:
+        raise ProviderError(f"claude CLI could not be started: {error}") from error
     if proc.returncode != 0 and not proc.stdout.strip():
         err = (proc.stderr or "").strip()
         if SIGN_IN.search(err):
