@@ -4,6 +4,12 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0] - 2026-10-25
+
+First public version. Developed privately from October 15, 2026 and published October 24, 2026.
+
 ### Added
 - `claimcheck verify-ledger` and a hash chain on the ledger. Each new line carries `prev`, the SHA-256 of the line before it, and the first chained line seals every older line. `--base REF` also catches the last line being cut off. Exit code 8 on failure. Desk's outcome lines continue the same chain.
 - GitHub Actions workflow: Python 3.11, 3.12 and 3.13, Desk on Node 22, and the ledger checks.
@@ -19,9 +25,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 - `pip install -e ".[dev]"` failed because `[project.urls]` sat above `requires-python` and `dependencies` in `pyproject.toml`.
 - The README had lost the `@author` line the attribution test checks.
 
-## [0.1.0] - not yet tagged
-
-First public version, published October 24, 2026 after private development from October 15, 2026.
+### What the first version includes
 
 - Frozen acceptance criteria (`spec.md` and `spec.lock`), claims with a stated confidence and a kill condition, and an independent checker that never sees the confidence.
 - Planted-bug testing on the changed lines: sign flips, off-by-one, swapped arguments and boundary shifts.
