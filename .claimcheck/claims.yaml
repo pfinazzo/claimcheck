@@ -4,19 +4,28 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "In --worktree mode an empty diff is refused with a message that names --worktree and says to drop it when the change is already committed, so both ways forward appear in either mode"
-    confidence: 0.9
+    claim: "The board summary counts each planted bug once when several claims share the same bugs from one run, so two claims carrying the same 2 killed bugs show 2 of 2, not 4 of 4"
+    confidence: 0.92
     criteria: [1]
-    files: ["src/claimcheck/gitio.py"]
-    kill_condition: "test: tests/test_empty_diff.py::test_worktree_mode_with_no_changes_is_also_refused"
+    files: ["app/src/renderer/format.ts"]
+    kill_condition: "test: app/test/renderer.test.ts::two claims sharing the same planted bugs from one run count each bug once"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_empty_diff.py"
+      - "cmd: cd app && npm test"
 
   - id: c2
-    claim: "The default-mode empty-diff message still says to commit the change or pass --worktree, and the exit code is still 7"
-    confidence: 0.9
-    criteria: [1]
-    files: ["src/claimcheck/gitio.py"]
-    kill_condition: "test: tests/test_empty_diff.py::test_run_refuses_an_empty_diff_and_says_what_to_do"
+    claim: "Claims with different planted bugs still add up, and the same change measured in two different runs counts as two bugs"
+    confidence: 0.88
+    criteria: [2, 3]
+    files: ["app/src/renderer/format.ts"]
+    kill_condition: "test: app/test/renderer.test.ts::claims with different planted bugs still add up"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_empty_diff.py -k refuses"
+      - "cmd: cd app && npm test"
+
+  - id: c3
+    claim: "A claim's own facts line is unchanged, and a board whose claims ran no planted bugs shows no planted-bug sentence"
+    confidence: 0.9
+    criteria: [4]
+    files: ["app/src/renderer/format.ts"]
+    kill_condition: "test: app/test/renderer.test.ts::a claim facts line is unchanged and a board with no planted bugs has no such sentence"
+    verified_by:
+      - "cmd: cd app && npm test"
