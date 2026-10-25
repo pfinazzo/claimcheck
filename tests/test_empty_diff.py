@@ -55,7 +55,9 @@ def test_check_and_mutate_refuse_an_empty_diff_the_same_way(cc_repo, capsys, com
 
 def test_worktree_mode_with_no_changes_is_also_refused(cc_repo, capsys):
     assert cc_repo.cli("run", "--provider", "stub", "--test-cmd", "exit 0", "--worktree") == 7
-    assert "working tree has no changes" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "working tree has no changes" in err
+    assert "--worktree" in err and "already committed" in err  # names both ways forward here too
 
 
 def test_a_non_empty_diff_runs_as_before(calc_repo, capsys):

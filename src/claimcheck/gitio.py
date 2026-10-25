@@ -114,7 +114,9 @@ def require_diff(repo: Path, base: str, worktree: bool) -> str:
         return text
     if worktree:
         raise EmptyDiffError(
-            f"the diff is empty: the working tree has no changes against '{base}'. Make a change first."
+            f"the diff is empty: the working tree has no changes against '{base}'. Make a change first. "
+            "--worktree only looks at uncommitted work, so if you already committed it, "
+            "drop --worktree and run again."
         )
     raise EmptyDiffError(
         f"the diff is empty: nothing in HEAD differs from '{base}'. "

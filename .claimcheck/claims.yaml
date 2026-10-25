@@ -4,37 +4,19 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "claimcheck run on an empty diff exits with code 7 and prints on stderr that the diff is empty, naming committing the change and --worktree as the ways forward"
-    confidence: 0.93
+    claim: "In --worktree mode an empty diff is refused with a message that names --worktree and says to drop it when the change is already committed, so both ways forward appear in either mode"
+    confidence: 0.9
     criteria: [1]
-    files: ["src/claimcheck/__init__.py", "src/claimcheck/gitio.py", "src/claimcheck/run.py"]
-    kill_condition: "test: tests/test_empty_diff.py::test_run_refuses_an_empty_diff_and_says_what_to_do"
+    files: ["src/claimcheck/gitio.py"]
+    kill_condition: "test: tests/test_empty_diff.py::test_worktree_mode_with_no_changes_is_also_refused"
     verified_by:
       - "cmd: python -m pytest -q tests/test_empty_diff.py"
 
   - id: c2
-    claim: "On an empty diff, run loads no checker provider, plants no bugs, and appends nothing to the ledger"
-    confidence: 0.88
-    criteria: [2]
-    files: ["src/claimcheck/run.py"]
-    kill_condition: "test: tests/test_empty_diff.py::test_run_on_an_empty_diff_calls_no_checker_plants_nothing_and_writes_no_ledger"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_empty_diff.py -k no_ledger"
-
-  - id: c3
-    claim: "claimcheck check and claimcheck mutate refuse an empty diff the same way, with exit code 7 and the same message"
+    claim: "The default-mode empty-diff message still says to commit the change or pass --worktree, and the exit code is still 7"
     confidence: 0.9
-    criteria: [3]
-    files: ["src/claimcheck/checker.py", "src/claimcheck/mutate.py"]
-    kill_condition: "test: tests/test_empty_diff.py::test_check_and_mutate_refuse_an_empty_diff_the_same_way"
+    criteria: [1]
+    files: ["src/claimcheck/gitio.py"]
+    kill_condition: "test: tests/test_empty_diff.py::test_run_refuses_an_empty_diff_and_says_what_to_do"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_empty_diff.py -k check_and_mutate"
-
-  - id: c4
-    claim: "A non-empty diff behaves as before: with the stub provider, run exits 0 and appends one ledger line per claim"
-    confidence: 0.85
-    criteria: [4]
-    files: ["src/claimcheck/run.py", "src/claimcheck/checker.py", "src/claimcheck/mutate.py"]
-    kill_condition: "test: tests/test_ledger.py::test_ac28_run_appends_one_line_per_claim"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ledger.py tests/test_empty_diff.py"
+      - "cmd: python -m pytest -q tests/test_empty_diff.py -k refuses"
