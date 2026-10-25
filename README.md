@@ -16,6 +16,32 @@ AI coding assistants write code and then say it works. Sometimes they're wrong, 
 
 At the end you can see which claims were actually verified and which were only confident.
 
+**Without claimcheck**
+
+```mermaid
+flowchart LR
+  A[You ask the AI<br/>for a change] --> B[AI writes the code]
+  B --> C[AI says<br/>'Done, it works']
+  C --> D{Do you trust it?}
+  D -->|Yes| E[It ships]
+  E --> F[A bug shows up later<br/>and nobody saw it coming]
+```
+
+**With claimcheck**
+
+```mermaid
+flowchart LR
+  A[You lock what<br/>done means] --> B[AI writes the code<br/>and lists its claims]
+  B --> C[A separate AI checks<br/>each claim blind]
+  B --> D[claimcheck plants bugs<br/>and reruns the tests]
+  C --> E[(Permanent record)]
+  D --> E
+  E --> F{Every claim<br/>verified?}
+  F -->|Yes| G[It ships with proof]
+  F -->|No| H[You see exactly<br/>which claim failed]
+  H --> B
+```
+
 Setup is one command, and it walks you through everything:
 
 ```bash
