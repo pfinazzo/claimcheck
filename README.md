@@ -14,6 +14,56 @@ claimcheck init
 
 ![The first setup screen: the problem, in one picture](docs/screenshots/setup-1-problem.png)
 
+## Use it in your own repo
+
+Six steps take a project from nothing to a checked change. Each links to the detail further down.
+
+1. **Install claimcheck.** You need Python 3.11 or newer and a git repository.
+
+   ```bash
+   pip install "claimcheck[claude] @ git+https://github.com/pfinazzo/claimcheck"
+   ```
+
+   Or from a clone: `git clone https://github.com/pfinazzo/claimcheck.git`, then `pip install -e "./claimcheck[claude]"`. It is not on PyPI. See [Install](#install).
+
+2. **Set up your repo.**
+
+   ```bash
+   cd your-repo
+   claimcheck init
+   ```
+
+   `init` ignores `.env` and key files first, then writes the config, installs the pre-commit hook and adds the claimcheck rules to your `CLAUDE.md` or `AGENTS.md` if you have one. Run in a terminal, it then offers to start your first spec. With `--yes` it does the setup and stops. It uses your Claude Code sign-in, or `ANTHROPIC_API_KEY` when that is set. See [Setup](#setup-claimcheck-init).
+
+3. **Freeze a spec.**
+
+   ```bash
+   claimcheck spec draft
+   ```
+
+   That is a conversation with Claude that ends in frozen acceptance criteria on a new `task/` branch. To write it yourself, edit `.claimcheck/spec.md`, run `claimcheck spec freeze` and make a branch. See [Writing the spec with Claude](#writing-the-spec-with-claude).
+
+4. **Let your agent work on the task branch.** It reads the rules from `CLAUDE.md` or `AGENTS.md`. Every commit that changes code has to include an updated `.claimcheck/claims.yaml`, and the hook refuses a commit that does not. The hook is optional: it lives in `.git/hooks`, and you can delete the claimcheck line from it. See [Using it day to day](#using-it-day-to-day) and [Writing good claims](#writing-good-claims).
+
+5. **Check it.**
+
+   ```bash
+   claimcheck run
+   claimcheck verify-ledger
+   ```
+
+   `run` checks each claim with the blind checker, plants bugs in the added lines and reruns your tests. `verify-ledger` is optional. It fails if a ledger line was removed or edited. To try the planted-bug half without Claude, use `claimcheck run --provider stub`: every claim then comes back UNVERIFIABLE.
+
+6. **Optional: run it in CI.**
+
+   ```bash
+   claimcheck init --ci github
+   ```
+
+   Then add `ANTHROPIC_API_KEY` as a repository secret. See the CI paragraph in [Using it on a team](#using-it-on-a-team).
+
+I ran steps 1, 2, 3 (by hand), 4 and 5 in a throwaway repository, installing from GitHub and using the stub provider. The live Claude paths (`spec draft` and a real `run`) and the generated CI workflow were not part of that check.
+
 ## A real catch
 
 This one is from claimcheck's own history. The task was a small change to claimcheck itself: make `claimcheck run` stop when the diff is empty. Claude Code wrote the change and a claim about it, then `claimcheck run` checked it.
@@ -98,6 +148,7 @@ Each run writes one JSON line per claim. This is the second run, trimmed:
 
 ## Contents
 
+- [Use it in your own repo](#use-it-in-your-own-repo)
 - [A real catch](#a-real-catch)
 - [Example: the weak-test catch](#example-the-weak-test-catch)
 - [How it works](#how-it-works)
@@ -137,7 +188,13 @@ Every change carries three checks that its author cannot influence.
 
 ## Install
 
-Python 3.11 or newer, and a git repository. claimcheck is not on PyPI yet, so install it from a clone:
+Python 3.11 or newer, and a git repository. claimcheck is not on PyPI, so install it from GitHub:
+
+```bash
+pip install "claimcheck[claude] @ git+https://github.com/pfinazzo/claimcheck"
+```
+
+Or from a clone, which is also how you work on claimcheck itself:
 
 ```bash
 git clone https://github.com/pfinazzo/claimcheck.git
@@ -353,7 +410,7 @@ The author never grades their own work: someone else fixes the criteria, a model
 
 **What to commit and ignore.** Commit `spec.md`, `spec.lock`, `claims.yaml`, `config.toml` and `ledger.jsonl`. `init` already ignores the scratch output. The lock must be in git: the late-criteria check compares the lock's freeze time with the branch's first commit.
 
-**CI.** `claimcheck init --ci github` writes `.github/workflows/claimcheck.yml`, which checks out full history, installs claimcheck and runs it against the pull request's base branch with `ANTHROPIC_API_KEY` from your repository secrets. It has not been run in a real pipeline yet, so treat it as a starting point. While the claimcheck repository is private, installing it from GitHub needs a token. The run edits files in the checkout while it plants bugs and then restores them, which is fine in a throwaway CI checkout.
+**CI.** `claimcheck init --ci github` writes `.github/workflows/claimcheck.yml`, which checks out full history, installs claimcheck and runs it against the pull request's base branch with `ANTHROPIC_API_KEY` from your repository secrets. It has not been run in a real pipeline yet, so treat it as a starting point. The run edits files in the checkout while it plants bugs and then restores them, which is fine in a throwaway CI checkout.
 
 **Turning it into a gate.** By default `mutate` only reports. To fail a build on weak tests, set a floor in `.claimcheck/config.toml`:
 
