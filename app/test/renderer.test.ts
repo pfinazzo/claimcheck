@@ -32,7 +32,12 @@ const claim = (over: Partial<Claim> = {}): Claim => ({
   killCondition: 'test: tests/test_shipping.py::test_a',
   verifiedBy: ['cmd: pytest -q'],
   verdict: { id: 'c1', verdict: 'SUPPORTED', reason: 'matches', evidence: ['+    if total >= 50:'], provider: 'stub', model: null, ts: '2026-01-01T00:00:00Z', runId: 'r1' },
-  mutation: { total: 4, killed: 2, survived: 2, timeout: 0, catchRate: 0.5, ts: '2026-01-01T00:00:00Z', runId: 'r1', mutants: [{ file: 'src/shipping.py', line_no: 3, cls: 'boundary', original: 'if total >= 50:', mutated: 'if total > 50:', outcome: 'survived' }] },
+  mutation: { total: 4, killed: 2, survived: 2, timeout: 0, catchRate: 0.5, ts: '2026-01-01T00:00:00Z', runId: 'r1', mutants: [
+    { file: 'src/shipping.py', line_no: 3, cls: 'boundary', original: 'if total >= 50:', mutated: 'if total > 50:', outcome: 'survived' },
+    { file: 'src/shipping.py', line_no: 4, cls: 'sign_flip', original: 'return 0', mutated: 'return -0', outcome: 'survived' },
+    { file: 'src/shipping.py', line_no: 5, cls: 'off_by_one', original: 'fee = 5', mutated: 'fee = 6', outcome: 'killed' },
+    { file: 'src/shipping.py', line_no: 6, cls: 'swap_args', original: 'f(a, b)', mutated: 'f(b, a)', outcome: 'killed' },
+  ] },
   status: 'open',
   reopened: false,
   note: '',
@@ -71,6 +76,41 @@ const draw = (u: BoardUi, a = actions()): string => {
 };
 
 // ---- pure formatting ------------------------------------------------------------
+
+// ---- the summary counts each planted bug once (criteria 1-4 of the distinct-planted-bugs task) ----
+
+const bug = (line: number, outcome: string, runId = 'r1') => ({ file: 'src/a.py', line_no: line, cls: 'boundary', original: 'x >= 1', mutated: `x > ${line}`, outcome, runId });
+
+const withBugs = (id: string, run: string, specs: { line: number; outcome: string }[]): Claim => {
+  const mutants = specs.map((s) => bug(s.line, s.outcome, run));
+  const killed = mutants.filter((m) => m.outcome === 'killed').length;
+  const survived = mutants.filter((m) => m.outcome === 'survived').length;
+  return claim({ id, mutation: { total: mutants.length, killed, survived, timeout: 0, catchRate: killed / mutants.length, ts: '2026-01-01T00:00:00Z', runId: run, mutants: mutants.map(({ runId: _r, ...m }) => m) } });
+};
+
+test('two claims sharing the same planted bugs from one run count each bug once', () => {
+  const same = [{ line: 1, outcome: 'killed' }, { line: 2, outcome: 'killed' }];
+  const b = boardOf([withBugs('c1', 'r1', same), withBugs('c2', 'r1', same)], []);
+  assert.match(summaryLine(b), /2 of 2 planted bugs caught\./);
+});
+
+test('claims with different planted bugs still add up', () => {
+  const a = withBugs('c1', 'r1', [{ line: 1, outcome: 'killed' }, { line: 2, outcome: 'survived' }]);
+  const c = withBugs('c2', 'r1', [{ line: 3, outcome: 'killed' }, { line: 4, outcome: 'killed' }, { line: 5, outcome: 'killed' }]);
+  assert.match(summaryLine(boardOf([a, c], [])), /4 of 5 planted bugs caught\./);
+});
+
+test('the same change in two different runs is two measurements', () => {
+  const one = withBugs('c1', 'r1', [{ line: 1, outcome: 'killed' }]);
+  const two = withBugs('c2', 'r2', [{ line: 1, outcome: 'killed' }]);
+  assert.match(summaryLine(boardOf([one, two], [])), /2 of 2 planted bugs caught\./);
+});
+
+test('a claim facts line is unchanged and a board with no planted bugs has no such sentence', () => {
+  const two = withBugs('c1', 'r1', [{ line: 1, outcome: 'killed' }, { line: 2, outcome: 'killed' }]);
+  assert.equal(factsLine(two), 'Stated 0.92. Checker: supported. Tests caught 2 of 2 planted bugs.');
+  assert.doesNotMatch(summaryLine(boardOf([claim({ mutation: null })], [])), /planted bugs/);
+});
 
 test('summary and facts are plain sentences', () => {
   const b = boardOf([claim(), claim({ id: 'c2', flags: [], mutation: null })], ['c1']);
