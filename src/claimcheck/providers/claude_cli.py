@@ -18,7 +18,7 @@ import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from .. import ProviderError, redact
+from .. import ProviderError, config, redact
 
 DEFAULT_TIMEOUT_S = 300
 # Tools off: the model gets text in and gives text out, nothing else.
@@ -27,6 +27,7 @@ SIGN_IN = re.compile(r"not logged in|please run /login|invalid api key|unauthori
 
 
 def find_claude(env: Mapping[str, str] | None = None) -> str | None:
+    """The `claude` binary: CLAUDE_BIN when it exists, else the one on PATH, else None."""
     env = env if env is not None else os.environ
     override = env.get("CLAUDE_BIN")
     if override and Path(override).exists():
@@ -39,27 +40,33 @@ def resolve_launch(binary: str) -> tuple[list[str], bool]:
     if not binary.lower().endswith((".cmd", ".bat")):
         return [binary], True
     shim = Path(binary)
-    target = None
     try:
-        text = shim.read_text(encoding="utf-8", errors="ignore")
-        found = re.findall(r'"%~?dp0%?\\?([^"]+)"', text)
-        # A classic npm shim names node.exe first and the real script last. Never pick node itself.
-        found = [f for f in found if Path(f.replace("\\", "/")).name.lower() not in ("node", "node.exe")]
-        if found:
-            target = shim.parent / found[-1]
+        target = _read_shim_target(shim)
     except OSError:
+        # An unreadable shim is not fatal: the packaged locations are tried next.
         target = None
     if not target or not target.exists():
-        base = shim.parent / "node_modules" / "@anthropic-ai" / "claude-code"
-        for rel in (Path("bin") / "claude.exe", Path("cli.js")):
-            if (base / rel).exists():
-                target = base / rel
-                break
-    if target and target.exists():
-        if target.suffix.lower() in (".js", ".mjs", ".cjs"):
-            return ["node", str(target)], True
-        return [str(target)], True
-    return [binary], False
+        target = _find_packaged_claude(shim)
+    if not target:
+        return [binary], False
+    if target.suffix.lower() in (".js", ".mjs", ".cjs"):
+        return ["node", str(target)], True
+    return [str(target)], True
+
+
+def _read_shim_target(shim: Path) -> Path | None:
+    """The program a .cmd shim launches, read from the shim itself; None if it names none."""
+    text = shim.read_text(encoding="utf-8", errors="ignore")
+    found = re.findall(r'"%~?dp0%?\\?([^"]+)"', text)
+    # A classic npm shim names node.exe first and the real script last. Never pick node itself.
+    found = [f for f in found if Path(f.replace("\\", "/")).name.lower() not in ("node", "node.exe")]
+    return shim.parent / found[-1] if found else None
+
+
+def _find_packaged_claude(shim: Path) -> Path | None:
+    """Where npm puts Claude Code next to a .cmd shim, if it is there."""
+    base = shim.parent / "node_modules" / "@anthropic-ai" / "claude-code"
+    return next((base / rel for rel in (Path("bin") / "claude.exe", Path("cli.js")) if (base / rel).exists()), None)
 
 
 def parse_output(stdout: str) -> str:
@@ -113,7 +120,7 @@ class ClaudeCliProvider:
         try:
             proc = subprocess.run(
                 args, input=stdin, capture_output=True, text=True, encoding="utf-8",
-                timeout=self.timeout_s, cwd=os.environ.get("TEMP") or None,
+                timeout=self.timeout_s, cwd=config.temp_dir(),
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
             )
         except subprocess.TimeoutExpired:

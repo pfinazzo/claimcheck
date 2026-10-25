@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from .. import redact
+
 try:
     import anthropic
 except ImportError as e:  # pragma: no cover - exercised only without the extra installed
@@ -24,8 +26,6 @@ class ClaudeProvider:
         self.client = anthropic.Anthropic(timeout=API_TIMEOUT_S)
 
     def complete(self, system: str, user: str, *, schema: dict) -> str:
-        from .. import redact
-
         # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
         system, user = redact.redact_text(system)[0], redact.redact_text(user)[0]
         response = self.client.messages.create(

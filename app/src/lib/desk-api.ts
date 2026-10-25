@@ -28,6 +28,7 @@ import { createFixer, type PublicRun } from './fixer.ts';
 import type { KeyStore } from './claude-api.ts';
 import { initialWizard, isInFlight, normalizeWizardState, type WizardState } from '../shared/wizard-state.ts';
 import { toText } from '../shared/text.ts';
+import { toPromise } from '../shared/promise.ts';
 import { GIT_TIMEOUT_MS } from './timeouts.ts';
 
 const execFileP = promisify(execFile);
@@ -104,11 +105,17 @@ export type DeskApiOptions = {
   execFn?: ExecFn;
 };
 
+/** The `spec draft --finish` flags for the branch choice: none, a named branch, or the default name. */
+const toBranchArgs = ({ makeBranch, name }: { makeBranch: boolean; name: string }): string[] => {
+  if (!makeBranch) return ['--no-branch'];
+  return name ? ['--branch', name] : [];
+};
+
 export const createDeskApi = ({
   userDir,
   keyStore,
   clipboard,
-  pickFolder = async () => null,
+  pickFolder = () => Promise.resolve(null),
   openExternal = async () => {},
   openPath = async () => {},
   emitBoard = () => {},
@@ -315,7 +322,7 @@ export const createDeskApi = ({
     return { repo: board.repo, config: board.config, claim };
   };
 
-  const copyPrompt = async ({ claimId, kind = 'propose', proposeRunId, choice }: { claimId: string; kind?: 'propose' | 'implement'; proposeRunId?: string; choice?: number }): Promise<{ text: string }> => {
+  const copyPrompt = ({ claimId, kind = 'propose', proposeRunId, choice }: { claimId: string; kind?: 'propose' | 'implement'; proposeRunId?: string; choice?: number }): Promise<{ text: string }> => toPromise(() => {
     const ctx = contextFor(claimId);
     let text: string;
     if (kind === 'implement') {
@@ -328,7 +335,7 @@ export const createDeskApi = ({
     }
     clipboard?.writeText?.(text);
     return { text };
-  };
+  });
 
   type ConnectInput = {
     action?: 'save-key' | 'clear-key' | 'sign-in' | 'detect';
@@ -556,34 +563,34 @@ export const createDeskApi = ({
     const name = branch.trim();
     if (makeBranch && name && !SAFE_BRANCH.test(name)) throw new Error('That branch name has characters git would not accept. Use letters, numbers, dashes, dots and slashes.');
     const { provider, env } = providerFor();
-    const args = ['spec', 'draft', '--finish', ...(freeze ? [] : ['--no-freeze']), ...(makeBranch ? (name ? ['--branch', name] : []) : ['--no-branch']), '--provider', provider];
+    const args = ['spec', 'draft', '--finish', ...(freeze ? [] : ['--no-freeze']), ...toBranchArgs({ makeBranch, name }), '--provider', provider];
     const result = normalizeFinish(await cc(args, { input: draftBody(request), timeoutMs: 5 * 60 * 1000, env }));
     await refresh().catch(() => {});
     return result;
   };
 
-  const wizardCancel = async (): Promise<true> => {
+  const wizardCancel = (): Promise<true> => toPromise(() => {
     state.ccCall?.cancel();
     return true;
-  };
+  });
 
-  const wizardSpec = async ({ specPath }: { specPath?: string } = {}): Promise<{ text: string }> => {
+  const wizardSpec = ({ specPath }: { specPath?: string } = {}): Promise<{ text: string }> => toPromise(() => {
     const repoPath = requireRepo();
     const target = path.resolve(repoPath, String(specPath || path.join('.claimcheck', 'spec.md')));
     const root = path.join(repoPath, '.claimcheck');
     if (!isWithin(target, root) || !existsSync(target)) throw new Error('The spec file is not where it should be.');
     const text = readFileSync(target, 'utf8');
     return { text: text.slice(0, 100000) };
-  };
+  });
 
-  const wizardStart = async ({ entry = 'board' }: { entry?: 'first-run' | 'board' } = {}): Promise<WizardState> => {
+  const wizardStart = ({ entry = 'board' }: { entry?: 'first-run' | 'board' } = {}): Promise<WizardState> => toPromise(() => {
     const repoPath = requireRepo();
     const wizard = initialWizard({ entry, repo: repoPath });
     state.wizard = wizard;
     storeWizard(repoPath, wizard);
     setView('wizard');
     return wizard;
-  };
+  });
 
   const wizardExit = async (): Promise<{ ok: true; board: Board | null } | { ok: false; error: string }> => {
     const repoPath = requireRepo();
@@ -613,10 +620,10 @@ export const createDeskApi = ({
     fixer,
     refresh,
     openRepo,
-    recents: async (): Promise<string[]> => recents.list(),
+    recents: (): Promise<string[]> => toPromise(() => recents.list()),
     lastRepo: (): string | null => recents.last(),
-    getBoard: async (): Promise<Board | null> => state.board,
-    getView: async (): Promise<ViewPayload> => currentView(),
+    getBoard: (): Promise<Board | null> => toPromise(() => state.board),
+    getView: (): Promise<ViewPayload> => toPromise(() => currentView()),
     connect,
     testConnection,
     startPropose,
@@ -627,10 +634,10 @@ export const createDeskApi = ({
     openPullRequest,
     openPath: openTarget,
     trustRepo,
-    getRun: async ({ runId }: { runId: string }): Promise<PublicRun | null> => fixer.get(runId),
+    getRun: ({ runId }: { runId: string }): Promise<PublicRun | null> => toPromise(() => fixer.get(runId)),
     ghReady: async (): Promise<boolean> => ghModule.ghReady(execFn ? { execFn } : {}),
-    wizardLoad: async (): Promise<WizardState | null> => state.wizard,
-    wizardSave: async (wizard: unknown): Promise<true> => saveWizard(wizard),
+    wizardLoad: (): Promise<WizardState | null> => toPromise(() => state.wizard),
+    wizardSave: (wizard: unknown): Promise<true> => toPromise(() => saveWizard(wizard)),
     wizardStart,
     wizardStatus,
     wizardInit,

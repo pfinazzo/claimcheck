@@ -25,6 +25,28 @@ RUNS_DIR = "runs"
 MUTATE_BACKUP_DIR = "mutate-backup"
 MUTATE_SENTINEL = "mutate.lock"
 
+# Environment variables claimcheck reads. Every read goes through the functions below, so this is
+# the one place to see what the environment can change.
+API_KEY_ENV = "ANTHROPIC_API_KEY"
+STUB_FILE_ENV = "CLAIMCHECK_STUB_FILE"
+TEMP_ENV = "TEMP"
+
+
+def has_api_key() -> bool:
+    """Whether an Anthropic API key is set, which makes the `auto` provider use the API."""
+    return bool(os.environ.get(API_KEY_ENV))
+
+
+def stub_reply_file() -> str | None:
+    """The canned-reply file the stub provider returns verbatim, if one is set (tests use this)."""
+    return os.environ.get(STUB_FILE_ENV) or None
+
+
+def temp_dir() -> str | None:
+    """The Windows TEMP folder, if set; the Claude CLI runs there so it never sees the repo."""
+    return os.environ.get(TEMP_ENV) or None
+
+
 DEFAULT_IGNORE = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml"]
 
 DEFAULT_CONFIG_TOML = """\
@@ -85,6 +107,7 @@ def find_repo_root(start: Path | None = None) -> Path:
 
 
 def cc_dir(repo: Path) -> Path:
+    """The repo's .claimcheck folder."""
     return repo / CLAIMCHECK_DIR
 
 
@@ -156,19 +179,23 @@ def is_ignored(path: str, globs: list[str]) -> bool:
 
 
 def utc_now_iso() -> str:
+    """Now, in UTC, to the second, as written in ledger and run files."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def new_run_id() -> str:
+    """A run id that sorts by time: a UTC timestamp plus four random hex digits."""
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{os.urandom(2).hex()}"
 
 
 def sha256_bytes(data: bytes) -> str:
+    """Hex SHA-256 of bytes."""
     return hashlib.sha256(data).hexdigest()
 
 
 def sha256_text(text: str) -> str:
+    """Hex SHA-256 of text, encoded as UTF-8."""
     return sha256_bytes(text.encode("utf-8"))
 
 

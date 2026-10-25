@@ -39,6 +39,7 @@ SECRET_DIRS = {".ssh", ".aws", ".gnupg", ".kube", ".docker", "secrets", ".secret
 
 
 def is_secret_path(path: str) -> bool:
+    """Whether a path looks like a secret store (a .env, a key file, a credentials folder), so it is never sent."""
     p = path.replace("\\", "/").strip("/")
     parts = [x for x in p.split("/") if x]
     if not parts:
@@ -135,7 +136,9 @@ def redact_text(text: str) -> tuple[str, Redaction]:
     rep = Redaction()
 
     def sub_kind(kind: str):
+        """A re.sub replacement that redacts the whole match as `kind` and counts it."""
         def inner(m: re.Match[str]) -> str:
+            """Count the match and replace it with its redaction marker."""
             rep.add(kind)
             return f"[REDACTED:{kind}]"
         return inner
@@ -144,6 +147,7 @@ def redact_text(text: str) -> tuple[str, Redaction]:
         text = pat.sub(sub_kind(kind), text)
 
     def creds(m: re.Match[str]) -> str:
+        """Redact the password in a URL, unless it is a placeholder or a code reference."""
         if _PLACEHOLDER.match(m.group(2)) or _CODE_REF.match(m.group(2)):
             return m.group(0)
         rep.add("url-credentials")
@@ -152,6 +156,7 @@ def redact_text(text: str) -> tuple[str, Redaction]:
     text = _URL_CREDS.sub(creds, text)
 
     def assign(m: re.Match[str]) -> str:
+        """Redact the value in `secret = value`, unless the value does not look secret."""
         head, open_q, value, close_q = m.group(1), m.group(2), m.group(3), m.group(4)
         if not _looks_like_secret_value(value, quoted=bool(open_q)):
             return m.group(0)
@@ -161,8 +166,10 @@ def redact_text(text: str) -> tuple[str, Redaction]:
     text = _ASSIGN.sub(assign, text)
 
     def blob(m: re.Match[str]) -> str:
+        """Redact a long random-looking string; hashes and ids are left alone."""
         s = m.group(2)
-        if _entropy(s) < 4.0 or re.fullmatch(r"[0-9a-f]{32,}", s):  # hashes and ids are fine
+        # Hashes and ids are fine.
+        if _entropy(s) < 4.0 or re.fullmatch(r"[0-9a-f]{32,}", s):
             return m.group(0)
         rep.add("random-string")
         return f"{m.group(1)}[REDACTED:random-string]{m.group(1)}"

@@ -28,6 +28,14 @@ export type PrBodyInput = {
   run: { tests?: { ok?: boolean }; killCondition?: { ok?: boolean | string } };
 };
 
+const KILL_CHECK_TEXT = new Map<unknown, string>([
+  [true, 'pass'],
+  ['manual', 'manual check'],
+]);
+
+/** The kill-condition result as PR text: pass, manual check, or (anything else) fail. */
+const describeKillCheck = (ok: unknown): string => KILL_CHECK_TEXT.get(ok) ?? 'fail';
+
 export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
   [
     `## claimcheck fix: ${claim.id}`,
@@ -36,7 +44,7 @@ export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
     `**Flagged for:** ${claim.flags.join(', ') || 'manual'}`,
     `**Approach:** ${proposal.title} — ${proposal.summary}`,
     '',
-    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${run.killCondition?.ok === true ? 'pass' : run.killCondition?.ok === 'manual' ? 'manual check' : 'fail'}.`,
+    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${describeKillCheck(run.killCondition?.ok)}.`,
     '',
     'Built by Claude Code from claimcheck Desk\'s "Fix this" button. Review it like any other pull request before merging.',
   ].join('\n');

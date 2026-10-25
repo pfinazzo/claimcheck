@@ -37,6 +37,7 @@ def _spy(monkeypatch, repo, rel, seen, fail_on=None, exc=None):
     real = mutate._run_tests
 
     def spy(r, cmd, timeout):
+        """Record the file as the tests see it, then run them (optionally failing on one call)."""
         seen.append((repo.path / rel).read_bytes())
         if fail_on is not None and len(seen) == fail_on:
             raise exc
@@ -86,13 +87,15 @@ def test_each_mutant_gets_its_own_mtime_second(calc_repo, monkeypatch):
     real = mutate._run_tests
 
     def spy(r, cmd, timeout):
+        """Record the file as the tests see it, then run them (optionally failing on one call)."""
         seen.append(int(p.stat().st_mtime))
         return real(r, cmd, timeout)
 
     monkeypatch.setattr(mutate, "_run_tests", spy)
     orig = int(p.stat().st_mtime)
     _run(calc_repo)
-    live = seen[1:]  # the first call is the baseline
+    # The first call is the baseline.
+    live = seen[1:]
     assert len(live) == 3 and len(set(live)) == 3 and orig not in live
 
 
@@ -108,7 +111,8 @@ def test_edit_after_commit_fails_cleanly_before_touching_anything(calc_repo, cap
     assert "commit or stash your edits and rerun" in err
     _clean(calc_repo)
     assert p.read_text(encoding="utf-8") == edited
-    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 5  # not exit 6: nothing is left locked
+    # Not exit 6: nothing is left locked.
+    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 5
 
 
 def test_file_deleted_after_commit_is_a_clear_error(calc_repo):
@@ -188,7 +192,8 @@ def test_interrupt_or_crash_restores_and_removes_the_lock(calc_repo, monkeypatch
     assert calc_repo.read("src/calc.py") == CALC_SRC
     _clean(calc_repo)
     monkeypatch.setattr(mutate, "_run_tests", real)
-    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 0  # no exit 6
+    # No exit 6.
+    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 0
 
 
 def test_failed_restore_leaves_lock_so_restore_can_recover(calc_repo, monkeypatch):
@@ -224,7 +229,8 @@ def test_restore_refuses_to_overwrite_the_users_newer_edit(calc_repo, monkeypatc
     _crash_with_mutant_in_place(calc_repo, monkeypatch)
     mine = CALC_SRC + "# my newer work\n"
     (calc_repo.path / "src/calc.py").write_text(mine, encoding="utf-8", newline="\n")
-    assert calc_repo.cli("mutate", "--restore") == 6  # a refused file is not a success
+    # A refused file is not a success.
+    assert calc_repo.cli("mutate", "--restore") == 6
     cap = capsys.readouterr()
     assert json.loads(cap.out) == {"restored": [], "refused": True}
     assert "not restoring src/calc.py" in cap.err and "changed since the run" in cap.err
@@ -268,7 +274,8 @@ def test_timeout_kills_the_process_tree_at_about_the_timeout(tmp_path):
     wall = time.monotonic() - t0
     assert outcome == "timeout"
     assert wall < 5.5, f"timeout was not enforced (took {wall:.1f}s)"
-    time.sleep(5)  # long enough for a surviving grandchild to finish its sleep
+    # Long enough for a surviving grandchild to finish its sleep.
+    time.sleep(5)
     assert not marker.exists(), "the grandchild test process outlived the timeout"
 
 
@@ -357,7 +364,8 @@ def test_zero_candidate_claim_reports_candidates_and_warns_when_gated(calc_repo,
     cfg = calc_repo.read(".claimcheck/config.toml").replace("min_catch_rate = 0.0", "min_catch_rate = 0.5")
     calc_repo.write(".claimcheck/config.toml", cfg)
     calc_repo.commit("gate")
-    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 2  # exit codes unchanged (c1 and c2 survive)
+    # Exit codes unchanged (c1 and c2 survive)
+    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 2
     cap = capsys.readouterr()
     out = json.loads(cap.out)
     assert out["per_claim"]["c3"]["candidates"] == 0
@@ -365,7 +373,8 @@ def test_zero_candidate_claim_reports_candidates_and_warns_when_gated(calc_repo,
     assert out["per_claim"]["c1"]["candidates"] == 3
     assert "claim c3" in cap.err and "mutation candidate" in cap.err
     assert "claim c1" not in cap.err
-    for k in ("total", "killed", "survived", "timeout", "catch_rate"):  # old keys still there
+    # Old keys still there.
+    for k in ("total", "killed", "survived", "timeout", "catch_rate"):
         assert k in out["per_claim"]["c3"]
 
 

@@ -9,7 +9,6 @@ quietly and prints a plain summary.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from . import ClaimcheckError, ProviderError, detect, initflow, providers, specdraft
@@ -36,6 +35,7 @@ def indented(t: Term):
         t.p("\n".join(("  " + line) if line.strip() else line for line in s.split("\n")))
 
     def ask(prompt: str) -> str:
+        """Ask through the terminal, indented, keeping a leading blank line when the prompt has one."""
         lead = "\n" if prompt.startswith("\n") else ""
         return t.ask(lead + "  " + prompt.lstrip("\n"))
 
@@ -120,6 +120,69 @@ def _scene_checks(t: Term) -> str:
 
 # ---- setup ------------------------------------------------------------------
 
+def _secrets_note(value: dict) -> str:
+    """What setup did to .gitignore: created it, added lines, or nothing needed."""
+    if value["created"]:
+        return ".gitignore created, .env and key files ignored"
+    if value["added"]:
+        return f"added {len(value['added'])} lines so .env and key files are ignored"
+    return ".env and key files are already ignored"
+
+
+def _reveal_secrets(t: Term, value: dict) -> None:
+    """The secrets step, plus a warning for each secret file git already tracks."""
+    ok = t.c(t.g["ok"], "green", "bold")
+    t.p(f"  {ok} Secrets               {t.c(_secrets_note(value), 'grey')}")
+    for tracked in value["tracked"]:
+        t.p(f"  {t.c('!', 'red', 'bold')} {t.c(tracked, 'red')} {t.c('is already committed. Ignoring it does not remove it: run git rm --cached ' + tracked, 'grey')}")
+    t.nap(0.25)
+
+
+def _reveal_config(t: Term, value) -> None:
+    """The config step: created or already there."""
+    t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Config               {t.c('.claimcheck/config.toml (' + str(value) + ')', 'grey')}")
+
+
+def _reveal_hook(t: Term, value: dict) -> None:
+    """The commit hook step."""
+    t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Commit hook           {t.c(value['status'], 'grey')}")
+
+
+def _reveal_gitignore(t: Term, value: list) -> None:
+    """The .gitignore step: how many lines were added."""
+    note = f"added {len(value)} lines" if value else "already set"
+    t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} .gitignore            {t.c(note, 'grey')}")
+
+
+def _reveal_agent_docs(t: Term, value: list) -> None:
+    """The agent instructions step: the files updated, or that there were none."""
+    if not value:
+        t.p(f"  {t.c(t.g['ring'], 'grey')} Agent instructions    {t.c('no CLAUDE.md or AGENTS.md to update', 'grey')}")
+        return
+    files = ", ".join(f"{x['path']} ({x['action']})" for x in value)
+    t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Agent instructions    {t.c(files, 'grey')}")
+
+
+def _reveal_ci(t: Term, value: dict | None) -> None:
+    """The CI workflow step, when one was asked for."""
+    if value:
+        t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} CI workflow           {t.c(value['path'] + ' (' + value['action'] + ')', 'grey')}")
+
+
+def _reveal_nothing(t: Term, value) -> None:
+    """Steps with nothing to show (detect)."""
+
+
+_REVEALERS = {
+    "secrets": _reveal_secrets,
+    "config": _reveal_config,
+    "hook": _reveal_hook,
+    "gitignore": _reveal_gitignore,
+    "agent_docs": _reveal_agent_docs,
+    "ci": _reveal_ci,
+}
+
+
 def _scene_setup(t: Term, repo: Path, *, assume_yes: bool) -> dict:
     t.step(3, TOTAL, "Set up this repo")
     det = detect.detect(repo)
@@ -145,33 +208,8 @@ def _scene_setup(t: Term, repo: Path, *, assume_yes: bool) -> dict:
     t.p()
 
     def reveal(name: str, value) -> None:
-        if name == "secrets":
-            ok = t.c(t.g["ok"], "green", "bold")
-            if value["created"]:
-                note = ".gitignore created, .env and key files ignored"
-            elif value["added"]:
-                note = f"added {len(value['added'])} lines so .env and key files are ignored"
-            else:
-                note = ".env and key files are already ignored"
-            t.p(f"  {ok} Secrets               {t.c(note, 'grey')}")
-            for tracked in value["tracked"]:
-                t.p(f"  {t.c('!', 'red', 'bold')} {t.c(tracked, 'red')} {t.c('is already committed. Ignoring it does not remove it: run git rm --cached ' + tracked, 'grey')}")
-            t.nap(0.25)
-        elif name == "config":
-            t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Config               {t.c('.claimcheck/config.toml (' + str(value) + ')', 'grey')}")
-        elif name == "hook":
-            t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Commit hook           {t.c(value['status'], 'grey')}")
-        elif name == "gitignore":
-            note = f"added {len(value)} lines" if value else "already set"
-            t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} .gitignore            {t.c(note, 'grey')}")
-        elif name == "agent_docs":
-            if value:
-                files = ", ".join(f"{x['path']} ({x['action']})" for x in value)
-                t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} Agent instructions    {t.c(files, 'grey')}")
-            else:
-                t.p(f"  {t.c(t.g['ring'], 'grey')} Agent instructions    {t.c('no CLAUDE.md or AGENTS.md to update', 'grey')}")
-        elif name == "ci" and value:
-            t.p(f"  {t.c(t.g['ok'], 'green', 'bold')} CI workflow           {t.c(value['path'] + ' (' + value['action'] + ')', 'grey')}")
+        """Show one finished setup step, with a short pause so the steps read one by one."""
+        _REVEALERS.get(name, _reveal_nothing)(t, value)
         if name != "detect":
             t.nap(0.25)
 
@@ -194,7 +232,7 @@ def _connection(t: Term):
     """Returns (provider, description) or (None, reason)."""
     t.step(4, TOTAL, "Connect Claude")
     try:
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        if C.has_api_key():
             provider, how = providers.load("auto"), "your Anthropic API key"
         else:
             provider, how = providers.load("auto"), "your Claude Code sign-in"
@@ -256,22 +294,32 @@ def _finish(t: Term, spec_result: dict | None) -> None:
 
 # ---- entry point ------------------------------------------------------------
 
+def _play_tour(t: Term) -> None:
+    """The intro scenes, in order, until the person skips."""
+    for scene in (_scene_problem, _scene_checks):
+        if scene(t) == "skip":
+            return
+
+
+def _spec_or_explain(t: Term, repo: Path, provider: providers.Provider, *, goal: str | None):
+    """The spec scene's result. A failure there is shown, and setup still counts as done."""
+    try:
+        return _scene_spec(t, repo, provider, goal=goal)
+    except ClaimcheckError as e:
+        t.p(f"  {t.c(t.g['bad'], 'red', 'bold')} {e}")
+        t.p("  " + t.c("Setup is done. Try `claimcheck spec draft` again when ready.", "grey"))
+        return None
+
+
 def run_onboarding(t: Term, repo: Path, *, tour: bool = True, goal: str | None = None, assume_yes: bool = False) -> int:
+    """The guided `claimcheck init`: tour, setup, connection, first spec. Returns the exit code (130 if stopped)."""
     try:
         _banner(t)
         if tour:
-            for scene in (_scene_problem, _scene_checks):
-                if scene(t) == "skip":
-                    break
+            _play_tour(t)
         result = _scene_setup(t, repo, assume_yes=assume_yes)
         provider, _ = _connection(t)
-        spec_result = None
-        if provider is not None:
-            try:
-                spec_result = _scene_spec(t, repo, provider, goal=goal)
-            except ClaimcheckError as e:
-                t.p(f"  {t.c(t.g['bad'], 'red', 'bold')} {e}")
-                t.p("  " + t.c("Setup is done. Try `claimcheck spec draft` again when ready.", "grey"))
+        spec_result = None if provider is None else _spec_or_explain(t, repo, provider, goal=goal)
         _finish(t, spec_result)
         _ = result
         return 0

@@ -83,7 +83,8 @@ def test_ac9_cli_exit_codes(cc_repo, capsys):
 
 
 def test_ac9_no_lock_means_no_frozen_ids(repo, capsys):
-    repo.cli("init")  # no freeze
+    # No freeze.
+    repo.cli("init")
     repo.write(".claimcheck/claims.yaml", _doc(GOOD.replace("criteria: [1]", "criteria: [9]")))
     assert repo.cli("claims", "validate") == 4
     err = capsys.readouterr().err

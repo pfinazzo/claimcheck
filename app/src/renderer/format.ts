@@ -19,9 +19,15 @@ export const pct = (x: number | null | undefined): string => (x === null || x ==
 
 export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
 
+const VERDICT_WORD = new Map<unknown, string>([
+  ['SUPPORTED', 'supported'],
+  ['REFUTED', 'refuted'],
+  ['UNVERIFIABLE', 'unverifiable'],
+]);
+
 export const verdictWord = (claim: Pick<Claim, 'verdict'>): string => {
   const v = claim.verdict?.verdict;
-  return v === 'SUPPORTED' ? 'supported' : v === 'REFUTED' ? 'refuted' : v === 'UNVERIFIABLE' ? 'unverifiable' : 'not checked';
+  return VERDICT_WORD.get(v) ?? 'not checked';
 };
 
 export const caughtWords = (claim: Pick<Claim, 'mutation'>): string => {
@@ -51,26 +57,37 @@ export const groupClaims = (board: Board): Groups => {
   return { needs, backed };
 };
 
+/** "none need a decision", "1 needs a decision", "3 need a decision". */
+const describeNeeds = (needs: number): string => {
+  if (needs === 0) return 'none need a decision';
+  return `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`;
+};
+
 export const summaryLine = (board: Board): string => {
   const n = board.claims.length;
   if (n === 0) return 'No claims yet.';
   const needs = board.queue.length;
-  const head = `${plural(n, 'claim')}, ${needs === 0 ? 'none need a decision' : `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`}.`;
+  const head = `${plural(n, 'claim')}, ${describeNeeds(needs)}.`;
   // Claims that list the same file carry the same planted bugs, so count each bug once per run.
-  const bugs = new Map<string, boolean>();
-  for (const c of board.claims) {
-    const run = c.mutation?.runId ?? '';
-    for (const m of c.mutation?.mutants ?? []) {
-      if (m.outcome !== 'killed' && m.outcome !== 'timeout' && m.outcome !== 'survived') continue;
-      bugs.set(JSON.stringify([run, m.file, m.line_no, m.cls, m.mutated]), m.outcome !== 'survived');
-    }
-  }
+  const bugs = new Map<string, boolean>(
+    board.claims.flatMap((c) =>
+      (c.mutation?.mutants ?? [])
+        .filter((m) => m.outcome === 'killed' || m.outcome === 'timeout' || m.outcome === 'survived')
+        .map((m): [string, boolean] => [JSON.stringify([c.mutation?.runId ?? '', m.file, m.line_no, m.cls, m.mutated]), m.outcome !== 'survived']),
+    ),
+  );
   const total = bugs.size;
   const caught = [...bugs.values()].filter(Boolean).length;
   return total === 0 ? head : `${head} ${caught} of ${total} planted bugs caught.`;
 };
 
-export const specWord = (state: Board['repo']['specState']): string =>
-  state === 'frozen' ? 'Spec frozen' : state === 'drifted' ? 'Spec changed since it was frozen' : state === 'draft' ? 'Spec not frozen yet' : 'No spec yet';
+const SPEC_WORD: Record<Board['repo']['specState'], string> = {
+  frozen: 'Spec frozen',
+  drifted: 'Spec changed since it was frozen',
+  draft: 'Spec not frozen yet',
+  none: 'No spec yet',
+};
+
+export const specWord = (state: Board['repo']['specState']): string => SPEC_WORD[state];
 
 export const shortHash = (h: string | null | undefined): string => (h ? h.slice(0, 12) : '');

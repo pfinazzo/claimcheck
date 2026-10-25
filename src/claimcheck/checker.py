@@ -97,28 +97,38 @@ def validate_verdicts(obj: object, claim_ids: set[str]) -> list[str]:
         return ["'verdicts' must be a list"]
     seen: set[str] = set()
     for i, v in enumerate(vs):
-        if not isinstance(v, dict):
-            errs.append(f"verdicts[{i}] must be an object")
+        errs.extend(_verdict_errors(i, v, claim_ids))
+        verdict_id = v.get("id") if isinstance(v, dict) and set(v.keys()) == VERDICT_KEYS else None
+        if not isinstance(verdict_id, str):
             continue
-        if set(v.keys()) != {"id", "verdict", "reason", "evidence"}:
-            errs.append(f"verdicts[{i}] has wrong keys: {sorted(v.keys())}")
-            continue
-        if not isinstance(v["id"], str) or v["id"] not in claim_ids:
-            errs.append(f"verdicts[{i}] unknown id {v['id']!r}")
-        if v["verdict"] not in VERDICTS:
-            errs.append(f"verdicts[{i}] bad verdict {v['verdict']!r}")
-        if not isinstance(v["reason"], str):
-            errs.append(f"verdicts[{i}] reason must be a string")
-        if not isinstance(v["evidence"], list) or any(not isinstance(e, str) for e in v["evidence"]):
-            errs.append(f"verdicts[{i}] evidence must be a list of strings")
-        if isinstance(v.get("id"), str):
-            if v["id"] in seen:
-                errs.append(f"verdicts[{i}] duplicate verdict for {v['id']!r}")
-            seen.add(v["id"])
+        if verdict_id in seen:
+            errs.append(f"verdicts[{i}] duplicate verdict for {verdict_id!r}")
+        seen.add(verdict_id)
     missing = sorted(claim_ids - seen)
     if missing:
         errs.append(f"missing verdicts for {missing}")
     return errs
+
+
+VERDICT_KEYS = {"id", "verdict", "reason", "evidence"}
+
+
+def _verdict_errors(i: int, v: Any, claim_ids: set[str]) -> list[str]:
+    """What is wrong with one verdict object, on its own (duplicates are checked by the caller)."""
+    if not isinstance(v, dict):
+        return [f"verdicts[{i}] must be an object"]
+    if set(v.keys()) != VERDICT_KEYS:
+        return [f"verdicts[{i}] has wrong keys: {sorted(v.keys())}"]
+    checks = [
+        (not isinstance(v["id"], str) or v["id"] not in claim_ids, f"verdicts[{i}] unknown id {v['id']!r}"),
+        (v["verdict"] not in VERDICTS, f"verdicts[{i}] bad verdict {v['verdict']!r}"),
+        (not isinstance(v["reason"], str), f"verdicts[{i}] reason must be a string"),
+        (
+            not isinstance(v["evidence"], list) or any(not isinstance(e, str) for e in v["evidence"]),
+            f"verdicts[{i}] evidence must be a list of strings",
+        ),
+    ]
+    return [message for failed, message in checks if failed]
 
 
 def _parse_json_or_none(raw: str) -> Any:
@@ -201,7 +211,8 @@ def run_check(
     provider_name = provider_name or cfg.checker_provider
     model = model or cfg.checker_model
 
-    raw_diff = gitio.require_diff(repo, base, worktree)  # before any spec, claims or provider work
+    # Before any spec, claims or provider work.
+    raw_diff = gitio.require_diff(repo, base, worktree)
 
     if criteria is None:
         S.enforce_open_diff_rules(repo, cfg, base)
@@ -221,7 +232,8 @@ def run_check(
         verdicts = ask(provider, system, user, claim_ids) if claim_ids else []
     except ValueError as e:
         raise ProviderError(str(e)) from e
-    except Exception as e:  # SDK errors, network, import errors
+    # SDK errors, network, import errors.
+    except Exception as e:
         raise ProviderError(f"{type(e).__name__}: {e}") from e
 
     result = {

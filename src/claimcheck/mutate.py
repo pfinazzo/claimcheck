@@ -133,17 +133,18 @@ def _boundary(line: str, spans: list[tuple[int, int]]) -> list[str]:
 def generate(line: str, file: str = "", line_no: int = 0) -> list[Mutant]:
     """Every applicable mutation of the four classes for one line (no newline)."""
     spans = _string_spans(line)
-    mutants: list[Mutant] = []
-    for cls, fn in (
+    mutations = (
         ("sign_flip", _sign_flip),
         ("off_by_one", _off_by_one),
         ("swap_args", _swap_args),
         ("boundary", _boundary),
-    ):
-        for mutated in fn(line, spans):
-            if mutated != line:
-                mutants.append(Mutant(file, line_no, cls, line, mutated))
-    return mutants
+    )
+    return [
+        Mutant(file, line_no, cls, line, mutated)
+        for cls, fn in mutations
+        for mutated in fn(line, spans)
+        if mutated != line
+    ]
 
 
 _HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
@@ -159,34 +160,59 @@ def _unquote_git_path(s: str) -> str:
     out = bytearray()
     i = 0
     while i < len(body):
-        ch = body[i]
-        if ch == "\\" and i + 1 < len(body):
-            nxt = body[i + 1]
-            if nxt in "01234567":
-                j = i + 1
-                while j < len(body) and j < i + 4 and body[j] in "01234567":
-                    j += 1
-                out.append(int(body[i + 1 : j], 8) & 0xFF)
-                i = j
-                continue
-            if nxt in _GIT_ESCAPES:
-                out.append(_GIT_ESCAPES[nxt])
-                i += 2
-                continue
-        out += ch.encode("utf-8")
-        i += 1
+        chunk, i = _read_quoted_char(body, i)
+        out += chunk
     return out.decode("utf-8", "replace")
+
+
+def _read_quoted_char(body: str, i: int) -> tuple[bytes, int]:
+    """The bytes for the character or escape at `i` in a git-quoted path, and where the next one starts."""
+    nxt = body[i + 1] if body[i] == "\\" and i + 1 < len(body) else ""
+    if nxt and nxt in "01234567":
+        j = i + 1
+        while j < len(body) and j < i + 4 and body[j] in "01234567":
+            j += 1
+        return bytes([int(body[i + 1 : j], 8) & 0xFF]), j
+    if nxt and nxt in _GIT_ESCAPES:
+        return bytes([_GIT_ESCAPES[nxt]]), i + 2
+    return body[i].encode("utf-8"), i + 1
 
 
 def _header_path(raw: str) -> str | None:
     """File named by a `+++ ` header line, or None for /dev/null."""
     target = raw[4:].rstrip("\r")
     if not target.startswith('"'):
-        target = target.split("\t")[0]  # git appends a tab after names that contain spaces
+        # Git appends a tab after names that contain spaces.
+        target = target.split("\t")[0]
     target = _unquote_git_path(target)
     if target == "/dev/null":
         return None
     return target[2:] if target.startswith("b/") else target
+
+
+def _step_hunk_body(
+    raw: str, file: str | None, line_no: int, old_left: int, new_left: int
+) -> tuple[list[tuple[str, int, str]], int, int, int]:
+    """One line inside a hunk. Returns (lines it adds, line_no, old_left, new_left) after it."""
+    if raw.startswith("\\"):
+        return [], line_no, old_left, new_left
+    if raw.startswith("+"):
+        added = [(file, line_no, raw[1:].rstrip("\r"))] if file is not None else []
+        return added, line_no + 1, old_left, new_left - 1
+    if raw.startswith("-"):
+        return [], line_no, old_left - 1, new_left
+    return [], line_no + 1, old_left - 1, new_left - 1
+
+
+def _is_file_boundary(raw: str, prev: str) -> bool:
+    """Whether this line starts a new file in the diff: its header, its `+++` name, or a binary marker."""
+    return raw.startswith(("diff --git", "Binary files", "GIT binary patch")) or (raw.startswith("+++ ") and prev.startswith("--- "))
+
+
+def _file_after_boundary(raw: str, ignore: list[str]) -> str | None:
+    """The file later `+` lines belong to: the `+++` name unless ignored, else none yet."""
+    file = _header_path(raw) if raw.startswith("+++ ") else None
+    return None if file is None or C.is_ignored(file, ignore) else file
 
 
 def added_lines(diff: str, ignore: list[str]) -> list[tuple[str, int, str]]:
@@ -202,41 +228,20 @@ def added_lines(diff: str, ignore: list[str]) -> list[tuple[str, int, str]]:
     old_left = new_left = 0
     prev = ""
     for raw in diff.split("\n"):
-        counted = old_left > 0 or new_left > 0
-        if counted:
-            if raw.startswith("\\"):
-                pass
-            elif raw.startswith("+"):
-                new_left -= 1
-                if file is not None:
-                    out.append((file, line_no, raw[1:].rstrip("\r")))
-                line_no += 1
-            elif raw.startswith("-"):
-                old_left -= 1
-            else:
-                old_left -= 1
-                new_left -= 1
-                line_no += 1
-            prev = raw
-            continue
-        if raw.startswith("diff --git"):
-            file = None
-        elif raw.startswith("+++ ") and prev.startswith("--- "):
-            file = _header_path(raw)
-            if file is not None and C.is_ignored(file, ignore):
-                file = None
-        elif raw.startswith(("Binary files", "GIT binary patch")):
-            file = None
-        else:
-            m = _HUNK_RE.match(raw)
-            if m:
-                old_left = int(m.group(1)) if m.group(1) is not None else 1
-                line_no = int(m.group(2))
-                new_left = int(m.group(3)) if m.group(3) is not None else 1
-            elif file is not None and raw.startswith("+") and not raw.startswith("+++ "):
-                # Tolerate a hand-written hunk whose header under-counts its lines.
-                out.append((file, line_no, raw[1:].rstrip("\r")))
-                line_no += 1
+        hunk = _HUNK_RE.match(raw)
+        if old_left > 0 or new_left > 0:
+            added, line_no, old_left, new_left = _step_hunk_body(raw, file, line_no, old_left, new_left)
+            out.extend(added)
+        elif _is_file_boundary(raw, prev):
+            file = _file_after_boundary(raw, ignore)
+        elif hunk:
+            old_left = int(hunk.group(1)) if hunk.group(1) is not None else 1
+            line_no = int(hunk.group(2))
+            new_left = int(hunk.group(3)) if hunk.group(3) is not None else 1
+        elif file is not None and raw.startswith("+") and not raw.startswith("+++ "):
+            # Tolerate a hand-written hunk whose header under-counts its lines.
+            out.append((file, line_no, raw[1:].rstrip("\r")))
+            line_no += 1
         prev = raw
     return [
         (f, n, t[len(_BOM) :] if n == 1 and t.startswith(_BOM) else t) for f, n, t in out
@@ -244,6 +249,7 @@ def added_lines(diff: str, ignore: list[str]) -> list[tuple[str, int, str]]:
 
 
 def collect(diff: str, ignore: list[str]) -> list[Mutant]:
+    """Every mutant for every added line in the diff, skipping ignored files."""
     mutants: list[Mutant] = []
     for file, line_no, text in added_lines(diff, ignore):
         mutants.extend(generate(text, file, line_no))
@@ -332,7 +338,8 @@ class _FileState:
     atime_ns: int
     mtime_ns: int
     bom: bool
-    lines: list[tuple[bytes, bytes]]  # (content without its line ending, that line's own ending)
+    # (content without its line ending, that line's own ending)
+    lines: list[tuple[bytes, bytes]]
 
     def render(self, idx: int, new_content: bytes) -> bytes:
         parts = [_UTF8_BOM] if self.bom else []
@@ -350,16 +357,10 @@ def _parse_bytes(data: bytes, atime_ns: int = 0, mtime_ns: int = 0) -> _FileStat
     bom = body.startswith(_UTF8_BOM)
     if bom:
         body = body[len(_UTF8_BOM) :]
-    parts = body.split(b"\n")
-    lines: list[tuple[bytes, bytes]] = []
-    for i, part in enumerate(parts):
-        if i == len(parts) - 1:
-            if part:  # a last line with no newline; an empty tail is just the final newline
-                lines.append((part, b""))
-        elif part.endswith(b"\r"):
-            lines.append((part[:-1], b"\r\n"))
-        else:
-            lines.append((part, b"\n"))
+    *ended, tail = body.split(b"\n")
+    lines = [(part[:-1], b"\r\n") if part.endswith(b"\r") else (part, b"\n") for part in ended]
+    # A last line with no newline is kept; an empty tail is just the final newline.
+    lines += [(tail, b"")] if tail else []
     return _FileState(data, _sha(data), atime_ns, mtime_ns, bom, lines)
 
 
@@ -528,21 +529,46 @@ def _summary(records: list[dict]) -> dict:
     return {"total": total, "killed": killed, "survived": survived, "timeout": timeout, "catch_rate": rate}
 
 
+def _load_or_none(repo: Path, rel: str) -> _FileState | None:
+    """The file's state, or None when it cannot be read; validation then names it as drifted."""
+    try:
+        return _load(repo, rel)
+    except (OSError, ValueError):
+        return None
+
+
 def _prepare(repo: Path, all_mutants: list[Mutant]) -> tuple[list[Mutant], dict[str, _FileState | None], int]:
     """Read every file once; drop mutants on lines that are not valid UTF-8.
 
     Returns (usable mutants, file states, number skipped). A file that cannot be read stays
     in the map as None so validation can name it.
     """
-    states: dict[str, _FileState | None] = {}
-    for m in all_mutants:
-        if m.file not in states:
-            try:
-                states[m.file] = _load(repo, m.file)
-            except (OSError, ValueError):
-                states[m.file] = None
+    states = {rel: _load_or_none(repo, rel) for rel in dict.fromkeys(m.file for m in all_mutants)}
     usable = [m for m in all_mutants if _check(states[m.file], m) != "undecodable"]
     return usable, states, len(all_mutants) - len(usable)
+
+
+def _per_claim_summaries(claims_file: CL.ClaimsFile, records: list[dict], all_mutants: list[Mutant]) -> dict[str, dict]:
+    """Each claim's catch summary over the mutants in its files, plus how many candidates it had."""
+    return {
+        c.id: {
+            **_summary([r for r in records if r["file"] in c.files]),
+            "candidates": sum(1 for m in all_mutants if m.file in c.files),
+        }
+        for c in claims_file.claims
+    }
+
+
+def _warn_unjudged(claim_id: str, candidates: int) -> None:
+    """Tell the person a claim got no mutation result, so the catch-rate gate cannot judge it."""
+    if candidates == 0:
+        why = "none of its files produced a mutation candidate, so nothing was planted"
+    else:
+        why = f"none of its {candidates} candidates were sampled (max_mutants)"
+    sys.stderr.write(
+        f"claimcheck: warning: claim {claim_id} has no mutation result: {why}; "
+        f"the min_catch_rate gate cannot judge it.\n"
+    )
 
 
 def run_mutate(
@@ -557,6 +583,7 @@ def run_mutate(
     criteria_checked: bool = False,
     claims_file: CL.ClaimsFile | None = None,
 ) -> tuple[dict, int]:
+    """Plant each sampled mutant, run the tests, and restore. Returns the result and exit code (2 below min_catch_rate)."""
     base = base or cfg.base
     test_cmd = test_cmd or cfg.test_cmd
     max_mutants = cfg.mutate_max_mutants if max_mutants is None else max_mutants
@@ -564,7 +591,8 @@ def run_mutate(
 
     check_sentinel(repo)
     sentinel = C.cc_dir(repo) / C.MUTATE_SENTINEL
-    gitio.require_diff(repo, base, worktree)  # an empty diff has nothing to plant bugs in
+    # An empty diff has nothing to plant bugs in.
+    gitio.require_diff(repo, base, worktree)
 
     if not criteria_checked:
         S.enforce_open_diff_rules(repo, cfg, base)
@@ -600,22 +628,10 @@ def run_mutate(
         loaded = {rel: state for rel, state in states.items() if state is not None}
         _run_planted(repo, selected, loaded, test_cmd, timeout, backup_dir, sentinel, records)
 
-    per_claim: dict[str, dict] | None = None
-    if claims_file is not None:
-        per_claim = {}
-        for c in claims_file.claims:
-            s = _summary([r for r in records if r["file"] in c.files])
-            s["candidates"] = sum(1 for m in all_mutants if m.file in c.files)
-            per_claim[c.id] = s
-            if cfg.mutate_min_catch_rate > 0 and s["total"] == 0:
-                if s["candidates"] == 0:
-                    why = "none of its files produced a mutation candidate, so nothing was planted"
-                else:
-                    why = f"none of its {s['candidates']} candidates were sampled (max_mutants)"
-                sys.stderr.write(
-                    f"claimcheck: warning: claim {c.id} has no mutation result: {why}; "
-                    f"the min_catch_rate gate cannot judge it.\n"
-                )
+    per_claim = None if claims_file is None else _per_claim_summaries(claims_file, records, all_mutants)
+    for claim_id, s in (per_claim or {}).items():
+        if cfg.mutate_min_catch_rate > 0 and s["total"] == 0:
+            _warn_unjudged(claim_id, s["candidates"])
 
     summary = _summary(records)
     result: dict = {
@@ -669,44 +685,13 @@ def _run_planted(
     """Plant each mutant, run the tests, put the file back. Cleans up only when all is restored."""
     C.cc_dir(repo).mkdir(parents=True, exist_ok=True)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    recorded: dict[str, dict] = {}
-    for m in selected:
-        if m.file not in recorded:
-            st = states[m.file]
-            dest = backup_dir / m.file
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(st.data)
-            recorded[m.file] = {
-                "original_sha256": st.sha,
-                "mutated_sha256": st.sha,
-                "atime_ns": st.atime_ns,
-                "mtime_ns": st.mtime_ns,
-            }
+    recorded = {rel: _back_up(states[rel], backup_dir / rel) for rel in dict.fromkeys(m.file for m in selected)}
     _write_sentinel(sentinel, recorded)
-    dirty: set[str] = set()  # files that may currently hold a planted bug
+    # Files that may currently hold a planted bug.
+    dirty: set[str] = set()
     try:
         for k, m in enumerate(selected):
-            st = states[m.file]
-            path = repo / m.file
-            mutated = st.render(m.line_no - 1, m.mutated.encode("utf-8"))
-            # Record what is about to be written BEFORE writing it, so --restore can always
-            # recognise the file as ours.
-            recorded[m.file]["mutated_sha256"] = _sha(mutated)
-            _write_sentinel(sentinel, recorded)
-            dirty.add(m.file)
-            path.write_bytes(mutated)
-            # A distinct mtime second per mutant, so no stale .pyc keyed on the original's
-            # (mtime, size) can be mistaken for the mutant's.
-            _write_times(path, st.atime_ns, st.mtime_ns + (k + 1) * 2_000_000_000)
-            try:
-                outcome, dur = _run_tests(repo, test_cmd, timeout)
-            finally:
-                _restore_file(path, st.data, (st.atime_ns, st.mtime_ns))
-                if _sha(path.read_bytes()) == st.sha:
-                    dirty.discard(m.file)
-            rec = asdict(m)
-            rec.update({"outcome": outcome, "duration_s": dur})
-            records.append(rec)
+            records.append(_plant_and_test(repo, m, k, states[m.file], test_cmd, timeout, sentinel, recorded, dirty))
     finally:
         # Even after an exception or Ctrl-C: one more try at anything still dirty, then clean
         # up only if every file is back. A failed restore leaves backup + sentinel for --restore.
@@ -714,3 +699,47 @@ def _run_planted(
         if not still_dirty:
             _rmtree(backup_dir)
             sentinel.unlink(missing_ok=True)
+
+
+def _back_up(st: _FileState, dest: Path) -> dict:
+    """Copy the original into the backup folder; returns its sentinel entry."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(st.data)
+    return {
+        "original_sha256": st.sha,
+        "mutated_sha256": st.sha,
+        "atime_ns": st.atime_ns,
+        "mtime_ns": st.mtime_ns,
+    }
+
+
+def _plant_and_test(
+    repo: Path,
+    m: Mutant,
+    k: int,
+    st: _FileState,
+    test_cmd: str,
+    timeout: int,
+    sentinel: Path,
+    recorded: dict[str, dict],
+    dirty: set[str],
+) -> dict:
+    """Plant mutant number `k`, run the tests, and put the file back. Returns its record."""
+    path = repo / m.file
+    mutated = st.render(m.line_no - 1, m.mutated.encode("utf-8"))
+    # Record what is about to be written BEFORE writing it, so --restore can always
+    # recognise the file as ours.
+    recorded[m.file]["mutated_sha256"] = _sha(mutated)
+    _write_sentinel(sentinel, recorded)
+    dirty.add(m.file)
+    path.write_bytes(mutated)
+    # A distinct mtime second per mutant, so no stale .pyc keyed on the original's
+    # (mtime, size) can be mistaken for the mutant's.
+    _write_times(path, st.atime_ns, st.mtime_ns + (k + 1) * 2_000_000_000)
+    try:
+        outcome, dur = _run_tests(repo, test_cmd, timeout)
+    finally:
+        _restore_file(path, st.data, (st.atime_ns, st.mtime_ns))
+        if _sha(path.read_bytes()) == st.sha:
+            dirty.discard(m.file)
+    return {**asdict(m), "outcome": outcome, "duration_s": dur}

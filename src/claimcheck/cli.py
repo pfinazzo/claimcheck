@@ -54,6 +54,7 @@ def _interactive() -> bool:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
+    """`claimcheck init`: guided setup in a terminal, or a plain summary with --yes or --json."""
     repo = C.find_repo_root()
     if args.json:
         _out(initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci))
@@ -96,6 +97,7 @@ def _read_spec_state(repo: Path) -> tuple[str, int]:
 
 
 def cmd_status(args: argparse.Namespace) -> int:
+    """`claimcheck status`: what is set up in this repo and where the spec stands."""
     repo = C.find_repo_root()
     cfg = C.load(repo)
     initialized = (C.cc_dir(repo) / C.CONFIG_FILE).exists()
@@ -131,11 +133,13 @@ def _read_json_stdin() -> dict:
 
 
 def cmd_spec_draft(args: argparse.Namespace) -> int:
+    """`claimcheck spec draft`: the spec interview, one stateless round (--step), or writing the result (--finish)."""
     repo = C.find_repo_root()
     cfg = C.load(repo)
     provider_name = args.provider or "auto"
 
-    if args.step:  # one round, stateless: the caller keeps the conversation
+    # One round, stateless: the caller keeps the conversation.
+    if args.step:
         round_draft = specdraft.Draft.from_dict(_read_json_stdin())
         if not round_draft.goal.strip():
             raise ClaimcheckError("a goal is needed")
@@ -192,6 +196,7 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
 
 
 def cmd_spec_freeze(args: argparse.Namespace) -> int:
+    """`claimcheck spec freeze`: write spec.lock for the current criteria."""
     repo = C.find_repo_root()
     lock = S.freeze(repo, C.load(repo))
     _out(lock)
@@ -199,6 +204,7 @@ def cmd_spec_freeze(args: argparse.Namespace) -> int:
 
 
 def cmd_spec_verify(args: argparse.Namespace) -> int:
+    """`claimcheck spec verify`: fail when the spec no longer matches its lock."""
     repo = C.find_repo_root()
     criteria = S.verify(repo)
     _err(f"spec verify: {len(criteria)} criteria match the lock")
@@ -206,19 +212,22 @@ def cmd_spec_verify(args: argparse.Namespace) -> int:
 
 
 def cmd_claims_validate(args: argparse.Namespace) -> int:
+    """`claimcheck claims validate`: check the claims file against the schema and the lock."""
     repo = C.find_repo_root()
     path = Path(args.path) if args.path else CL.claims_path(repo)
     lock_ids: set[int] | None
     try:
         lock_ids = S.lock_ids(S.read_lock(repo))
     except ClaimcheckError:
-        lock_ids = None  # no lock: any cited criterion is a violation
+        # No lock: any cited criterion is a violation.
+        lock_ids = None
     cf = CL.load_file(path, lock_ids)
     _err(f"claims validate: {len(cf.claims)} claims ok")
     return 0
 
 
 def cmd_check(args: argparse.Namespace) -> int:
+    """`claimcheck check`: the blind check of each claim against the diff."""
     repo = C.find_repo_root()
     result, code = checker.run_check(
         repo, C.load(repo), base=args.base, provider_name=args.provider, model=args.model,
@@ -229,10 +238,12 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def cmd_mutate(args: argparse.Namespace) -> int:
+    """`claimcheck mutate`: plant bugs and run the tests, or put files back with --restore."""
     repo = C.find_repo_root()
     if args.restore:
         restored = mutate.restore(repo)
-        if (C.cc_dir(repo) / C.MUTATE_SENTINEL).exists():  # a file was refused: do not report success
+        # A file was refused: do not report success.
+        if (C.cc_dir(repo) / C.MUTATE_SENTINEL).exists():
             _out({"restored": restored, "refused": True})
             return 6
         _out({"restored": restored})
@@ -246,6 +257,7 @@ def cmd_mutate(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    """`claimcheck run`: check, then mutate."""
     repo = C.find_repo_root()
     result, code = run.run_all(
         repo, C.load(repo), base=args.base, worktree=args.worktree, provider_name=args.provider,
@@ -256,12 +268,14 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_verify_ledger(args: argparse.Namespace) -> int:
+    """`claimcheck verify-ledger`: the hash chain is intact and, with --base, the ledger only grew."""
     repo = C.find_repo_root()
     path = ledger.ledger_path(repo)
     lines = ledger.ledger_lines(path.read_bytes() if path.exists() else b"")
     result = ledger.verify_chain(lines)
     if args.base:
-        gitio.rev_parse(repo, args.base)  # a base that does not exist is an error, not "no ledger there"
+        # A base that does not exist is an error, not "no ledger there".
+        gitio.rev_parse(repo, args.base)
         text = gitio.show_file_at(repo, args.base, f"{C.CLAIMCHECK_DIR}/{C.LEDGER_FILE}")
         ledger.verify_grew_only(lines, ledger.ledger_lines((text or "").encode("utf-8")), args.base)
     result["base"] = args.base
@@ -275,6 +289,7 @@ def cmd_verify_ledger(args: argparse.Namespace) -> int:
 
 
 def cmd_hook_pre_commit(args: argparse.Namespace) -> int:
+    """The pre-commit hook: refuse a commit whose code changes no claim covers."""
     repo = C.find_repo_root()
     return hook.pre_commit(repo, C.load(repo))
 
@@ -285,6 +300,7 @@ def _add_diff_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """The argument parser for every claimcheck command."""
     parser = argparse.ArgumentParser(prog="claimcheck", description="A verification ledger for AI-written diffs.")
     parser.add_argument("--version", action="version", version=f"claimcheck {__version__}")
     sub = parser.add_subparsers(dest="command")
@@ -365,6 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the command line. Returns the exit code; a ClaimcheckError becomes its message and code."""
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -372,7 +389,8 @@ def main(argv: list[str] | None = None) -> int:
     except ClaimcheckError as e:
         _err(str(e))
         if getattr(args, "json", False) or getattr(args, "step", False) or getattr(args, "finish", False):
-            _out({"error": str(e), "code": e.code})  # machine callers read stdout
+            # Machine callers read stdout.
+            _out({"error": str(e), "code": e.code})
         return e.code
     except KeyboardInterrupt:
         return 130

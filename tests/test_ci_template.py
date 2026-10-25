@@ -41,7 +41,8 @@ def test_the_workflow_installs_from_the_public_address_and_runs_against_the_base
 def test_the_readme_install_command_uses_the_templates_address():
     address = ci.INSTALL_URL.removesuffix(".git")
     command = f'pip install "claimcheck[claude] @ git+{address}"'
-    assert README.count(command) >= 2  # the install section and the "use it in your own repo" steps
+    # The install section and the "use it in your own repo" steps.
+    assert README.count(command) >= 2
 
 
 def test_the_readme_no_longer_says_the_repository_is_private():

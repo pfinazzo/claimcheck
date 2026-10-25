@@ -45,7 +45,7 @@ const fakeCli = ({ structured = { proposals: PROPOSALS }, error = null, onRun = 
   const calls: RunOpts[] = [];
   const cli = {
     calls,
-    findClaude: async () => '/fake/claude',
+    findClaude: () => Promise.resolve('/fake/claude'),
     describeEvent: (e: StreamEvent) => e.type,
     runClaude: async (opts: RunOpts) => {
       calls.push(opts);
@@ -57,14 +57,13 @@ const fakeCli = ({ structured = { proposals: PROPOSALS }, error = null, onRun = 
   return { cli, module: cli as Cli };
 };
 
+/** Polls every 25 ms until the run settles in `status` ('any' for any settled status), or fails after `ms`. */
 const waitFor = async (fixer: ReturnType<typeof createFixer>, id: string, status: string, ms = 8000): Promise<PublicRun> => {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    const run = fixer.get(id);
-    if (run && run.status !== 'running' && (status === 'any' || run.status === status)) return run;
-    await sleep(25);
-  }
-  throw new Error(`run ${id} never reached ${status}: ${JSON.stringify(fixer.get(id))}`);
+  const run = fixer.get(id);
+  if (run && run.status !== 'running' && (status === 'any' || run.status === status)) return run;
+  if (ms <= 0) throw new Error(`run ${id} never reached ${status}: ${JSON.stringify(run)}`);
+  await sleep(25);
+  return waitFor(fixer, id, status, ms - 25);
 };
 
 test('AC 18: parseProposals accepts structured output or JSON text, else throws', () => {
@@ -96,9 +95,9 @@ test('AC 19: propose (API) inlines the diff and uses the key store', async () =>
   const board = await readBoard(repo);
   const seen: Array<{ system: string; user: string; model?: string | undefined; store: unknown }> = [];
   const apiModule = {
-    proposeWithStore: async (opts: { system: string; user: string; model?: string | undefined; store: unknown }) => {
+    proposeWithStore: (opts: { system: string; user: string; model?: string | undefined; store: unknown }) => {
       seen.push(opts);
-      return JSON.stringify({ proposals: PROPOSALS });
+      return Promise.resolve(JSON.stringify({ proposals: PROPOSALS }));
     },
   } as Api;
   const keyStore = { hasKey: () => true } as never;
@@ -131,7 +130,7 @@ test('AC 20–22: implement creates a worktree, spawns with the allowlists, veri
   const repo = buildFixtureRepo();
   const board = await readBoard(repo);
   const { cli, module } = fakeCli({
-    onRun: async (opts) => {
+    onRun: (opts) => {
       if (opts.args === IMPLEMENT_ARGS && opts.cwd) {
         // pretend Claude committed a fix in the worktree
         writeFileSync(path.join(opts.cwd, 'tests', 'test_calc.py'), 'def test_boundary():\n    assert True\n', 'utf8');

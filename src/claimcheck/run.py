@@ -25,9 +25,12 @@ def run_all(
     max_mutants: int | None = None,
     seed: int = 0,
 ) -> tuple[dict, int]:
+    """`check` then `mutate` on the same diff. Returns the combined result and the worse exit code."""
     base = base or cfg.base
-    mutate.check_sentinel(repo)  # before paying for a checker call
-    gitio.require_diff(repo, base, worktree)  # nothing to verify: stop before the checker, mutation or ledger
+    # Before paying for a checker call.
+    mutate.check_sentinel(repo)
+    # Nothing to verify: stop before the checker, mutation or ledger.
+    gitio.require_diff(repo, base, worktree)
     S.enforce_open_diff_rules(repo, cfg, base)
     criteria = S.verify(repo)
     lock = S.read_lock(repo)

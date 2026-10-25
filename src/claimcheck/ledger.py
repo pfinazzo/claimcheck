@@ -10,6 +10,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from . import ClaimcheckError, LedgerError
 from . import config as C
@@ -26,6 +27,7 @@ TYPES = ("claim", "outcome")
 
 
 def ledger_path(repo: Path) -> Path:
+    """Where the ledger lives in a repo."""
     return C.cc_dir(repo) / C.LEDGER_FILE
 
 
@@ -65,6 +67,7 @@ def claim_record(
     checker: dict,
     mutation: dict,
 ) -> dict:
+    """One ledger line for a claim's verdict and catch rate in a run."""
     return {
         "v": 1,
         "type": "claim",
@@ -109,11 +112,9 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
             f.flush()
             os.fsync(f.fileno())
         data = Path(tmp).read_bytes()
-        if path.exists() and path.stat().st_size > 0:
-            with open(path, "rb") as existing:
-                existing.seek(-1, os.SEEK_END)
-                if existing.read(1) != b"\n":
-                    data = b"\n" + data  # a crash or an editor left the last line open: never fuse onto it
+        if _ends_open(path):
+            # A crash or an editor left the last line open: never fuse onto it.
+            data = b"\n" + data
         with open(path, "ab") as out:
             out.write(data)
             out.flush()
@@ -121,6 +122,15 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
     finally:
         Path(tmp).unlink(missing_ok=True)
     return len(records)
+
+
+def _ends_open(path: Path) -> bool:
+    """Whether the file has content whose last line has no line break yet."""
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    with open(path, "rb") as existing:
+        existing.seek(-1, os.SEEK_END)
+        return existing.read(1) != b"\n"
 
 
 # ---- the hash chain ----------------------------------------------------------
@@ -136,6 +146,7 @@ ZERO_HASH = "0" * 64
 
 
 def line_hash(text: str) -> str:
+    """Hex SHA-256 of one ledger line's text, as the next line's `prev` carries it."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
@@ -161,29 +172,31 @@ def chain_head(lines: list[str]) -> str:
     return line_hash("\n".join(lines))
 
 
+def _read_prev(n: int, text: str) -> Any:
+    """Line `n`'s `prev` value (None on a line from before chaining). Raises LedgerError if it is not an object."""
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        raise LedgerError(f"ledger line {n} is not valid JSON") from None
+    if not isinstance(obj, dict):
+        raise LedgerError(f"ledger line {n} is not an object")
+    return obj.get("prev")
+
+
 def verify_chain(lines: list[str]) -> dict:
     """Walk the whole ledger. Raises LedgerError naming the first line that does not fit."""
     legacy = chained = 0
     for n, text in enumerate(lines, 1):
-        try:
-            obj = json.loads(text)
-        except json.JSONDecodeError:
-            raise LedgerError(f"ledger line {n} is not valid JSON") from None
-        if not isinstance(obj, dict):
-            raise LedgerError(f"ledger line {n} is not an object")
-        prev = obj.get("prev")
+        prev = _read_prev(n, text)
+        if prev is None and chained:
+            raise LedgerError(
+                f"ledger line {n} has no prev hash but follows chained lines: "
+                "it was inserted, or the chain was stripped from it"
+            )
         if prev is None:
-            if chained:
-                raise LedgerError(
-                    f"ledger line {n} has no prev hash but follows chained lines: "
-                    "it was inserted, or the chain was stripped from it"
-                )
             legacy += 1
             continue
-        if chained:
-            want = line_hash(lines[n - 2])
-        else:
-            want = line_hash("\n".join(lines[: n - 1])) if n > 1 else ZERO_HASH
+        want = line_hash(lines[n - 2]) if chained else chain_head(lines[: n - 1])
         if prev != want:
             raise LedgerError(
                 f"ledger line {n}: its prev hash does not match the lines before it, so a line "

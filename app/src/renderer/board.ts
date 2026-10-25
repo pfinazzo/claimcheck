@@ -54,8 +54,15 @@ const header = (ui: BoardUi, a: BoardActions): HTMLElement => {
   );
 };
 
+/** The badge for a claim that is already handled; claims still open have none. */
+const DONE_LABEL = new Map<unknown, string>([
+  ['resolved', 'Resolved'],
+  ['accepted', 'Accepted'],
+  ['fixing', 'Fix in progress'],
+]);
+
 const row = (claim: Claim, ui: BoardUi, a: BoardActions): HTMLElement => {
-  const done = claim.status === 'resolved' ? 'Resolved' : claim.status === 'accepted' ? 'Accepted' : claim.status === 'fixing' ? 'Fix in progress' : '';
+  const done = DONE_LABEL.get(claim.status) ?? '';
   return h(
     'button',
     {

@@ -45,11 +45,19 @@ output-format = "concise"
 [tool.ruff.lint]
 preview = true
 explicit-preview-rules = true
-select = ["E", "F", "W", "I", "B", "BLE", "S110", "S112", "SIM", "UP", "PIE", "C4", "N"]
+select = ["E", "F", "W", "I", "B", "BLE", "S110", "S112", "SIM", "UP", "PIE", "C4", "N", "ERA", "D103", "PLR1702", "PLC0415"]
 # E501: line length is left to the reader; no convention sets one.
 # SIM105: contextlib.suppress still swallows the error, which the conventions forbid.
 # N812: turned on with the naming pass, which renames the short module aliases.
 ignore = ["E501", "SIM105", "N812"]
+
+[tool.ruff.lint.per-file-ignores]
+# A pytest test's name is its documentation; helpers and fixtures in tests still get docstrings.
+"tests/test_*.py" = ["D103"]
+
+[tool.ruff.lint.pylint]
+# The conventions allow two levels of nesting inside a function; deeper logic gets its own function.
+max-nested-blocks = 2
 
 [tool.mypy]
 files = ["src", "tests"]

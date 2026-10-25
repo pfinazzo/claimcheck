@@ -28,6 +28,7 @@ class Criterion:
 
 
 def parse_criteria(text: str) -> list[Criterion]:
+    """The `- [ ] N. text` criteria in spec text. Raises SpecError when there are none."""
     found: list[Criterion] = []
     for line in text.splitlines():
         m = CRITERION_RE.match(line)
@@ -55,14 +56,17 @@ def spec_digest(repo: Path) -> str:
 
 
 def spec_path(repo: Path) -> Path:
+    """Where spec.md lives in a repo."""
     return C.cc_dir(repo) / C.SPEC_FILE
 
 
 def lock_path(repo: Path) -> Path:
+    """Where spec.lock lives in a repo."""
     return C.cc_dir(repo) / C.LOCK_FILE
 
 
 def read_spec(repo: Path) -> tuple[str, list[Criterion]]:
+    """The spec's text and criteria. Raises SpecError, with what to run, when it is missing."""
     p = spec_path(repo)
     if not p.exists():
         raise SpecError(f"missing {C.CLAIMCHECK_DIR}/{C.SPEC_FILE}; run `claimcheck init`")
@@ -71,6 +75,7 @@ def read_spec(repo: Path) -> tuple[str, list[Criterion]]:
 
 
 def read_lock(repo: Path) -> dict:
+    """The parsed spec.lock. Raises SpecError, with what to run, when it is missing."""
     p = lock_path(repo)
     if not p.exists():
         raise SpecError(f"missing {C.CLAIMCHECK_DIR}/{C.LOCK_FILE}; run `claimcheck spec freeze`")
@@ -78,6 +83,7 @@ def read_lock(repo: Path) -> dict:
 
 
 def parse_lock(text: str) -> dict:
+    """Lock text to a dict. Raises SpecError when it is not JSON or misses a required key."""
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
@@ -89,10 +95,12 @@ def parse_lock(text: str) -> dict:
 
 
 def lock_ids(lock: dict) -> set[int]:
+    """The criterion ids a lock freezes."""
     return {int(c["id"]) for c in lock["criteria"]}
 
 
 def build_lock(repo: Path, spec_text: str, criteria: list[Criterion]) -> dict:
+    """The lock for the given spec text and criteria, stamped with the time and HEAD."""
     return {
         "version": 1,
         "frozen_at": C.utc_now_iso(),
@@ -110,7 +118,8 @@ def open_code_paths(repo: Path, cfg: C.Config, base: str) -> list[str]:
     try:
         names = gitio.changed_files(repo, base, worktree=True)
     except ClaimcheckError:
-        names = []  # no commits yet, or no base: nothing can be open
+        # No commits yet, or no base: nothing can be open.
+        names = []
     return [n for n in names if not C.is_ignored(n, cfg.ignore)]
 
 
@@ -131,6 +140,7 @@ def freeze(repo: Path, cfg: C.Config) -> dict:
 
 
 def diff_against_lock(criteria: list[Criterion], lock: dict) -> dict[str, list[int]]:
+    """Criterion ids added, changed or removed since the lock: {kind: [ids]}."""
     locked = {int(c["id"]): c["sha256"] for c in lock["criteria"]}
     current = {c.id: c.sha256 for c in criteria}
     return {
@@ -173,20 +183,31 @@ def enforce_open_diff_rules(repo: Path, cfg: C.Config, base: str | None = None) 
 
     # AC 7 — committed diff: lock re-frozen inside base..HEAD after the diff began.
     if gitio.commits_ahead(repo, base) > 0 and gitio.path_changed_in_range(repo, base, rel_lock):
-        lock = read_lock(repo)
-        frozen_at = datetime.fromisoformat(lock["frozen_at"].replace("Z", "+00:00"))
-        first = gitio.earliest_author_date(repo, base)
-        if first is not None and frozen_at > first.astimezone(UTC):
-            base_sha = gitio.merge_base(repo, base)
-            old_text = gitio.show_file_at(repo, base_sha, rel_lock)
-            old_hashes = set()
-            if old_text:
-                try:
-                    old_hashes = {c["sha256"] for c in parse_lock(old_text)["criteria"]}
-                except SpecError:
-                    old_hashes = set()
-            new_ids = sorted(int(c["id"]) for c in lock["criteria"] if c["sha256"] not in old_hashes)
-            raise SpecError(
-                f"refusing: spec.lock was re-frozen at {lock['frozen_at']} after the diff's first "
-                f"commit ({first.isoformat()}); late criteria: {new_ids}"
-            )
+        _refuse_late_refreeze(repo, base, rel_lock)
+
+
+def _criteria_hashes_at(repo: Path, ref: str, rel_lock: str) -> set[str]:
+    """The criterion hashes in the lock as committed at `ref`; none if it was absent or unreadable."""
+    old_text = gitio.show_file_at(repo, ref, rel_lock)
+    if not old_text:
+        return set()
+    try:
+        return {c["sha256"] for c in parse_lock(old_text)["criteria"]}
+    except SpecError:
+        # An unreadable old lock means every current criterion counts as late.
+        return set()
+
+
+def _refuse_late_refreeze(repo: Path, base: str, rel_lock: str) -> None:
+    """AC 7: refuse when the lock was re-frozen after the diff's first commit, naming the late criteria."""
+    lock = read_lock(repo)
+    frozen_at = datetime.fromisoformat(lock["frozen_at"].replace("Z", "+00:00"))
+    first = gitio.earliest_author_date(repo, base)
+    if first is None or frozen_at <= first.astimezone(UTC):
+        return
+    old_hashes = _criteria_hashes_at(repo, gitio.merge_base(repo, base), rel_lock)
+    new_ids = sorted(int(c["id"]) for c in lock["criteria"] if c["sha256"] not in old_hashes)
+    raise SpecError(
+        f"refusing: spec.lock was re-frozen at {lock['frozen_at']} after the diff's first "
+        f"commit ({first.isoformat()}); late criteria: {new_ids}"
+    )

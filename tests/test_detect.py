@@ -117,7 +117,8 @@ def test_ensure_gitignore_creates_appends_and_is_idempotent(tmp_path):
     assert detect.ensure_gitignore(tmp_path) == []
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == text
 
-    (tmp_path / ".gitignore").write_text("node_modules/", encoding="utf-8")  # no trailing newline
+    # No trailing newline.
+    (tmp_path / ".gitignore").write_text("node_modules/", encoding="utf-8")
     detect.ensure_gitignore(tmp_path)
     lines = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert lines[0] == "node_modules/"

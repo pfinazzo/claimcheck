@@ -13,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import gitio, initflow, redact
+from claimcheck import gitio, initflow, providers, redact
 from claimcheck import specdraft as SD
+from claimcheck.providers import claude_cli
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "secret_cases.json").read_text(encoding="utf-8"))
 RAND = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1"
@@ -103,11 +104,10 @@ class _Capture:
 
 
 def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, monkeypatch, capsys):
-    from claimcheck import providers
-
     calc_repo.write("src/config.py", f'API = "sk-ant-api03-{RAND}"\nDB_PASSWORD = "Tr0ub4dor3xKcdZ9"\n')
     calc_repo.write(".env", "SECRET=topsecretvalue1234\n")
-    calc_repo.git("add", "-f", ".env")  # init now ignores .env; this is the accidental commit
+    # Init now ignores .env; this is the accidental commit.
+    calc_repo.git("add", "-f", ".env")
     calc_repo.write(".claimcheck/claims.yaml", calc_repo.read(".claimcheck/claims.yaml"))
     calc_repo.commit("add config and an accidentally committed .env", date="2020-01-06T00:00:00+00:00")
     cap = _Capture()
@@ -179,14 +179,13 @@ def test_the_interview_prompt_tells_the_model_what_it_must_not_do_with_pasted_se
 # ---- the provider boundary -------------------------------------------------------
 
 def test_the_claude_cli_provider_scrubs_what_it_is_handed(monkeypatch):
-    from claimcheck.providers import claude_cli
-
     seen = {}
 
     class P:
         returncode, stdout, stderr = 0, json.dumps({"structured_output": {"ok": True}}), ""
 
     def fake_run(args, **kw):
+        """Stand-in for subprocess.run that records the call and reports success."""
         seen["args"], seen["input"] = args, kw["input"]
         return P()
 

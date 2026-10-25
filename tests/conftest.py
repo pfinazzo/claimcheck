@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -71,8 +72,6 @@ class Repo:
         self.path = path
 
     def git(self, *args: str, check: bool = True, env: dict | None = None) -> str:
-        import os
-
         full_env = dict(os.environ)
         if env:
             full_env.update(env)
@@ -123,6 +122,7 @@ class Repo:
 
 @pytest.fixture
 def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
+    """An empty git repo with an isolated git config and a fixed test identity."""
     empty_cfg = tmp_path / "gitconfig"
     empty_cfg.write_text("", encoding="utf-8")
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty_cfg))

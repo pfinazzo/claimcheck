@@ -39,6 +39,7 @@ class ClaimsFile:
 
 
 def claims_path(repo: Path) -> Path:
+    """Where the claims file lives in a repo."""
     return C.cc_dir(repo) / C.CLAIMS_FILE
 
 
@@ -152,6 +153,7 @@ def validate(cf: ClaimsFile, lock_ids: set[int] | None) -> list[str]:
 
 
 def load_and_validate(text: str, lock_ids: set[int] | None) -> ClaimsFile:
+    """Parse and validate claims text. Raises ClaimsError listing every violation."""
     cf, violations = load_text(text)
     if cf is not None:
         violations += validate(cf, lock_ids)
@@ -162,6 +164,7 @@ def load_and_validate(text: str, lock_ids: set[int] | None) -> ClaimsFile:
 
 
 def load_file(path: Path, lock_ids: set[int] | None) -> ClaimsFile:
+    """Load and validate a claims file. Raises ClaimsError when it is missing or invalid."""
     if not path.exists():
         raise ClaimsError(f"missing claims file: {path}")
     return load_and_validate(path.read_text(encoding="utf-8"), lock_ids)

@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import gitio, redact
+
 # Paths that are never product code, whatever the stack.
 BASE_IGNORE = [
     "*.md",
@@ -184,24 +186,30 @@ SECRET_IGNORE_LINES = [".env", ".env.*", "!.env.example", "*.pem", "*.key", "*.p
 _ENV_LINES = (".env", ".env.*", "!.env.example")
 
 
+def _separator_after(text: str) -> str:
+    """The blank line new lines need after existing text: none for an empty file."""
+    if not text:
+        return ""
+    return "\n" if text.endswith("\n") else "\n\n"
+
+
 def ensure_secrets_ignored(repo: Path) -> dict:
     """Create .gitignore if it is missing and make sure .env and key files are in it.
 
     Returns {"created": bool, "added": [...], "tracked": [...]}. `tracked` lists secret-looking files
     that git already tracks: ignoring them now does not untrack them, so the person has to be told.
     """
-    from . import gitio, redact
-
     path = repo / ".gitignore"
     existed = path.is_file()
     text = path.read_text(encoding="utf-8-sig") if existed else ""
     have = {line.strip() for line in text.splitlines()}
     missing = [line_text for line_text in SECRET_IGNORE_LINES if line_text not in have]
-    if gitio.is_ignored(repo, ".env"):  # already covered, perhaps by a pattern like .env* or a global rule
+    # Already covered, perhaps by a pattern like .env* or a global rule.
+    if gitio.is_ignored(repo, ".env"):
         missing = [line_text for line_text in missing if line_text not in _ENV_LINES]
     added: list[str] = []
     if missing or not existed:
-        sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+        sep = _separator_after(text)
         block = ("\n" if text and sep == "\n" else "") + "# secrets: never commit these\n" + "\n".join(missing) + "\n" if missing else ""
         with open(path, "a" if existed else "w", encoding="utf-8", newline="\n") as f:
             f.write(sep + block if existed else block)

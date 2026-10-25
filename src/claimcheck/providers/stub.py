@@ -6,10 +6,10 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 
-STUB_FILE_ENV = "CLAIMCHECK_STUB_FILE"
+from .. import config
+
 _CLAIMS_BLOCK = re.compile(r"## Claims\s*```json\s*(.*?)\s*```", re.DOTALL)
 
 
@@ -36,7 +36,7 @@ def _draft_reply(user: str) -> str:
 
 class StubProvider:
     def complete(self, system: str, user: str, *, schema: dict) -> str:
-        path = os.environ.get(STUB_FILE_ENV)
+        path = config.stub_reply_file()
         if path:
             with open(path, encoding="utf-8") as f:
                 return f.read()

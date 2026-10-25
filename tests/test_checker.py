@@ -171,7 +171,8 @@ def test_ac18_two_failures_fill_unverifiable():
     p = _Seq(["garbage", partial])
     out = checker.ask(p, "s", "u", ["a", "b"])
     assert p.calls == 2
-    assert out[0]["verdict"] == "SUPPORTED"  # salvaged from the second reply
+    # Salvaged from the second reply.
+    assert out[0]["verdict"] == "SUPPORTED"
     assert out[1] == {"id": "b", "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
 
 
@@ -258,14 +259,14 @@ class _CapturingProvider:
 def test_checker_prompt_never_contains_author_confidence(calc_repo, monkeypatch, extra):
     # claims.yaml is committed on the branch, so it is part of base...HEAD. The checker must
     # still never see the confidence or verified_by text inside it, nor earlier ledger lines.
-    from claimcheck import providers
 
     calc_repo.write(".claimcheck/ledger.jsonl", '{"leak": "LEDGER_SENTINEL"}\n')
     calc_repo.commit("ledger", date="2020-01-06T00:00:00+00:00")
     cap = _CapturingProvider()
     monkeypatch.setattr(providers, "load", lambda name, model=None: cap)
     assert calc_repo.cli("check", "--provider", "stub", *extra) == 0
-    assert "src/calc.py" in cap.user  # the real diff is still there
+    # The real diff is still there.
+    assert "src/calc.py" in cap.user
     assert "return a - b" in cap.user
     for needle in ("confidence", "verified_by", "ran it", "pytest -q", "LEDGER_SENTINEL", "0.6"):
         assert needle not in cap.user, f"checker prompt leaked {needle!r}"

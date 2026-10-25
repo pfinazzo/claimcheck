@@ -4,6 +4,7 @@
 """
 
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -36,7 +37,8 @@ def test_ac28_run_appends_one_line_per_claim(calc_repo, capsys):
         assert r["mutation"]["total"] == 3 and r["mutation"]["catch_rate"] == 1.0
         assert r["run_id"] == out["run_id"]
         assert len(r["repo"]) == 64
-        assert json.dumps(r, sort_keys=True, ensure_ascii=False) in lines  # written sorted
+        # Written sorted.
+        assert json.dumps(r, sort_keys=True, ensure_ascii=False) in lines
     assert calc_repo.read(".claimcheck/ledger.jsonl").endswith("\n")
 
 
@@ -97,7 +99,6 @@ def test_ac31_examples_are_valid_fixtures(repo):
     cf = CL.load_file(EXAMPLES / "claims.yaml", lock_ids)
     assert [c.id for c in cf.claims] == ["c1", "c2", "c3"]
     assert repo.cli("claims", "validate", str(EXAMPLES / "claims.yaml")) == 0
-    import tomllib
 
     cfg = tomllib.loads((EXAMPLES / "config.toml").read_text(encoding="utf-8"))
     assert cfg["checker"]["model"] == "claude-opus-5-5"

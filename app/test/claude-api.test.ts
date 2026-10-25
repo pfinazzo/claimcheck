@@ -73,12 +73,12 @@ test('testConnection and proposeWithStore go through the store and a client fact
   assert.deepEqual(await testConnection({ store }), { ok: false, error: 'No API key saved.' });
   store.saveKey('sk-test-1234');
   const seenKeys: string[] = [];
-  const clientFactory = async (key: string): Promise<ApiClient> => {
+  const clientFactory = (key: string): Promise<ApiClient> => {
     seenKeys.push(key);
-    return {
-      models: { list: async () => ({ data: [{ id: 'claude-opus-5-5' }] }) },
-      messages: { create: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"ok":1}' }] }) },
-    };
+    return Promise.resolve({
+      models: { list: () => Promise.resolve({ data: [{ id: 'claude-opus-5-5' }] }) },
+      messages: { create: () => Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"ok":1}' }] }) },
+    });
   };
   const res = await testConnection({ store, clientFactory });
   assert.deepEqual(res, { ok: true, models: ['claude-opus-5-5'], last4: '1234' });

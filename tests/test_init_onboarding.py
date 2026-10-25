@@ -6,14 +6,18 @@ the Claude CLI provider, and the guided onboarding run end to end with a scripte
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import re
+import sys
 
 import pytest
+import yaml
 
 from claimcheck import (
     ProviderError,
+    ci,
     gitio,
     initflow,
     onboard,
@@ -63,10 +67,6 @@ def test_run_setup_can_create_the_agent_file_only_when_asked(repo):
 
 
 def test_the_workflow_file_is_valid_yaml_with_a_working_expression():
-    import yaml
-
-    from claimcheck import ci
-
     data = yaml.safe_load(ci.render("node"))
     steps = data["jobs"]["claimcheck"]["steps"]
     run_step = next(s for s in steps if "claimcheck run" in s.get("run", ""))
@@ -131,7 +131,6 @@ def test_spec_draft_without_a_terminal_needs_a_goal(repo, monkeypatch, capsys):
 def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, capsys):
     repo.cli("init", "--yes")
     inputs = iter(["a", "b", "", ""])
-    import builtins
 
     orig = builtins.input
     builtins.input = lambda prompt="": next(inputs)
@@ -140,7 +139,8 @@ def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, capsys):
     finally:
         builtins.input = orig
     assert "Add free shipping" in repo.read(".claimcheck/spec.md")
-    assert not (repo.cc / "spec.lock").exists()  # no terminal and no --yes: nothing was frozen
+    # No terminal and no --yes: nothing was frozen.
+    assert not (repo.cc / "spec.lock").exists()
 
 
 # ---- Claude CLI provider ------------------------------------------------------
@@ -195,6 +195,7 @@ def test_provider_sends_the_prompt_on_stdin_with_tools_off(monkeypatch):
         returncode, stdout, stderr = 0, json.dumps({"structured_output": {"ok": True}}), ""
 
     def fake_run(args, **kw):
+        """Stand-in for subprocess.run that records the call and reports success."""
         seen["args"], seen["input"] = args, kw["input"]
         return P()
 
@@ -265,8 +266,6 @@ def test_detect_respects_no_color_ci_and_dumb_terminals():
         def isatty(self):
             return True
 
-    import sys
-
     real = sys.stdin
     sys.stdin = Tty()
     try:
@@ -302,6 +301,7 @@ def _scripted_term(inputs):
     prompts = []
 
     def inp(prompt):
+        """Scripted input: record the prompt and answer with the next reply."""
         prompts.append(prompt)
         return next(it)
 
@@ -312,13 +312,20 @@ def _scripted_term(inputs):
 def test_onboarding_runs_the_whole_journey(repo, monkeypatch):
     monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
     inputs = [
-        "", "",                      # the two tour screens
-        "", "", "",                  # test command, create CLAUDE.md (yes), CI (no)
-        "",                          # pause after setup
-        "Add free shipping over 50", # the goal
-        "50 is free", "nothing",     # answers to the two questions
-        "", "",                      # review after round 1, review after round 2 (ready: save)
-        "",                          # freeze and commit: yes
+        # The two tour screens.
+        "", "",
+        # Test command, create CLAUDE.md (yes), CI (no)
+        "", "", "",
+        # Pause after setup.
+        "",
+        # The goal.
+        "Add free shipping over 50",
+        # Answers to the two questions.
+        "50 is free", "nothing",
+        # Review after round 1, review after round 2 (ready: save)
+        "", "",
+        # Freeze and commit: yes.
+        "",
     ]
     t, out, prompts, rest = _scripted_term(inputs)
     assert onboard.run_onboarding(t, repo.path) == 0
@@ -338,7 +345,8 @@ def test_onboarding_runs_the_whole_journey(repo, monkeypatch):
 
 def test_onboarding_tour_can_be_skipped_and_goal_left_blank(repo, monkeypatch):
     monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
-    inputs = ["s", "", "", "", "", ""]  # skip tour at screen 1; setup prompts; blank goal
+    # Skip tour at screen 1; setup prompts; blank goal.
+    inputs = ["s", "", "", "", "", ""]
     t, out, _, rest = _scripted_term(inputs)
     assert onboard.run_onboarding(t, repo.path) == 0
     text = out.getvalue()
