@@ -9,11 +9,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { GH_TIMEOUT_MS } from './timeouts.ts';
 
-const execFileP = promisify(execFile);
+const runExecFile = promisify(execFile);
 
-type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer; stderr?: string | Buffer }>;
+type ExecFn = (file: string, argList: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer; stderr?: string | Buffer }>;
 
-export const ghReady = async ({ execFn = execFileP }: { execFn?: ExecFn } = {}): Promise<boolean> => {
+export const isGhReady = async ({ execFn = runExecFile }: { execFn?: ExecFn } = {}): Promise<boolean> => {
   try {
     await execFn('gh', ['auth', 'status'], { windowsHide: true, timeout: GH_TIMEOUT_MS });
     return true;
@@ -23,7 +23,7 @@ export const ghReady = async ({ execFn = execFileP }: { execFn?: ExecFn } = {}):
 };
 
 export type PrBodyInput = {
-  claim: { id: string; claim: string; flags: string[] };
+  claim: { id: string; claim: string; flags: readonly string[] };
   proposal: { title: string; summary: string };
   run: { tests?: { ok?: boolean }; killCondition?: { ok?: boolean | string } };
 };
@@ -34,9 +34,9 @@ const KILL_CHECK_TEXT = new Map<unknown, string>([
 ]);
 
 /** The kill-condition result as PR text: pass, manual check, or (anything else) fail. */
-const describeKillCheck = (ok: unknown): string => KILL_CHECK_TEXT.get(ok) ?? 'fail';
+const describeKillCheck = ({ ok }: { ok: unknown }): string => KILL_CHECK_TEXT.get(ok) ?? 'fail';
 
-export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
+export const buildPrBody = ({ claim, proposal, run }: PrBodyInput): string =>
   [
     `## claimcheck fix: ${claim.id}`,
     '',
@@ -44,7 +44,7 @@ export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
     `**Flagged for:** ${claim.flags.join(', ') || 'manual'}`,
     `**Approach:** ${proposal.title} — ${proposal.summary}`,
     '',
-    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${describeKillCheck(run.killCondition?.ok)}.`,
+    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${describeKillCheck({ ok: run.killCondition?.ok })}.`,
     '',
     'Built by Claude Code from claimcheck Desk\'s "Fix this" button. Review it like any other pull request before merging.',
   ].join('\n');
@@ -58,8 +58,8 @@ export type PrInput = {
   execFn?: ExecFn;
 };
 
-export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP }: PrInput): Promise<string> => {
+export const openPullRequest = async ({ cwd, base, head, title, body, execFn = runExecFile }: PrInput): Promise<string> => {
   const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true, timeout: GH_TIMEOUT_MS });
-  const url = String(stdout).split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) ?? String(stdout).trim();
+  const url = String(stdout).split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line)) ?? String(stdout).trim();
   return url;
 };

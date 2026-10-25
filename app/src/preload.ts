@@ -19,21 +19,23 @@ class BridgeError extends Error {
 type Invokers = { [K in InvokeChannel]: DeskBridge[K] };
 
 /** One bridge call. The main process's handler decides the shape of the value; ipc.ts names it. */
-const call = <K extends InvokeChannel>(name: K): DeskBridge[K] => {
-  const invoke = async (payload?: unknown): Promise<unknown> => {
-    const res = (await ipcRenderer.invoke(`desk:${name}`, payload)) as Reply<unknown>;
-    if (!res.ok) {
-      const error = new BridgeError(res.error);
-      if (res.code) error.code = res.code;
-      if (res.details) error.details = res.details;
+const sendCall = <K extends InvokeChannel>({ name }: { name: K }): DeskBridge[K] => {
+  const invoke = async ({ payload }: { payload?: unknown } = {}): Promise<unknown> => {
+    const response = (await ipcRenderer.invoke(`desk:${name}`, payload)) as Reply<unknown>;
+    if (!response.ok) {
+      const error = new BridgeError(response.error);
+      if (response.code) error.code = response.code;
+      if (response.details) error.details = response.details;
       throw error;
     }
-    return res.value;
+    return response.value;
   };
-  return invoke as DeskBridge[K];
+  return ((payload?: unknown) => invoke({ payload })) as DeskBridge[K];
 };
 
-const subscribe = <T,>(channel: string) => (callback: (payload: T) => void): (() => void) => {
+const watchChannel = <T>({ channel }: { channel: string }) => (callback: (payload: T) => void): (() => void) => {
+  // Electron calls listeners positionally (event, payload), and removeListener needs this same function back.
+  // eslint-disable-next-line no-restricted-syntax
   const listener = (_event: IpcRendererEvent, payload: T): void => callback(payload);
   ipcRenderer.on(channel, listener);
   return () => {
@@ -41,13 +43,13 @@ const subscribe = <T,>(channel: string) => (callback: (payload: T) => void): (()
   };
 };
 
-const invokers = Object.fromEntries(INVOKE_CHANNELS.map((name) => [name, call(name)])) as Invokers;
+const invokers = Object.fromEntries(INVOKE_CHANNELS.map((name) => [name, sendCall({ name })])) as Invokers;
 
 const bridge: DeskBridge = {
   ...invokers,
-  onBoard: subscribe('desk:board'),
-  onView: subscribe('desk:view'),
-  onRunUpdate: subscribe('desk:run'),
+  onBoard: watchChannel({ channel: 'desk:board' }),
+  onView: watchChannel({ channel: 'desk:view' }),
+  onRunUpdate: watchChannel({ channel: 'desk:run' }),
   rendered: (): void => ipcRenderer.send('desk:rendered'),
 };
 

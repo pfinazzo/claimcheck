@@ -7,22 +7,22 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readBoard } from '../src/lib/store.ts';
-import { BLOCKED_TOOLS, CLOSING_SENTENCE, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, implementPrompt, proposePrompt } from '../src/lib/prompts.ts';
+import { BLOCKED_TOOLS, CLOSING_SENTENCE, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, buildImplementPrompt, buildProposePrompt } from '../src/lib/prompts.ts';
 import { buildFixtureRepo } from './fixture-repo.ts';
 
-const ctxFor = async () => {
+const makeContextFor = async () => {
   const repo = buildFixtureRepo();
-  const board = await readBoard(repo);
-  const claim = board.claims.find((c) => c.id === 'c2');
+  const board = await readBoard({ repoPath: repo });
+  const claim = board.claims.find((claim) => claim.id === 'c2');
   assert.ok(claim, 'the fixture has claim c2');
   return { repo: board.repo, config: board.config, claim };
 };
 
 test('AC 17: propose prompt header, body and closing sentence', async () => {
-  const ctx = await ctxFor();
-  const text = proposePrompt(ctx);
+  const context = await makeContextFor();
+  const text = buildProposePrompt({ context });
   assert.ok(text.startsWith('Repository: (no origin)\n'), text.slice(0, 80));
-  assert.ok(text.includes(`On this computer it is at: ${ctx.repo.path} (branch main at ${(ctx.repo.head ?? '').slice(0, 7)})`));
+  assert.ok(text.includes(`On this computer it is at: ${context.repo.path} (branch main at ${(context.repo.head ?? '').slice(0, 7)})`));
   assert.ok(text.includes('Claim: is_adult is inclusive at 18'));
   assert.ok(text.includes('Stated confidence: 0.6'));
   assert.ok(text.includes('2. is_adult(age) is True at and above 18 and False below.'));
@@ -38,10 +38,10 @@ test('AC 17: propose prompt header, body and closing sentence', async () => {
 });
 
 test('implement prompt names the chosen approach and the rejected ones', async () => {
-  const ctx = await ctxFor();
+  const context = await makeContextFor();
   const chosen = { title: 'Pin the boundary', summary: 'Add a test.', pros: ['small'], cons: ['none'], effort: 'small' as const, touches: ['tests/test_calc.py'] };
   const other = { title: 'Rewrite', summary: 'x', pros: [], cons: ['big'], effort: 'large' as const, touches: [] };
-  const text = implementPrompt(ctx, chosen, [other]);
+  const text = buildImplementPrompt({ context, proposal: chosen, rejected: [other] });
   assert.ok(text.includes('Title: Pin the boundary'));
   assert.ok(text.includes('- Rewrite: big'));
   assert.ok(text.includes('obs: is_adult(18) returns True'));
@@ -59,8 +59,8 @@ test('AC 18: proposals schema is strict and 3–4 long', () => {
 });
 
 test('tool lists: blocked covers push, gh, web, installs', () => {
-  for (const t of ['Bash(git push *)', 'Bash(gh *)', 'WebFetch', 'WebSearch', 'Bash(pip install *)', 'Bash(npm install *)']) {
-    assert.ok(BLOCKED_TOOLS.includes(t), t);
+  for (const text of ['Bash(git push *)', 'Bash(gh *)', 'WebFetch', 'WebSearch', 'Bash(pip install *)', 'Bash(npm install *)']) {
+    assert.ok(BLOCKED_TOOLS.includes(text), text);
   }
   assert.ok(IMPLEMENT_TOOLS.includes('Edit') && IMPLEMENT_TOOLS.includes('Bash(git commit *)'));
   assert.ok(!IMPLEMENT_TOOLS.includes('Bash(git push *)'));

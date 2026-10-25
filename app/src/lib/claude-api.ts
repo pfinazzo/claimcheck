@@ -17,7 +17,7 @@ export const DEFAULT_MODEL = 'claude-opus-5-5';
 export type SafeStorageLike = {
   isEncryptionAvailable?: () => boolean;
   encryptString: (text: string) => Buffer;
-  decryptString: (data: Buffer) => string;
+  decryptString: (payload: Buffer) => string;
 };
 
 export type KeyStore = {
@@ -36,14 +36,15 @@ export type ApiClient = {
       model: string;
       max_tokens: number;
       system: string;
-      messages: { role: 'user'; content: string }[];
+      messages: readonly { role: 'user'; content: string }[];
       output_config: { format: { type: 'json_schema'; schema: Record<string, unknown> } };
-    }) => Promise<{ stop_reason?: string | null; stop_details?: { explanation?: string | null } | null; content?: { type: string; text?: string }[] }>;
+    }) => Promise<{ stop_reason?: string | null; stop_details?: { explanation?: string | null } | null; content?: readonly { type: string; text?: string }[] }>;
   };
-  models: { list: (params: { limit: number }) => Promise<{ data?: { id: string }[] }> };
+  // `data` is quoted because it is the SDK's own field name, not one of ours.
+  models: { list: (params: { limit: number }) => Promise<{ 'data'?: readonly { id: string }[] }> };
 };
 
-export type ClientFactory = (apiKey: string) => Promise<ApiClient>;
+export type ClientFactory = (options: { apiKey: string }) => Promise<ApiClient>;
 
 /** A key store bound to a safeStorage implementation and a folder. */
 export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageLike | null | undefined; dir: string }): KeyStore => {
@@ -51,8 +52,8 @@ export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageL
   const metaFile = path.join(dir, 'secrets.meta.json');
   const readMeta = (): { last4?: string } => {
     try {
-      const data: unknown = JSON.parse(readFileSync(metaFile, 'utf8'));
-      return data && typeof data === 'object' ? (data) : {};
+      const payload: unknown = JSON.parse(readFileSync(metaFile, 'utf8'));
+      return payload && typeof payload === 'object' ? (payload) : {};
     } catch {
       return {};
     }
@@ -67,7 +68,7 @@ export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageL
     hasKey: () => existsSync(binFile),
     last4: () => readMeta().last4 ?? null,
     clearKey() {
-      for (const f of [binFile, metaFile]) if (existsSync(f)) unlinkSync(f);
+      for (const text of [binFile, metaFile]) if (existsSync(text)) unlinkSync(text);
     },
     loadKey() {
       if (!existsSync(binFile) || !safeStorage) return null;
@@ -76,24 +77,24 @@ export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageL
   };
 };
 
-const sdkClient: ClientFactory = async (apiKey) => {
+const createSdkClient: ClientFactory = async ({ apiKey }) => {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey, timeout: API_TIMEOUT_MS });
   return {
-    messages: { create: (params) => client.messages.create({ ...params, stream: false }) },
+    messages: { create: (params) => client.messages.create({ ...params, messages: [...params.messages], stream: false }) },
     models: { list: (query) => client.models.list(query) },
   };
 };
 
-export type ConnectionTest = { ok: true; models: string[]; last4: string | null } | { ok: false; error: string };
+export type ConnectionTest = { ok: true; models: readonly string[]; last4: string | null } | { ok: false; error: string };
 
-export const testConnection = async ({ store, clientFactory = sdkClient }: { store: KeyStore; clientFactory?: ClientFactory }): Promise<ConnectionTest> => {
+export const testConnection = async ({ store, clientFactory = createSdkClient }: { store: KeyStore; clientFactory?: ClientFactory }): Promise<ConnectionTest> => {
   const key = store.loadKey();
   if (!key) return { ok: false, error: 'No API key saved.' };
   try {
-    const client = await clientFactory(key);
+    const client = await clientFactory({ apiKey: key });
     const page = await client.models.list({ limit: 5 });
-    const ids = (page.data ?? []).map((m) => m.id);
+    const ids = (page.data ?? []).map((model) => model.id);
     return { ok: true, models: ids, last4: store.last4() };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -109,7 +110,7 @@ export type ProposeInput = {
 };
 
 /** One structured-output call. Returns the first text block (JSON text). */
-export const propose = async ({ system, user, schema, model = DEFAULT_MODEL, client }: ProposeInput): Promise<string> => {
+export const requestProposals = async ({ system, user, schema, model = DEFAULT_MODEL, client }: ProposeInput): Promise<string> => {
   const response = await client.messages.create({
     model,
     max_tokens: 16000,
@@ -118,18 +119,18 @@ export const propose = async ({ system, user, schema, model = DEFAULT_MODEL, cli
     output_config: { format: { type: 'json_schema', schema } },
   });
   if (response.stop_reason === 'refusal') throw new Error(`The model declined: ${response.stop_details?.explanation ?? 'no explanation'}`);
-  const block = (response.content ?? []).find((b) => b.type === 'text');
+  const block = (response.content ?? []).find((block) => block.type === 'text');
   if (!block || typeof block.text !== 'string') throw new Error('The model returned no text block.');
   return block.text;
 };
 
-export const proposeWithStore = async ({
+export const requestProposalsWithStore = async ({
   store,
   system,
   user,
   schema,
   model,
-  clientFactory = sdkClient,
+  clientFactory = createSdkClient,
 }: {
   store: KeyStore;
   system: string;
@@ -140,7 +141,7 @@ export const proposeWithStore = async ({
 }): Promise<string> => {
   const key = store.loadKey();
   if (!key) throw new Error('No API key saved.');
-  const client = await clientFactory(key);
+  const client = await clientFactory({ apiKey: key });
   // last line of defence: nothing secret-looking leaves, whatever built the text
-  return propose({ system: redactText(system).text, user: redactText(user).text, schema, model, client });
+  return requestProposals({ system: redactText({ input: system }).text, user: redactText({ input: user }).text, schema, model, client });
 };

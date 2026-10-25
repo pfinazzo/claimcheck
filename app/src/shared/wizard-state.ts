@@ -27,19 +27,19 @@ export const MAX_CRITERIA = 40;
 export type WizardCriterion = {
   text: string;
   check: string;
-  lint: LintNote[];
+  lint: readonly LintNote[];
 };
 
 export type WizardDraft = {
-  criteria: WizardCriterion[];
-  out_of_scope: string[];
-  concerns: string[];
+  criteria: readonly WizardCriterion[];
+  out_of_scope: readonly string[];
+  concerns: readonly string[];
   ready: boolean;
 };
 
 export type WizardRound = {
-  questions: DraftQuestion[];
-  answers: string[];
+  questions: readonly DraftQuestion[];
+  answers: readonly string[];
 };
 
 export type WizardState = {
@@ -52,13 +52,13 @@ export type WizardState = {
   connectSkipped: boolean;
   goal: string;
   started: boolean;
-  rounds: WizardRound[];
+  rounds: readonly WizardRound[];
   current: WizardRound | null;
   draft: WizardDraft;
-  freeze: { makeBranch: boolean; branch: string; result: CcFinish | null };
+  freeze: { makeBranch: boolean; branch: string; outcome: CcFinish | null };
 };
 
-const emptyDraft = (): WizardDraft => ({ criteria: [], out_of_scope: [], concerns: [], ready: false });
+const makeEmptyDraft = (): WizardDraft => ({ criteria: [], out_of_scope: [], concerns: [], ready: false });
 
 export const initialWizard = ({ entry = 'first-run', repo = '' }: { entry?: 'first-run' | 'board'; repo?: string } = {}): WizardState => ({
   v: 1,
@@ -72,29 +72,29 @@ export const initialWizard = ({ entry = 'first-run', repo = '' }: { entry?: 'fir
   started: false,
   rounds: [],
   current: null,
-  draft: emptyDraft(),
-  freeze: { makeBranch: true, branch: '', result: null },
+  draft: makeEmptyDraft(),
+  freeze: { makeBranch: true, branch: '', outcome: null },
 });
 
-export const stepNumber = (state: WizardState): number => STEPS.indexOf(state.step) + 1;
+export const toStepNumber = ({ state }: { state: WizardState }): number => STEPS.indexOf(state.step) + 1;
 
 /** Whether the saved progress still means something to resume. */
-export const isInFlight = (state: WizardState | null | undefined): boolean => Boolean(state) && state?.step !== 'done';
+export const isInFlight = ({ state }: { state: WizardState | null | undefined }): boolean => Boolean(state) && state?.step !== 'done';
 
 // ---- moving between steps ---------------------------------------------------
 
 type ContinueContext = { busy?: boolean; connected?: boolean };
 
-const CAN_CONTINUE_BY_STEP: Record<WizardStep, (state: WizardState, ctx: ContinueContext) => boolean> = {
+const CAN_CONTINUE_BY_STEP: Record<WizardStep, (state: WizardState, context: ContinueContext) => boolean> = {
   welcome: () => true,
-  setup: (state, ctx) => Boolean(state.setup.init) && state.setup.testCmd.trim().length > 0 && !ctx.busy,
-  connect: (state, ctx) => Boolean(ctx.connected) || state.connectSkipped,
+  setup: (state, context) => Boolean(state.setup.init) && state.setup.testCmd.trim().length > 0 && !context.busy,
+  connect: (state, context) => Boolean(context.connected) || state.connectSkipped,
   spec: () => false,
   freeze: () => false,
   done: () => false,
 };
 
-export const canContinue = (state: WizardState, ctx: ContinueContext = {}): boolean => CAN_CONTINUE_BY_STEP[state.step](state, ctx);
+export const canContinue = ({ state, context = {} }: { state: WizardState; context?: ContinueContext }): boolean => CAN_CONTINUE_BY_STEP[state.step](state, context);
 
 const NEXT_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState> = {
   welcome: (state) => (state.beat < BEATS - 1 ? { ...state, beat: state.beat + 1 } : { ...state, step: 'setup' }),
@@ -105,7 +105,7 @@ const NEXT_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState> = {
   done: (state) => state,
 };
 
-export const goNext = (state: WizardState): WizardState => NEXT_BY_STEP[state.step](state);
+export const goNext = ({ state }: { state: WizardState }): WizardState => NEXT_BY_STEP[state.step](state);
 
 const BACK_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState | null> = {
   welcome: (state) => (state.beat > 0 ? { ...state, beat: state.beat - 1 } : state),
@@ -117,32 +117,32 @@ const BACK_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState | nul
 };
 
 /** Returns the previous state, or null when Back means "leave the wizard" (back to the board). */
-export const goBack = (state: WizardState): WizardState | null => BACK_BY_STEP[state.step](state);
+export const goBack = ({ state }: { state: WizardState }): WizardState | null => BACK_BY_STEP[state.step](state);
 
-export const skipIntro = (state: WizardState): WizardState => ({ ...state, step: 'setup', beat: BEATS - 1 });
+export const skipIntro = ({ state }: { state: WizardState }): WizardState => ({ ...state, step: 'setup', beat: BEATS - 1 });
 
 // ---- spec drafting ----------------------------------------------------------
 
-const attachLint = (criteria: CcStep['criteria'], lint: CcStep['lint'] | undefined): WizardCriterion[] =>
-  criteria.map((c, i) => ({ text: c.text, check: c.check, lint: (lint?.[String(i)] ?? []).map((l) => ({ level: l.level, message: l.message })) }));
+const attachLint = ({ criteria, lint }: { criteria: CcStep['criteria']; lint: CcStep['lint'] | undefined }): WizardCriterion[] =>
+  criteria.map((draftCriterion, index) => ({ text: draftCriterion.text, check: draftCriterion.check, lint: (lint?.[String(index)] ?? []).map((line) => ({ level: line.level, message: line.message })) }));
 
 /** The request for `spec draft --step`. With `sendAnswers`, the open round (answers included) is added to the history. */
-export const buildStepRequest = (state: WizardState, { sendAnswers = false }: { sendAnswers?: boolean } = {}): DraftInput => {
-  const rounds = state.rounds.map((r) => ({ questions: r.questions, answers: r.answers }));
-  if (sendAnswers && state.current) rounds.push({ questions: state.current.questions, answers: state.current.answers });
+export const buildStepRequest = ({ state, sendAnswers = false }: Partial<{ sendAnswers?: boolean }> & { state: WizardState }): DraftInput => {
+  const openRound = sendAnswers && state.current ? [{ questions: state.current.questions, answers: state.current.answers }] : [];
+  const rounds = [...state.rounds.map((wizardRound) => ({ questions: wizardRound.questions, answers: wizardRound.answers })), ...openRound];
   return {
     goal: state.goal,
     rounds,
-    criteria: state.draft.criteria.map((c) => ({ text: c.text, check: c.check })),
+    criteria: state.draft.criteria.map((wizardCriterion) => ({ text: wizardCriterion.text, check: wizardCriterion.check })),
     out_of_scope: state.draft.out_of_scope,
   };
 };
 
 /** The request for `spec draft --finish`: the same document, with the open round recorded too. */
-export const buildFinishRequest = (state: WizardState): DraftInput => buildStepRequest(state, { sendAnswers: true });
+export const buildFinishRequest = ({ state }: { state: WizardState }): DraftInput => buildStepRequest({ state, sendAnswers: true });
 
 /** Folds a CLI answer into the state: a new open round with blank answers, and the draft it returned. */
-export const applyStepResponse = (state: WizardState, response: CcStep, { sentAnswers = false }: { sentAnswers?: boolean } = {}): WizardState => {
+export const applyStepResponse = ({ state, response, sentAnswers = false }: Partial<{ sentAnswers?: boolean }> & { state: WizardState; response: CcStep }): WizardState => {
   const rounds = sentAnswers && state.current ? [...state.rounds, { questions: state.current.questions, answers: state.current.answers }] : state.rounds;
   return {
     ...state,
@@ -150,7 +150,7 @@ export const applyStepResponse = (state: WizardState, response: CcStep, { sentAn
     rounds,
     current: { questions: response.questions, answers: response.questions.map(() => '') },
     draft: {
-      criteria: attachLint(response.criteria, response.lint),
+      criteria: attachLint({ criteria: response.criteria, lint: response.lint }),
       out_of_scope: response.out_of_scope,
       concerns: response.concerns,
       ready: response.ready,
@@ -159,97 +159,96 @@ export const applyStepResponse = (state: WizardState, response: CcStep, { sentAn
 };
 
 /** The round counter the person sees: 1 for the first set of questions. */
-export const roundNumber = (state: WizardState): number => state.rounds.length + (state.current ? 1 : 0) || (state.started ? 1 : 0);
+export const toRoundNumber = ({ state }: { state: WizardState }): number => state.rounds.length + (state.current ? 1 : 0) || (state.started ? 1 : 0);
 
-export const setGoal = (state: WizardState, goal: unknown): WizardState => ({ ...state, goal: String(goal).slice(0, 8000) });
+export const setGoal = ({ state, goal }: { state: WizardState; goal: unknown }): WizardState => ({ ...state, goal: String(goal).slice(0, 8000) });
 
-export const setAnswer = (state: WizardState, index: number, value: unknown): WizardState => {
+export const setAnswer = ({ state, index, value }: { state: WizardState; index: number; value: unknown }): WizardState => {
   if (!state.current || index < 0 || index >= state.current.answers.length) return state;
   const answers = state.current.answers.slice();
   answers[index] = String(value).slice(0, 8000);
   return { ...state, current: { ...state.current, answers } };
 };
 
-export const updateCriterion = (state: WizardState, index: number, patch: Partial<Pick<WizardCriterion, 'text' | 'check'>>): WizardState => {
+export const updateCriterion = ({ state, index, patch }: { state: WizardState; index: number; patch: Partial<Pick<WizardCriterion, 'text' | 'check'>> }): WizardState => {
   if (index < 0 || index >= state.draft.criteria.length) return state;
-  const criteria = state.draft.criteria.map((c, i) => (i === index ? { ...c, ...patch, lint: patch.text !== undefined || patch.check !== undefined ? [] : c.lint } : c));
+  const criteria = state.draft.criteria.map((wizardCriterion, count) => (count === index ? { ...wizardCriterion, ...patch, lint: patch.text !== undefined || patch.check !== undefined ? [] : wizardCriterion.lint } : wizardCriterion));
   return { ...state, draft: { ...state.draft, criteria } };
 };
 
-export const removeCriterion = (state: WizardState, index: number): WizardState => ({ ...state, draft: { ...state.draft, criteria: state.draft.criteria.filter((_, i) => i !== index) } });
+export const removeCriterion = ({ state, index }: { state: WizardState; index: number }): WizardState => ({ ...state, draft: { ...state.draft, criteria: state.draft.criteria.filter((_, count) => count !== index) } });
 
-export const addCriterion = (state: WizardState): WizardState =>
+export const addCriterion = ({ state }: { state: WizardState }): WizardState =>
   state.draft.criteria.length >= MAX_CRITERIA ? state : { ...state, draft: { ...state.draft, criteria: [...state.draft.criteria, { text: '', check: '', lint: [] }] } };
 
-export const setOutOfScope = (state: WizardState, value: unknown): WizardState => ({
+export const setOutOfScope = ({ state, value }: { state: WizardState; value: unknown }): WizardState => ({
   ...state,
-  draft: { ...state.draft, out_of_scope: String(value).split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 40) },
+  draft: { ...state.draft, out_of_scope: String(value).split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(0, 40) },
 });
 
 const VAGUE = /\b(fast|quick(ly)?|good|nice|easy|simple|clean|robust|properly|appropriate(ly)?|user[- ]friendly|as needed|etc\.?|and so on|should work)\b/i;
 
 /** Warnings the app can give without Claude: index -> list of plain sentences. */
-export const localWarnings = (criteria: Pick<WizardCriterion, 'text' | 'check'>[]): Record<number, string[]> => {
+export const collectLocalWarnings = ({ criteria }: { criteria: readonly Pick<WizardCriterion, 'text' | 'check'>[] }): Record<number, string[]> => {
   const out: Record<number, string[]> = {};
-  const add = (i: number, message: string): void => {
-    (out[i] ??= []).push(message);
+  const add = ({ index, message }: { index: number; message: string }): void => {
+    out[index] = [...(out[index] ?? []), message];
   };
   const seen = new Map<string, number>();
-  criteria.forEach((c, i) => {
-    const t = c.text.trim();
-    if (!t) add(i, 'This criterion is empty. Write it or delete it.');
+  criteria.forEach((pick, index) => {
+    const text = pick.text.trim();
+    if (!text) add({ index, message: 'This criterion is empty. Write it or delete it.' });
     else {
-      const vague = t.match(VAGUE);
-      if (vague) add(i, `"${vague[0]}" is vague. Say what behaviour or number would count.`);
-      if (t.length > 240) add(i, 'This is long. Two shorter criteria are easier to check.');
-      const key = t.toLowerCase().replace(/\s+/g, ' ');
+      const vague = text.match(VAGUE);
+      if (vague) add({ index, message: `"${vague[0]}" is vague. Say what behaviour or number would count.` });
+      if (text.length > 240) add({ index, message: 'This is long. Two shorter criteria are easier to check.' });
+      const key = text.toLowerCase().replace(/\s+/g, ' ');
       const first = seen.get(key);
-      if (first !== undefined) add(i, `Same as criterion ${first + 1}.`);
-      else seen.set(key, i);
+      if (first !== undefined) add({ index, message: `Same as criterion ${first + 1}.` });
+      else seen.set(key, index);
     }
-    if (t && !c.check.trim()) add(i, 'No way to check this is written down yet.');
+    if (text && !pick.check.trim()) add({ index, message: 'No way to check this is written down yet.' });
   });
   return out;
 };
 
-export const blockingProblems = (state: WizardState): string[] => {
-  const problems: string[] = [];
-  if (!state.draft.criteria.length) problems.push('There are no criteria yet.');
-  if (state.draft.criteria.some((c) => !c.text.trim())) problems.push('One or more criteria are empty.');
-  return problems;
+export const collectBlockingProblems = ({ state }: { state: WizardState }): string[] => {
+  const checks: readonly [string, boolean][] = [
+    ['There are no criteria yet.', !state.draft.criteria.length],
+    ['One or more criteria are empty.', state.draft.criteria.some((wizardCriterion) => !wizardCriterion.text.trim())],
+  ];
+  return checks.filter(([, isProblem]) => isProblem).map(([problem]) => problem);
 };
 
 /** The spec as it will be written, numbered the way spec.md numbers criteria. Shown before it is frozen. */
-export const specPreview = (state: WizardState): string => {
-  const lines = ['# Acceptance criteria', ''];
-  state.draft.criteria.forEach((c, i) => {
-    lines.push(`- [ ] ${i + 1}. ${c.text.trim()}`);
-    if (c.check.trim()) lines.push(`      Checked by: ${c.check.trim()}`);
-  });
-  if (state.draft.out_of_scope.length) {
-    lines.push('', '## Out of scope', '');
-    for (const item of state.draft.out_of_scope) lines.push(`- ${item}`);
-  }
-  return `${lines.join('\n')}\n`;
+export const buildSpecPreview = ({ state }: { state: WizardState }): string => {
+  const criteriaLines = state.draft.criteria.flatMap((wizardCriterion, index) => [
+    `- [ ] ${index + 1}. ${wizardCriterion.text.trim()}`,
+    ...(wizardCriterion.check.trim() ? [`      Checked by: ${wizardCriterion.check.trim()}`] : []),
+  ]);
+  const outOfScope = state.draft.out_of_scope.length ? ['', '## Out of scope', '', ...state.draft.out_of_scope.map((entry) => `- ${entry}`)] : [];
+  return `${['# Acceptance criteria', '', ...criteriaLines, ...outOfScope].join('\n')}\n`;
 };
 
 // ---- reading saved state back -----------------------------------------------
 
 type Rec = Record<string, unknown>;
-const str = (v: unknown, max = 8000): string => (typeof v === 'string' ? v : '').slice(0, max);
-const strs = (v: unknown, max = 60): string[] => (Array.isArray(v) ? v.slice(0, max).map((x) => str(x, 4000)) : []);
-const isRecord = (v: unknown): v is Rec => v !== null && typeof v === 'object' && !Array.isArray(v);
+const toStringOrEmpty = ({ value, max = 8000 }: { value: unknown; max?: number }): string => (typeof value === 'string' ? value : '').slice(0, max);
+const toStrings = ({ value, max = 60 }: { value: unknown; max?: number }): string[] => (Array.isArray(value) ? value.slice(0, max).map((x) => toStringOrEmpty({ value: x, max: 4000 })) : []);
+// A type guard must name the value it narrows, so it takes it positionally.
+// eslint-disable-next-line no-restricted-syntax
+const isRecord = (value: unknown): value is Rec => value !== null && typeof value === 'object' && !Array.isArray(value);
 
-const cleanQuestions = (v: unknown): DraftQuestion[] =>
-  (Array.isArray(v) ? v : [])
+const cleanQuestions = ({ value }: { value: unknown }): DraftQuestion[] =>
+  (Array.isArray(value) ? value : [])
     .filter(isRecord)
     .slice(0, 20)
-    .map((q, i) => ({ id: str(q.id, 40) || `q${i + 1}`, text: str(q.text, 1000), why: str(q.why, 1000) }));
+    .map((question, index) => ({ id: toStringOrEmpty({ value: question.id, max: 40 }) || `q${index + 1}`, text: toStringOrEmpty({ value: question.text, max: 1000 }), why: toStringOrEmpty({ value: question.why, max: 1000 }) }));
 
-const levelOf = (v: unknown): LintNote['level'] => (v === 'error' || v === 'info' ? v : 'warning');
+const readLevel = ({ value }: { value: unknown }): LintNote['level'] => (value === 'error' || value === 'info' ? value : 'warning');
 
 /** Anything that was saved on disk is untrusted: rebuild a valid state from it, or start fresh. */
-export const normalizeWizardState = (raw: unknown, { repo = '' }: { repo?: string } = {}): WizardState => {
+export const normalizeWizardState = ({ raw, repo = '' }: Partial<{ repo?: string }> & { raw: unknown }): WizardState => {
   const base = initialWizard({ repo });
   if (!isRecord(raw)) return base;
   const entry = raw.entry === 'board' ? 'board' : 'first-run';
@@ -258,56 +257,58 @@ export const normalizeWizardState = (raw: unknown, { repo = '' }: { repo?: strin
   let init: CcInit | null = null;
   if (isRecord(setup.init)) {
     try {
-      init = normalizeInit(setup.init);
+      init = normalizeInit({ raw: setup.init });
     } catch {
       init = null;
     }
   }
   const current = isRecord(raw.current) ? raw.current : null;
-  const currentQuestions = cleanQuestions(current?.questions);
+  const currentQuestions = cleanQuestions({ value: current?.questions });
   const draft: Rec = isRecord(raw.draft) ? raw.draft : {};
   const freeze: Rec = isRecord(raw.freeze) ? raw.freeze : {};
-  const result = isRecord(freeze.result) ? freeze.result : null;
+  // Saves from before the rename call it `result`.
+  const savedOutcome = freeze.outcome ?? freeze.result;
+  const outcome = isRecord(savedOutcome) ? savedOutcome : null;
   const beat = typeof raw.beat === 'number' && Number.isInteger(raw.beat) ? Math.min(Math.max(raw.beat, 0), BEATS - 1) : 0;
   return {
     v: 1,
-    repo: repo || str(raw.repo, 1000),
+    repo: repo || toStringOrEmpty({ value: raw.repo, max: 1000 }),
     entry,
     step,
     beat,
-    setup: { init, testCmd: str(setup.testCmd, 1000), ci: setup.ci === true },
+    setup: { init, testCmd: toStringOrEmpty({ value: setup.testCmd, max: 1000 }), ci: setup.ci === true },
     connectSkipped: raw.connectSkipped === true,
-    goal: str(raw.goal),
+    goal: toStringOrEmpty({ value: raw.goal }),
     started: raw.started === true,
     rounds: (Array.isArray(raw.rounds) ? raw.rounds : [])
       .filter(isRecord)
       .slice(0, 30)
-      .map((r) => ({ questions: cleanQuestions(r.questions), answers: strs(r.answers, 20) })),
-    current: current ? { questions: currentQuestions, answers: currentQuestions.map((_, i) => str(strs(current.answers, 20)[i] ?? '')) } : null,
+      .map((rec) => ({ questions: cleanQuestions({ value: rec.questions }), answers: toStrings({ value: rec.answers, max: 20 }) })),
+    current: current ? { questions: currentQuestions, answers: currentQuestions.map((_, index) => toStringOrEmpty({ value: toStrings({ value: current.answers, max: 20 })[index] ?? '' })) } : null,
     draft: {
       criteria: (Array.isArray(draft.criteria) ? draft.criteria : [])
         .filter(isRecord)
         .slice(0, MAX_CRITERIA)
-        .map((c) => ({
-          text: str(c.text, 1000),
-          check: str(c.check, 1000),
-          lint: (Array.isArray(c.lint) ? c.lint : []).filter(isRecord).slice(0, 5).map((l) => ({ level: levelOf(l.level), message: str(l.message, 500) })),
+        .map((rec) => ({
+          text: toStringOrEmpty({ value: rec.text, max: 1000 }),
+          check: toStringOrEmpty({ value: rec.check, max: 1000 }),
+          lint: (Array.isArray(rec.lint) ? rec.lint : []).filter(isRecord).slice(0, 5).map((line) => ({ level: readLevel({ value: line.level }), message: toStringOrEmpty({ value: line.message, max: 500 }) })),
         })),
-      out_of_scope: strs(draft.out_of_scope, 40),
-      concerns: strs(draft.concerns, 40),
+      out_of_scope: toStrings({ value: draft.out_of_scope, max: 40 }),
+      concerns: toStrings({ value: draft.concerns, max: 40 }),
       ready: draft.ready === true,
     },
     freeze: {
       makeBranch: freeze.makeBranch !== false,
-      branch: str(freeze.branch, 100),
-      result: result
+      branch: toStringOrEmpty({ value: freeze.branch, max: 100 }),
+      outcome: outcome
         ? {
-            spec_path: str(result.spec_path, 1000),
-            criteria: typeof result.criteria === 'number' && Number.isFinite(result.criteria) ? result.criteria : 0,
-            frozen: result.frozen === true,
-            lock_sha256: /^[0-9a-f]{64}$/.test(str(result.lock_sha256, 64)) ? str(result.lock_sha256, 64) : null,
-            branch: result.branch ? str(result.branch, 200) : null,
-            commit: /^[0-9a-f]{7,64}$/.test(str(result.commit, 64)) ? str(result.commit, 64) : null,
+            spec_path: toStringOrEmpty({ value: outcome.spec_path, max: 1000 }),
+            criteria: typeof outcome.criteria === 'number' && Number.isFinite(outcome.criteria) ? outcome.criteria : 0,
+            frozen: outcome.frozen === true,
+            lock_sha256: /^[0-9a-f]{64}$/.test(toStringOrEmpty({ value: outcome.lock_sha256, max: 64 })) ? toStringOrEmpty({ value: outcome.lock_sha256, max: 64 }) : null,
+            branch: outcome.branch ? toStringOrEmpty({ value: outcome.branch, max: 200 }) : null,
+            commit: /^[0-9a-f]{7,64}$/.test(toStringOrEmpty({ value: outcome.commit, max: 64 })) ? toStringOrEmpty({ value: outcome.commit, max: 64 }) : null,
           }
         : null,
     },

@@ -15,9 +15,9 @@ export const FLAG_TEXT: Record<string, string> = {
   'no-mutants': 'There was nothing to plant a bug into.',
 };
 
-export const pct = (x: number | null | undefined): string => (x === null || x === undefined ? 'n/a' : `${Math.round(x * 100)}%`);
+export const formatPercent = ({ x }: { x: number | null | undefined }): string => (x === null || x === undefined ? 'n/a' : `${Math.round(x * 100)}%`);
 
-export const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+export const formatPlural = ({ count, one, many = `${one}s` }: { count: number; one: string; many?: string }): string => `${count} ${count === 1 ? one : many}`;
 
 const VERDICT_WORD = new Map<unknown, string>([
   ['SUPPORTED', 'supported'],
@@ -25,55 +25,55 @@ const VERDICT_WORD = new Map<unknown, string>([
   ['UNVERIFIABLE', 'unverifiable'],
 ]);
 
-export const verdictWord = (claim: Pick<Claim, 'verdict'>): string => {
-  const v = claim.verdict?.verdict;
-  return VERDICT_WORD.get(v) ?? 'not checked';
+export const formatVerdictWord = ({ claim }: { claim: Pick<Claim, 'verdict'> }): string => {
+  const value = claim.verdict?.verdict;
+  return VERDICT_WORD.get(value) ?? 'not checked';
 };
 
-export const caughtWords = (claim: Pick<Claim, 'mutation'>): string => {
-  const m = claim.mutation;
-  if (!m || m.total === 0) return 'no planted bugs run';
-  return `tests caught ${m.killed + m.timeout} of ${m.total} planted bugs`;
+export const formatCaughtWords = ({ claim }: { claim: Pick<Claim, 'mutation'> }): string => {
+  const mutation = claim.mutation;
+  if (!mutation || mutation.total === 0) return 'no planted bugs run';
+  return `tests caught ${mutation.killed + mutation.timeout} of ${mutation.total} planted bugs`;
 };
 
 /** One muted line under a claim: what the author said, what the checker said, what the tests did. */
-export const factsLine = (claim: Claim): string => {
+export const formatFactsLine = ({ claim }: { claim: Claim }): string => {
   const stated = claim.confidence === null ? 'Confidence not stated' : `Stated ${claim.confidence.toFixed(2)}`;
-  return `${stated}. Checker: ${verdictWord(claim)}. ${caughtWords(claim).replace(/^./, (c) => c.toUpperCase())}.`;
+  return `${stated}. Checker: ${formatVerdictWord({ claim })}. ${formatCaughtWords({ claim }).replace(/^./, (text) => text.toUpperCase())}.`;
 };
 
-export const needsDecision = (board: Board, claim: Claim): boolean => board.queue.includes(claim.id);
+export const isDecisionNeeded = ({ board, claim }: { board: Board; claim: Claim }): boolean => board.queue.includes(claim.id);
 
 export type Groups = {
-  needs: Claim[];
-  backed: Claim[];
+  needs: readonly Claim[];
+  backed: readonly Claim[];
 };
 
 /** The decision queue in risk order, then everything else in file order. */
-export const groupClaims = (board: Board): Groups => {
-  const byId = new Map(board.claims.map((c) => [c.id, c]));
-  const needs = board.queue.map((id) => byId.get(id)).filter((c): c is Claim => c !== undefined);
-  const backed = board.claims.filter((c) => !board.queue.includes(c.id));
+export const collectClaimGroups = ({ board }: { board: Board }): Groups => {
+  const byId = new Map(board.claims.map((claim) => [claim.id, claim]));
+  const needs = board.queue.map((id) => byId.get(id)).filter((claim): claim is Claim => claim !== undefined);
+  const backed = board.claims.filter((claim) => !board.queue.includes(claim.id));
   return { needs, backed };
 };
 
 /** "none need a decision", "1 needs a decision", "3 need a decision". */
-const describeNeeds = (needs: number): string => {
+const describeNeeds = ({ needs }: { needs: number }): string => {
   if (needs === 0) return 'none need a decision';
   return `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`;
 };
 
-export const summaryLine = (board: Board): string => {
-  const n = board.claims.length;
-  if (n === 0) return 'No claims yet.';
+export const formatSummaryLine = ({ board }: { board: Board }): string => {
+  const count = board.claims.length;
+  if (count === 0) return 'No claims yet.';
   const needs = board.queue.length;
-  const head = `${plural(n, 'claim')}, ${describeNeeds(needs)}.`;
+  const head = `${formatPlural({ count, one: 'claim' })}, ${describeNeeds({ needs })}.`;
   // Claims that list the same file carry the same planted bugs, so count each bug once per run.
   const bugs = new Map<string, boolean>(
-    board.claims.flatMap((c) =>
-      (c.mutation?.mutants ?? [])
-        .filter((m) => m.outcome === 'killed' || m.outcome === 'timeout' || m.outcome === 'survived')
-        .map((m): [string, boolean] => [JSON.stringify([c.mutation?.runId ?? '', m.file, m.line_no, m.cls, m.mutated]), m.outcome !== 'survived']),
+    board.claims.flatMap((claim) =>
+      (claim.mutation?.mutants ?? [])
+        .filter((mutant) => mutant.outcome === 'killed' || mutant.outcome === 'timeout' || mutant.outcome === 'survived')
+        .map((mutant): [string, boolean] => [JSON.stringify([claim.mutation?.runId ?? '', mutant.file, mutant.line_no, mutant.cls, mutant.mutated]), mutant.outcome !== 'survived']),
     ),
   );
   const total = bugs.size;
@@ -88,6 +88,6 @@ const SPEC_WORD: Record<Board['repo']['specState'], string> = {
   none: 'No spec yet',
 };
 
-export const specWord = (state: Board['repo']['specState']): string => SPEC_WORD[state];
+export const formatSpecWord = ({ state }: { state: Board['repo']['specState'] }): string => SPEC_WORD[state];
 
-export const shortHash = (h: string | null | undefined): string => (h ? h.slice(0, 12) : '');
+export const formatShortHash = ({ height }: { height: string | null | undefined }): string => (height ? height.slice(0, 12) : '');

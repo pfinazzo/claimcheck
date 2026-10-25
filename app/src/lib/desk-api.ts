@@ -17,12 +17,12 @@ import type { CcRun } from './cc-cli.ts';
 import { SAFE_BRANCH, buildDraftInput, normalizeFinish, normalizeInit, normalizeStatus, normalizeStep } from './cc-protocol.ts';
 import * as ghDefault from './gh.ts';
 import { updateAppState } from './ledger.ts';
-import { proposePrompt, implementPrompt } from './prompts.ts';
+import { buildProposePrompt, buildImplementPrompt } from './prompts.ts';
 import { createRecents } from './recents.ts';
 import * as runnerDefault from './runner.ts';
 import { readBoard } from './store.ts';
 import { setTomlString } from './toml.ts';
-import { commandsFor, createTrustStore, digestOf, type TrustedCommand } from './trust.ts';
+import { listCommandsFor, createTrustStore, computeDigest, type TrustedCommand } from './trust.ts';
 import { watch } from './watcher.ts';
 import { createFixer, type PublicRun } from './fixer.ts';
 import type { KeyStore } from './claude-api.ts';
@@ -31,10 +31,10 @@ import { toText } from '../shared/text.ts';
 import { toPromise } from '../shared/promise.ts';
 import { GIT_TIMEOUT_MS } from './timeouts.ts';
 
-const execFileP = promisify(execFile);
+const runExecFile = promisify(execFile);
 
-type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
-type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+type ExecFn = (file: string, argList: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer }>;
+type SpawnFn = (command: string, argList: readonly string[], options: SpawnOptions) => ChildProcess;
 type Rec = Record<string, unknown>;
 
 export const NOT_A_REPO_MESSAGE = 'This folder is not a git repository. claimcheck works on a repo, so run git init there first.';
@@ -43,7 +43,7 @@ export const OPEN_PATH_MESSAGE = 'Only a fix worktree folder or a web link can b
 
 export class NeedsTrustError extends Error {
   code = NEEDS_TRUST_CODE;
-  details: { commands: TrustedCommand[] };
+  details: { commands: readonly TrustedCommand[] };
 
   constructor(commands: TrustedCommand[]) {
     super('This repo can run commands on your computer. Review them before the first run.');
@@ -61,22 +61,22 @@ type Settings = {
   useAuto?: boolean;
 };
 
-const loadSettings = (file: string): Settings => {
+const loadSettings = ({ file }: { file: string }): Settings => {
   const defaults: Settings = { mode: 'cli', model: 'claude-opus-5-5' };
   try {
-    const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
-    return data && typeof data === 'object' && !Array.isArray(data) ? { ...defaults, ...(data as Partial<Settings>) } : defaults;
+    const payload: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    return payload && typeof payload === 'object' && !Array.isArray(payload) ? { ...defaults, ...(payload as Partial<Settings>) } : defaults;
   } catch {
     return defaults;
   }
 };
 
-const isWithin = (child: string, parent: string): boolean => {
+const isWithin = ({ child, parent }: { child: string; parent: string }): boolean => {
   const rel = path.relative(parent, child);
   return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel);
 };
 
-const wizardKey = (repoPath: string): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
+const toWizardKey = ({ repoPath }: { repoPath: string }): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
 
 export type ViewPayload = {
   view: ViewName;
@@ -149,7 +149,7 @@ export const createDeskApi = ({
     repoPath: null,
     board: null,
     watcher: null,
-    settings: loadSettings(settingsFile),
+    settings: loadSettings({ file: settingsFile }),
     running: false,
     claimcheckRunning: false,
     gen: 0,
@@ -158,7 +158,7 @@ export const createDeskApi = ({
     ccCall: null,
   };
   const saveSettings = (): void => writeFileSync(settingsFile, `${JSON.stringify(state.settings, null, 2)}\n`, 'utf8');
-  const exec = (execFn ?? (execFileP));
+  const exec = (execFn ?? (runExecFile));
 
   const fixer = createFixer({
     cliModule,
@@ -183,9 +183,9 @@ export const createDeskApi = ({
   });
 
   // ---- the board ------------------------------------------------------------
-  const trustInfo = (board: Board): TrustInfo => {
-    const commands = commandsFor(board);
-    return { trusted: trustStore.isTrusted(board.repo.path, digestOf(commands)), commands };
+  const trustInfo = ({ board }: { board: Board }): TrustInfo => {
+    const commands = listCommandsFor({ board });
+    return { trusted: trustStore.isTrusted(board.repo.path, computeDigest({ commands })), commands };
   };
 
   const refresh = async (): Promise<Board | null> => {
@@ -197,16 +197,16 @@ export const createDeskApi = ({
       state.settings.cliPath = (await cliModule.findClaude().catch(() => null)) ?? null;
       saveSettings();
     }
-    const board = await readBoard(repoPath);
+    const board = await readBoard({ repoPath });
     // A slow read of the repo that was open a moment ago must not replace the repo that is open now.
     if (state.repoPath !== repoPath || state.gen !== gen) return state.board;
     board.connection = connectionSummary();
     board.runs.fixes = fixer.list();
-    board.trust = trustInfo(board);
+    board.trust = trustInfo({ board });
     // The exact text Copy prompt would copy, so "See the prompt" can show it before any run.
     for (const claim of board.claims) {
       try {
-        claim.promptText = proposePrompt({ repo: board.repo, config: board.config, claim });
+        claim.promptText = buildProposePrompt({ context: { repo: board.repo, config: board.config, claim } });
       } catch {
         claim.promptText = '';
       }
@@ -221,9 +221,9 @@ export const createDeskApi = ({
     return state.board;
   };
 
-  const ensureTrusted = (board: Board, confirmed: unknown): void => {
-    const commands = commandsFor(board);
-    const digest = digestOf(commands);
+  const ensureTrusted = ({ board, confirmed }: { board: Board; confirmed: unknown }): void => {
+    const commands = listCommandsFor({ board });
+    const digest = computeDigest({ commands });
     if (trustStore.isTrusted(board.repo.path, digest)) return;
     if (confirmed === true) {
       trustStore.trust(board.repo.path, digest);
@@ -235,25 +235,25 @@ export const createDeskApi = ({
   // ---- wizard persistence -----------------------------------------------------
   const readWizardFile = (): Record<string, unknown> => {
     try {
-      const data: unknown = JSON.parse(readFileSync(wizardFile, 'utf8'));
-      return data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : {};
+      const payload: unknown = JSON.parse(readFileSync(wizardFile, 'utf8'));
+      return payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, unknown>) : {};
     } catch {
       return {};
     }
   };
-  const loadWizard = (repoPath: string): WizardState | null => {
-    const raw = readWizardFile()[wizardKey(repoPath)];
-    return raw ? normalizeWizardState(raw, { repo: repoPath }) : null;
+  const loadWizard = ({ repoPath }: { repoPath: string }): WizardState | null => {
+    const raw = readWizardFile()[toWizardKey({ repoPath })];
+    return raw ? normalizeWizardState({ raw, repo: repoPath }) : null;
   };
-  const storeWizard = (repoPath: string, wizard: WizardState | null): void => {
+  const storeWizard = ({ repoPath, wizard }: { repoPath: string; wizard: WizardState | null }): void => {
     const all = readWizardFile();
-    if (wizard) all[wizardKey(repoPath)] = wizard;
-    else delete all[wizardKey(repoPath)];
+    if (wizard) all[toWizardKey({ repoPath })] = wizard;
+    else delete all[toWizardKey({ repoPath })];
     writeFileSync(wizardFile, `${JSON.stringify(all, null, 2)}\n`, 'utf8');
   };
 
   const currentView = (): ViewPayload => ({ view: state.view, board: state.board, wizard: state.wizard, connection: connectionSummary(), repoPath: state.repoPath });
-  const setView = (view: ViewName): void => {
+  const setView = ({ view }: { view: ViewName }): void => {
     state.view = view;
     emitView(currentView());
   };
@@ -261,12 +261,12 @@ export const createDeskApi = ({
   const startWatching = (): void => {
     state.watcher?.close();
     if (!state.repoPath) return;
-    state.watcher = watch(state.repoPath, () => {
+    state.watcher = watch({ repoPath: state.repoPath, onChange: () => {
       refresh().catch(() => {});
-    });
+    } });
   };
 
-  const gitTop = async (dir: string): Promise<string | null> => {
+  const gitTop = async ({ dir }: { dir: string }): Promise<string | null> => {
     try {
       const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], { cwd: dir, windowsHide: true, timeout: GIT_TIMEOUT_MS });
       return path.resolve(String(stdout).trim());
@@ -277,25 +277,25 @@ export const createDeskApi = ({
 
   type OpenResult = { ok: true; view: ViewName; board?: Board | null; wizard?: WizardState | null } | { ok: false; error: string };
 
-  const openRepo = async (given?: string | null): Promise<OpenResult> => {
+  const openRepo = async ({ given }: { given?: string | null | undefined } = {}): Promise<OpenResult> => {
     const chosen = given ?? (await pickFolder());
     if (!chosen) return { ok: false, error: 'No folder chosen.' };
     const resolved = path.resolve(chosen);
     if (!existsSync(resolved) || !statSync(resolved).isDirectory()) return { ok: false, error: 'That folder does not exist.' };
     const gen = ++state.gen;
-    const probe = await readBoard(resolved);
+    const probe = await readBoard({ repoPath: resolved });
     if (gen !== state.gen) return { ok: false, error: 'Another repo was opened first.' };
     if (!probe.repo.hasClaimcheck) {
-      const top = await gitTop(resolved);
+      const top = await gitTop({ dir: resolved });
       if (!top) return { ok: false, error: NOT_A_REPO_MESSAGE };
       state.watcher?.close();
       state.watcher = null;
       state.repoPath = resolved;
       state.board = null;
       recents.add(resolved);
-      state.wizard = loadWizard(resolved) ?? initialWizard({ entry: 'first-run', repo: resolved });
-      storeWizard(resolved, state.wizard);
-      setView('wizard');
+      state.wizard = loadWizard({ repoPath: resolved }) ?? initialWizard({ entry: 'first-run', repo: resolved });
+      storeWizard({ repoPath: resolved, wizard: state.wizard });
+      setView({ view: 'wizard' });
       return { ok: true, view: 'wizard', wizard: state.wizard };
     }
     state.repoPath = resolved;
@@ -303,39 +303,39 @@ export const createDeskApi = ({
     recents.add(resolved);
     startWatching();
     const board = await refresh();
-    const saved = loadWizard(resolved);
-    if (saved && isInFlight(saved)) {
+    const saved = loadWizard({ repoPath: resolved });
+    if (saved && isInFlight({ state: saved })) {
       state.wizard = saved;
-      setView('wizard');
+      setView({ view: 'wizard' });
       return { ok: true, view: 'wizard', wizard: state.wizard, board };
     }
     state.wizard = null;
-    setView('board');
+    setView({ view: 'board' });
     return { ok: true, view: 'board', board };
   };
 
   // ---- fix flow ---------------------------------------------------------------
-  const contextFor = (claimId: string) => {
+  const contextFor = ({ claimId }: { claimId: string }) => {
     const board = requireBoard();
-    const claim = board.claims.find((c) => c.id === claimId);
+    const claim = board.claims.find((claim) => claim.id === claimId);
     if (!claim) throw new Error(`No claim ${claimId}.`);
     return { repo: board.repo, config: board.config, claim };
   };
 
-  const copyPrompt = ({ claimId, kind = 'propose', proposeRunId, choice }: { claimId: string; kind?: 'propose' | 'implement'; proposeRunId?: string; choice?: number }): Promise<{ text: string }> => toPromise(() => {
-    const ctx = contextFor(claimId);
+  const copyPrompt = ({ claimId, kind = 'propose', proposeRunId, choice }: { claimId: string; kind?: 'propose' | 'implement'; proposeRunId?: string; choice?: number }): Promise<{ text: string }> => toPromise({ work: () => {
+    const context = contextFor({ claimId });
     let text: string;
     if (kind === 'implement') {
       const run = proposeRunId ? fixer.raw(proposeRunId) : null;
       const chosen = run?.proposals?.[choice ?? -1];
       if (!run?.proposals || !chosen) throw new Error('Those proposals are not ready.');
-      text = implementPrompt(ctx, chosen, run.proposals.filter((_, i) => i !== choice));
+      text = buildImplementPrompt({ context, proposal: chosen, rejected: run.proposals.filter((_, index) => index !== choice) });
     } else {
-      text = proposePrompt(ctx);
+      text = buildProposePrompt({ context });
     }
     clipboard?.writeText?.(text);
     return { text };
-  });
+  } });
 
   type ConnectInput = {
     action?: 'save-key' | 'clear-key' | 'sign-in' | 'detect';
@@ -364,7 +364,7 @@ export const createDeskApi = ({
     }
     if (action === 'sign-in') {
       const bin = state.settings.cliPath ?? (await cliModule.findClaude()) ?? undefined;
-      cliModule.signIn({ ...(bin ? { bin } : {}), ...(spawnFn ? { spawnFn } : {}) });
+      cliModule.startSignIn({ ...(bin ? { bin } : {}), ...(spawnFn ? { spawnFn } : {}) });
     }
     if (action === 'detect') {
       state.settings.cliPath = (await cliModule.findClaude()) ?? null;
@@ -376,22 +376,22 @@ export const createDeskApi = ({
 
   const testConnection = async ({ mode }: { mode?: ConnectionMode } = {}): Promise<Rec> => {
     const which = mode ?? state.settings.mode;
-    let result: Rec;
+    let outcome: Rec;
     if (which === 'api') {
       if (!keyStore) throw new Error('No API key saved.');
-      const r = await apiModule.testConnection({ store: keyStore });
-      result = { ...r };
-      state.settings.apiOk = r.ok;
+      const connectionTest = await apiModule.testConnection({ store: keyStore });
+      outcome = { ...connectionTest };
+      state.settings.apiOk = connectionTest.ok;
     } else {
       const bin = state.settings.cliPath ?? (await cliModule.findClaude());
-      const r = await cliModule.testConnection({ ...(bin ? { bin } : {}), ...(spawnFn ? { spawnFn } : {}) });
-      result = { ...r };
-      state.settings.cliPath = r.path ?? state.settings.cliPath ?? null;
-      state.settings.cliOk = r.ok;
+      const connectionResult = await cliModule.testConnection({ ...(bin ? { bin } : {}), ...(spawnFn ? { spawnFn } : {}) });
+      outcome = { ...connectionResult };
+      state.settings.cliPath = connectionResult.path ?? state.settings.cliPath ?? null;
+      state.settings.cliOk = connectionResult.ok;
     }
     saveSettings();
     await refresh();
-    return { mode: which, ...result, connection: connectionSummary() };
+    return { mode: which, ...outcome, connection: connectionSummary() };
   };
 
   const startPropose = async ({ claimId, mode }: { claimId: string; mode?: ConnectionMode }): Promise<PublicRun> => {
@@ -401,18 +401,18 @@ export const createDeskApi = ({
 
   const startImplement = async ({ claimId, proposeRunId, choice, trust }: { claimId: string; proposeRunId: string; choice: number; trust?: unknown }): Promise<PublicRun> => {
     const board = requireBoard();
-    ensureTrusted(board, trust);
+    ensureTrusted({ board, confirmed: trust });
     return fixer.startImplement({ board, claimId, proposeRunId, choice, model: state.settings.model });
   };
 
   const acceptRisk = async ({ claimId, note }: { claimId: string; note?: unknown }): Promise<unknown> => {
     const board = requireBoard();
-    const result = fixer.acceptRisk({ board, claimId, note });
+    const outcome = fixer.acceptRisk({ board, claimId, note });
     await refresh();
-    return result;
+    return outcome;
   };
 
-  const claimcheckBin = (board: Board | null): runnerDefault.ResolveOptions => ({
+  const claimcheckBin = ({ board }: { board: Board | null }): runnerDefault.ResolveOptions => ({
     python: board?.config.app.python ?? null,
     bin: state.settings.claimcheckBin ?? null,
     ...(execFn ? { execFn } : {}),
@@ -421,20 +421,20 @@ export const createDeskApi = ({
   const runClaimcheck = async ({ provider, trust }: { provider?: string; trust?: unknown } = {}): Promise<{ exitCode: number | null }> => {
     const board = requireBoard();
     if (state.claimcheckRunning) throw new Error('claimcheck is already running.');
-    ensureTrusted(board, trust);
+    ensureTrusted({ board, confirmed: trust });
     state.claimcheckRunning = true;
     emitRun({ type: 'claimcheck', status: 'running' });
     try {
-      const resolved = await runnerModule.resolveClaimcheck(claimcheckBin(board));
-      const result = await runnerModule.runClaimcheck({
+      const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board }));
+      const outcome = await runnerModule.runClaimcheck({
         repoPath: board.repo.path,
         provider: provider ?? board.config.checker.provider,
         resolved,
         ...(spawnFn ? { spawnFn } : {}),
         onLine: (line) => emitRun({ type: 'claimcheck', line }),
       });
-      emitRun({ type: 'claimcheck', status: 'done', exitCode: result.exitCode });
-      return result;
+      emitRun({ type: 'claimcheck', status: 'done', exitCode: outcome.exitCode });
+      return outcome;
     } finally {
       state.claimcheckRunning = false;
       await refresh();
@@ -445,19 +445,19 @@ export const createDeskApi = ({
     const board = requireBoard();
     const run = fixer.raw(runId);
     if (!run || run.kind !== 'implement' || run.status !== 'resolved' || !run.proposal || !run.worktree || !run.branch) throw new Error('Only a resolved fix can become a pull request.');
-    if (!(await ghModule.ghReady(execFn ? { execFn } : {}))) throw new Error('The GitHub CLI is not installed or not signed in. Run gh auth login.');
-    const claim = board.claims.find((c) => c.id === run.claimId);
+    if (!(await ghModule.isGhReady(execFn ? { execFn } : {}))) throw new Error('The GitHub CLI is not installed or not signed in. Run gh auth login.');
+    const claim = board.claims.find((claim) => claim.id === run.claimId);
     if (!claim) throw new Error(`No claim ${run.claimId}.`);
     const url = await ghModule.openPullRequest({
       cwd: run.worktree,
       base: board.config.base,
       head: run.branch,
       title: `claimcheck: ${run.claimId} — ${run.proposal.title}`,
-      body: ghModule.prBody({ claim, proposal: run.proposal, run: { ...(run.tests ? { tests: run.tests } : {}), ...(run.killCondition ? { killCondition: run.killCondition } : {}) } as never }),
+      body: ghModule.buildPrBody({ claim, proposal: run.proposal, run: { ...(run.tests ? { tests: run.tests } : {}), ...(run.killCondition ? { killCondition: run.killCondition } : {}) } as never }),
       ...(execFn ? { execFn } : {}),
     });
     fixer.setPrUrl(runId, url);
-    updateAppState(board.repo.path, run.claimId, { fix: { ...(claim.fix ?? {}), prUrl: url } });
+    updateAppState({ repoPath: board.repo.path, claimId: run.claimId, patch: { fix: { ...(claim.fix ?? {}), prUrl: url } } });
     await refresh();
     return { url };
   };
@@ -489,7 +489,7 @@ export const createDeskApi = ({
     } catch {
       throw new Error(OPEN_PATH_MESSAGE);
     }
-    if (!isWithin(real, root) || !statSync(real).isDirectory()) throw new Error(OPEN_PATH_MESSAGE);
+    if (!isWithin({ child: real, parent: root }) || !statSync(real).isDirectory()) throw new Error(OPEN_PATH_MESSAGE);
     await openPath(real);
     return true;
   };
@@ -511,11 +511,11 @@ export const createDeskApi = ({
     return { provider: 'claude-cli', env: {} };
   };
 
-  const cc = async (args: string[], { input, timeoutMs, env = {} }: { input?: unknown; timeoutMs?: number; env?: Record<string, string> } = {}): Promise<unknown> => {
+  const cc = async ({ argList, input, timeoutMs, env = {} }: Partial<{ input?: unknown; timeoutMs?: number; env?: Record<string, string> }> & { argList: readonly string[] }): Promise<unknown> => {
     const repoPath = requireRepo();
     if (state.ccCall) throw new Error('claimcheck is already working on something. Wait for it or cancel it.');
-    const resolved = await runnerModule.resolveClaimcheck(claimcheckBin(state.board));
-    const call = ccModule.startCc({ resolved, args, input, cwd: repoPath, env, ...(timeoutMs ? { timeoutMs } : {}), ...(spawnFn ? { spawnFn } : {}) });
+    const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board: state.board }));
+    const call = ccModule.startCc({ resolved, cliArgs: argList, input, cwd: repoPath, env, ...(timeoutMs ? { timeoutMs } : {}), ...(spawnFn ? { spawnFn } : {}) });
     state.ccCall = call;
     try {
       return await call.promise;
@@ -524,16 +524,16 @@ export const createDeskApi = ({
     }
   };
 
-  const saveWizard = (wizard: unknown): true => {
-    state.wizard = normalizeWizardState(wizard, { repo: requireRepo() });
-    storeWizard(requireRepo(), state.wizard);
+  const saveWizard = ({ wizard }: { wizard: unknown }): true => {
+    state.wizard = normalizeWizardState({ raw: wizard, repo: requireRepo() });
+    storeWizard({ repoPath: requireRepo(), wizard: state.wizard });
     return true;
   };
 
-  const wizardStatus = async (): Promise<CcStatus> => normalizeStatus(await cc(['status', '--json'], { timeoutMs: 30000 }));
+  const wizardStatus = async (): Promise<CcStatus> => normalizeStatus({ raw: await cc({ argList: ['status', '--json'], timeoutMs: 30000 }) });
 
-  const wizardInit = async ({ ci = false }: { ci?: boolean } = {}): Promise<CcInit> =>
-    normalizeInit(await cc(['init', '--json', '--yes', ...(ci ? ['--ci', 'github'] : [])], { timeoutMs: 180000 }));
+  const wizardInit = async ({ ci: isCi = false }: { ci?: boolean } = {}): Promise<CcInit> =>
+    normalizeInit({ raw: await cc({ argList: ['init', '--json', '--yes', ...(isCi ? ['--ci', 'github'] : [])], timeoutMs: 180000 }) });
 
   const wizardSaveTestCmd = async ({ testCmd }: { testCmd: unknown }): Promise<{ testCmd: string; changed: boolean }> => {
     const repoPath = requireRepo();
@@ -543,60 +543,60 @@ export const createDeskApi = ({
     const file = path.join(repoPath, '.claimcheck', 'config.toml');
     if (!existsSync(file)) throw new Error('Set up the repo first; there is no .claimcheck/config.toml yet.');
     const before = readFileSync(file, 'utf8');
-    const after = setTomlString(before, 'test_cmd', value);
+    const after = setTomlString({ text: before, key: 'test_cmd', value });
     if (after !== before) writeFileSync(file, after, 'utf8');
     // The person typed or confirmed this command in the wizard, so it is the one they trust.
-    const board = await readBoard(repoPath);
-    trustStore.trust(repoPath, digestOf(commandsFor(board)));
+    const board = await readBoard({ repoPath });
+    trustStore.trust(repoPath, computeDigest({ commands: listCommandsFor({ board }) }));
     return { testCmd: value, changed: after !== before };
   };
 
-  const draftBody = (request: Partial<DraftInput> | undefined): DraftInput =>
+  const draftBody = ({ request }: { request: Partial<DraftInput> | undefined }): DraftInput =>
     buildDraftInput({ goal: request?.goal, rounds: request?.rounds, criteria: request?.criteria, out_of_scope: request?.out_of_scope });
 
   const wizardDraft = async ({ request }: { request?: Partial<DraftInput> }): Promise<CcStep> => {
     const { provider, env } = providerFor();
-    return normalizeStep(await cc(['spec', 'draft', '--step', '--provider', provider], { input: draftBody(request), timeoutMs: 10 * 60 * 1000, env }));
+    return normalizeStep({ raw: await cc({ argList: ['spec', 'draft', '--step', '--provider', provider], input: draftBody({ request }), timeoutMs: 10 * 60 * 1000, env }) });
   };
 
   const wizardFinish = async ({ request, freeze = true, makeBranch = true, branch = '' }: { request?: Partial<DraftInput>; freeze?: boolean; makeBranch?: boolean; branch?: string } = {}): Promise<CcFinish> => {
     const name = branch.trim();
     if (makeBranch && name && !SAFE_BRANCH.test(name)) throw new Error('That branch name has characters git would not accept. Use letters, numbers, dashes, dots and slashes.');
     const { provider, env } = providerFor();
-    const args = ['spec', 'draft', '--finish', ...(freeze ? [] : ['--no-freeze']), ...toBranchArgs({ makeBranch, name }), '--provider', provider];
-    const result = normalizeFinish(await cc(args, { input: draftBody(request), timeoutMs: 5 * 60 * 1000, env }));
+    const argList = ['spec', 'draft', '--finish', ...(freeze ? [] : ['--no-freeze']), ...toBranchArgs({ makeBranch, name }), '--provider', provider];
+    const outcome = normalizeFinish({ raw: await cc({ argList, input: draftBody({ request }), timeoutMs: 5 * 60 * 1000, env }) });
     await refresh().catch(() => {});
-    return result;
+    return outcome;
   };
 
-  const wizardCancel = (): Promise<true> => toPromise(() => {
+  const wizardCancel = (): Promise<true> => toPromise({ work: () => {
     state.ccCall?.cancel();
     return true;
-  });
+  } });
 
-  const wizardSpec = ({ specPath }: { specPath?: string } = {}): Promise<{ text: string }> => toPromise(() => {
+  const wizardSpec = ({ specPath }: { specPath?: string } = {}): Promise<{ text: string }> => toPromise({ work: () => {
     const repoPath = requireRepo();
     const target = path.resolve(repoPath, String(specPath || path.join('.claimcheck', 'spec.md')));
     const root = path.join(repoPath, '.claimcheck');
-    if (!isWithin(target, root) || !existsSync(target)) throw new Error('The spec file is not where it should be.');
+    if (!isWithin({ child: target, parent: root }) || !existsSync(target)) throw new Error('The spec file is not where it should be.');
     const text = readFileSync(target, 'utf8');
     return { text: text.slice(0, 100000) };
-  });
+  } });
 
-  const wizardStart = ({ entry = 'board' }: { entry?: 'first-run' | 'board' } = {}): Promise<WizardState> => toPromise(() => {
+  const wizardStart = ({ entry = 'board' }: { entry?: 'first-run' | 'board' } = {}): Promise<WizardState> => toPromise({ work: () => {
     const repoPath = requireRepo();
     const wizard = initialWizard({ entry, repo: repoPath });
     state.wizard = wizard;
-    storeWizard(repoPath, wizard);
-    setView('wizard');
+    storeWizard({ repoPath, wizard });
+    setView({ view: 'wizard' });
     return wizard;
-  });
+  } });
 
   const wizardExit = async (): Promise<{ ok: true; board: Board | null } | { ok: false; error: string }> => {
     const repoPath = requireRepo();
-    storeWizard(repoPath, null);
+    storeWizard({ repoPath, wizard: null });
     state.wizard = null;
-    const probe = await readBoard(repoPath);
+    const probe = await readBoard({ repoPath });
     if (!probe.repo.hasClaimcheck) {
       state.view = 'empty';
       emitView(currentView());
@@ -604,13 +604,13 @@ export const createDeskApi = ({
     }
     if (!state.watcher) startWatching();
     const board = await refresh();
-    setView('board');
+    setView({ view: 'board' });
     return { ok: true, board };
   };
 
   const trustRepo = async (): Promise<true> => {
     const board = requireBoard();
-    trustStore.trust(board.repo.path, digestOf(commandsFor(board)));
+    trustStore.trust(board.repo.path, computeDigest({ commands: listCommandsFor({ board }) }));
     await refresh();
     return true;
   };
@@ -620,10 +620,10 @@ export const createDeskApi = ({
     fixer,
     refresh,
     openRepo,
-    recents: (): Promise<string[]> => toPromise(() => recents.list()),
+    recents: (): Promise<string[]> => toPromise({ work: () => recents.list() }),
     lastRepo: (): string | null => recents.last(),
-    getBoard: (): Promise<Board | null> => toPromise(() => state.board),
-    getView: (): Promise<ViewPayload> => toPromise(() => currentView()),
+    getBoard: (): Promise<Board | null> => toPromise({ work: () => state.board }),
+    getView: (): Promise<ViewPayload> => toPromise({ work: () => currentView() }),
     connect,
     testConnection,
     startPropose,
@@ -634,10 +634,10 @@ export const createDeskApi = ({
     openPullRequest,
     openPath: openTarget,
     trustRepo,
-    getRun: ({ runId }: { runId: string }): Promise<PublicRun | null> => toPromise(() => fixer.get(runId)),
-    ghReady: async (): Promise<boolean> => ghModule.ghReady(execFn ? { execFn } : {}),
-    wizardLoad: (): Promise<WizardState | null> => toPromise(() => state.wizard),
-    wizardSave: (wizard: unknown): Promise<true> => toPromise(() => saveWizard(wizard)),
+    getRun: ({ runId }: { runId: string }): Promise<PublicRun | null> => toPromise({ work: () => fixer.get(runId) }),
+    ghReady: async (): Promise<boolean> => ghModule.isGhReady(execFn ? { execFn } : {}),
+    wizardLoad: (): Promise<WizardState | null> => toPromise({ work: () => state.wizard }),
+    wizardSave: (wizard: unknown): Promise<true> => toPromise({ work: () => saveWizard({ wizard }) }),
     wizardStart,
     wizardStatus,
     wizardInit,

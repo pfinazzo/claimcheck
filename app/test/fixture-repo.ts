@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
+const sha256 = ({ payload }: { payload: string | Buffer }): string => createHash('sha256').update(payload).digest('hex');
 
 export const SPEC_MD = `# Acceptance criteria
 
@@ -56,8 +56,8 @@ timeout_s = 600
 min_catch_rate = 0.0
 `;
 
-const git = (cwd: string, args: string[], env: Record<string, string> = {}) =>
-  execFileSync('git', args, {
+const runGit = ({ cwd, argList, env = {} }: { cwd: string; argList: readonly string[]; env?: Record<string, string> }) =>
+  execFileSync('git', argList, {
     cwd,
     env: {
       ...process.env,
@@ -74,15 +74,15 @@ const git = (cwd: string, args: string[], env: Record<string, string> = {}) =>
     .toString()
     .trim();
 
-const write = (root: string, rel: string, text: string): void => {
+const write = ({ root, rel, text }: { root: string; rel: string; text: string }): void => {
   const file = path.join(root, rel);
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, text, 'utf8');
 };
 
-const lockFor = (specText: string) => {
-  const criteria = [...specText.matchAll(/^- \[[ xX]\] (\d+)\. (.+)$/gm)].map((m) => ({ id: Number(m[1]), sha256: sha256((m[2] ?? '').trim()) }));
-  return { version: 1, frozen_at: '2026-10-15T18:00:00Z', git_head: '0'.repeat(40), spec_sha256: sha256(Buffer.from(specText, 'utf8')), criteria };
+const buildLock = ({ specText }: { specText: string }) => {
+  const criteria = [...specText.matchAll(/^- \[[ xX]\] (\d+)\. (.+)$/gm)].map((match) => ({ id: Number(match[1]), sha256: sha256({ payload: (match[2] ?? '').trim() }) }));
+  return { version: 1, frozen_at: '2026-10-15T18:00:00Z', git_head: '0'.repeat(40), spec_sha256: sha256({ payload: Buffer.from(specText, 'utf8') }), criteria };
 };
 
 /** Returns the repo path. `opts.withRuns=false` leaves runs/ and the ledger empty. */
@@ -91,21 +91,21 @@ export const buildFixtureRepo = ({ withRuns = true, dir }: { withRuns?: boolean;
   const empty = path.join(root, 'gitconfig');
   writeFileSync(empty, '', 'utf8');
   const env = { GIT_CONFIG_GLOBAL: empty };
-  git(root, ['init', '-q'], env);
-  git(root, ['symbolic-ref', 'HEAD', 'refs/heads/main'], env);
-  write(root, 'README.md', '# fixture\n');
-  write(root, 'src/calc.py', 'def sub(a, b):\n    return a - b\n\n\ndef is_adult(age):\n    return age >= 18\n');
-  write(root, 'tests/test_calc.py', 'from calc import sub, is_adult\n\n\ndef test_sub():\n    assert sub(5, 3) == 2\n');
-  write(root, '.claimcheck/config.toml', CONFIG_TOML);
-  write(root, '.claimcheck/spec.md', SPEC_MD);
-  const lock = lockFor(SPEC_MD);
-  write(root, '.claimcheck/spec.lock', JSON.stringify(lock, null, 2) + '\n');
-  write(root, '.claimcheck/claims.yaml', CLAIMS_YAML);
+  runGit({ cwd: root, argList: ['init', '-q'], env });
+  runGit({ cwd: root, argList: ['symbolic-ref', 'HEAD', 'refs/heads/main'], env });
+  write({ root, rel: 'README.md', text: '# fixture\n' });
+  write({ root, rel: 'src/calc.py', text: 'def sub(a, b):\n    return a - b\n\n\ndef is_adult(age):\n    return age >= 18\n' });
+  write({ root, rel: 'tests/test_calc.py', text: 'from calc import sub, is_adult\n\n\ndef test_sub():\n    assert sub(5, 3) == 2\n' });
+  write({ root, rel: '.claimcheck/config.toml', text: CONFIG_TOML });
+  write({ root, rel: '.claimcheck/spec.md', text: SPEC_MD });
+  const lock = buildLock({ specText: SPEC_MD });
+  write({ root, rel: '.claimcheck/spec.lock', text: JSON.stringify(lock, null, 2) + '\n' });
+  write({ root, rel: '.claimcheck/claims.yaml', text: CLAIMS_YAML });
   mkdirSync(path.join(root, '.claimcheck', 'runs'), { recursive: true });
-  write(root, '.claimcheck/ledger.jsonl', '');
-  git(root, ['add', '-A'], env);
-  git(root, ['commit', '-q', '-m', 'fixture', '--no-verify'], env);
-  const head = git(root, ['rev-parse', 'HEAD'], env);
+  write({ root, rel: '.claimcheck/ledger.jsonl', text: '' });
+  runGit({ cwd: root, argList: ['add', '-A'], env });
+  runGit({ cwd: root, argList: ['commit', '-q', '-m', 'fixture', '--no-verify'], env });
+  const head = runGit({ cwd: root, argList: ['rev-parse', 'HEAD'], env });
 
   if (withRuns) {
     const check = {
@@ -113,7 +113,7 @@ export const buildFixtureRepo = ({ withRuns = true, dir }: { withRuns?: boolean;
       ts: '2026-10-15T18:05:12Z',
       base: head,
       head,
-      spec_lock: sha256(JSON.stringify(lock, null, 2) + '\n'),
+      spec_lock: sha256({ payload: JSON.stringify(lock, null, 2) + '\n' }),
       provider: 'stub',
       model: null,
       verdicts: [
@@ -140,18 +140,18 @@ export const buildFixtureRepo = ({ withRuns = true, dir }: { withRuns?: boolean;
       summary,
       per_claim: { c1: summary, c2: summary },
     };
-    write(root, '.claimcheck/runs/20261015T180512Z-check.json', JSON.stringify(check, null, 2) + '\n');
-    write(root, '.claimcheck/runs/20261015T180530Z-mutate.json', JSON.stringify(mutate, null, 2) + '\n');
-    const line = (id: string, claim: string, confidence: number, verdict: string, reason: string) =>
+    write({ root, rel: '.claimcheck/runs/20261015T180512Z-check.json', text: JSON.stringify(check, null, 2) + '\n' });
+    write({ root, rel: '.claimcheck/runs/20261015T180530Z-mutate.json', text: JSON.stringify(mutate, null, 2) + '\n' });
+    const line = ({ id, claim, confidence, verdict, reason }: { id: string; claim: string; confidence: number; verdict: string; reason: string }) =>
       JSON.stringify({
-        v: 1, type: 'claim', ts: '2026-10-15T18:05:40Z', run_id: check.run_id, repo: sha256(root), base: head, head,
+        v: 1, type: 'claim', ts: '2026-10-15T18:05:40Z', run_id: check.run_id, repo: sha256({ payload: root }), base: head, head,
         spec_lock: check.spec_lock, author: 'claude-code/claude-fable-5-1', claim_id: id, claim, confidence, criteria: [id === 'c1' ? 1 : 2],
         files: ['src/calc.py'], kill_condition: id === 'c1' ? 'test: tests/test_calc.py::test_sub' : 'obs: is_adult(18) returns True',
         checker: { provider: 'stub', model: null, verdict, reason, evidence: [] },
         mutation: { total: 3, killed: 1, survived: 2, timeout: 0, catch_rate: 0.3333 },
         outcome: null, outcome_source: null, outcome_ts: null,
       });
-    write(root, '.claimcheck/ledger.jsonl', `${line('c1', 'sub returns a minus b', 0.9, 'SUPPORTED', 'literal subtraction')}\n${line('c2', 'is_adult is inclusive at 18', 0.6, 'REFUTED', 'boundary unproven')}\n`);
+    write({ root, rel: '.claimcheck/ledger.jsonl', text: `${line({ id: 'c1', claim: 'sub returns a minus b', confidence: 0.9, verdict: 'SUPPORTED', reason: 'literal subtraction' })}\n${line({ id: 'c2', claim: 'is_adult is inclusive at 18', confidence: 0.6, verdict: 'REFUTED', reason: 'boundary unproven' })}\n` });
   }
   return root;
 };
