@@ -42,14 +42,6 @@ flowchart LR
   H --> B
 ```
 
-Setup is one command, and it walks you through everything:
-
-```bash
-claimcheck init
-```
-
-![The first setup screen: the problem, in one picture](docs/screenshots/setup-1-problem.png)
-
 ## Use it in your own repo
 
 Six steps take a project from nothing to a checked change. Each links to the detail further down.
@@ -68,6 +60,10 @@ Six steps take a project from nothing to a checked change. Each links to the det
    cd your-repo
    claimcheck init
    ```
+
+   It walks you through everything:
+
+   ![The first setup screen: the problem, in one picture](docs/screenshots/setup-1-problem.png)
 
    `init` ignores `.env` and key files first, then writes the config, installs the pre-commit hook and adds the claimcheck rules to your `CLAUDE.md` or `AGENTS.md` if you have one. Run in a terminal, it then offers to start your first spec. With `--yes` it does the setup and stops. It uses your Claude Code sign-in, or `ANTHROPIC_API_KEY` when that is set. See [Setup](#setup-claimcheck-init).
 
