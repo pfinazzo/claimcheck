@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "name": "empty ledger",
+      "lines": [],
+      "head": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "older lines only",
+      "lines": [
+        "{\"a\":1,\"type\":\"claim\"}",
+        "{\"a\":2,\"type\":\"claim\"}"
+      ],
+      "head": "5dc7758a12dac4b2cc1dca6496ac287287b7801a240dc935274ff97a74097ba7"
+    },
+    {
+      "name": "older lines then one chained line",
+      "lines": [
+        "{\"a\":1,\"type\":\"claim\"}",
+        "{\"a\":2,\"type\":\"claim\"}",
+        "{\"n\": 3, \"prev\": \"5dc7758a12dac4b2cc1dca6496ac287287b7801a240dc935274ff97a74097ba7\", \"type\": \"claim\"}"
+      ],
+      "head": "0494854ebeafbaaa15088eb6c1d728f0f5f877298768986874ca605a72442212"
+    }
+  ]
+}

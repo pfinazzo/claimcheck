@@ -390,6 +390,7 @@ claimcheck claims validate [path]  schema-check a claims file against the frozen
 claimcheck check                   independent verdict per claim
 claimcheck mutate                  planted-bug catch rate on the changed lines
 claimcheck run                     verify, validate, check, mutate, then append to the ledger
+claimcheck verify-ledger [--base REF]  fail if a ledger line was removed, edited, moved or inserted
 claimcheck hook pre-commit         what the installed git hook runs
 ```
 
@@ -429,6 +430,7 @@ Options shared by `check`, `mutate` and `run`:
 | 5 | provider error, unknown provider, the baseline tests fail, or the working tree no longer matches the diff |
 | 6 | a previous `mutate` left its lock behind, or `--restore` refused to overwrite a file |
 | 7 | the diff is empty, so there is nothing to verify (commit the change, or pass `--worktree`) |
+| 8 | `verify-ledger` found a ledger line that was removed, edited, moved or inserted |
 
 ### Files
 
@@ -437,7 +439,7 @@ Options shared by `check`, `mutate` and `run`:
 | `.claimcheck/spec.md` | Acceptance criteria as `- [ ] 1. text` lines |
 | `.claimcheck/spec.lock` | JSON with a hash per criterion and the freeze time. The spec is hashed with line endings and any BOM normalised, so Windows and Linux agree |
 | `.claimcheck/claims.yaml` | One entry per claim. See [`examples/claims.yaml`](examples/claims.yaml) |
-| `.claimcheck/ledger.jsonl` | Append-only. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
+| `.claimcheck/ledger.jsonl` | Append-only and hash-chained: each new line carries `prev`, the SHA-256 of the line before it, and `claimcheck verify-ledger` checks the chain. Lines written before chaining existed are sealed by the first chained line. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
 | `.claimcheck/config.toml` | Settings. See [`examples/config.toml`](examples/config.toml) |
 | `.claimcheck/setup.json` | The files `init` changed outside `.claimcheck/`, so the first commit includes them |
 
@@ -523,6 +525,7 @@ Use `--no-animation`, or set `NO_COLOR=1`. On older Windows consoles, Windows Te
 - **Equivalent mutants exist.** Some planted bugs do not change behavior and always survive. Judge survivors, do not just count them.
 - **Only added lines are mutated.** Bugs in untouched code that the change relies on are out of scope. Files that are not valid UTF-8 are skipped and counted.
 - **The secret filter is a safety net.** See [What is sent to Claude](#what-is-sent-to-claude).
+- **The ledger is tamper-evident, not tamper-proof.** The hash chain catches a line that was removed from the middle, edited, moved or inserted. It cannot see the last line being cut off, so CI also runs `verify-ledger --base` to require that the ledger on the base branch is an unchanged beginning of yours. Someone with write access to the whole file can still rewrite every line and recompute the chain, and nothing here signs it. The protection is that the rewrite shows up in the git history.
 - **Confidence is not calibrated yet.** Version 1 makes sure the data exists. The calibration curve comes once the ledger has real outcomes in it.
 - **The spec is only as good as the person who wrote it.** claimcheck proves the code matches the frozen spec and that the spec was not bent afterward. It cannot tell you the spec was the right one.
 - **The animated setup is verified by tests and rendered frames, not by every terminal.** If something looks wrong in yours, `--no-animation` gives the plain flow.

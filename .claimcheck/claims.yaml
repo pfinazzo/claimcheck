@@ -4,28 +4,46 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "The board summary counts each planted bug once when several claims share the same bugs from one run, so two claims carrying the same 2 killed bugs show 2 of 2, not 4 of 4"
-    confidence: 0.92
+    claim: "Every ledger line claimcheck writes carries prev, the SHA-256 of the previous line's text; the first chained line carries the hash of all older lines joined by newlines, or 64 zeros for an empty ledger"
+    confidence: 0.9
     criteria: [1]
-    files: ["app/src/renderer/format.ts"]
-    kill_condition: "test: app/test/renderer.test.ts::two claims sharing the same planted bugs from one run count each bug once"
+    files: ["src/claimcheck/ledger.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_the_first_chained_line_seals_all_older_lines"
     verified_by:
-      - "cmd: cd app && npm test"
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'hash_of_the_line or continues or seals or pins'"
 
   - id: c2
-    claim: "Claims with different planted bugs still add up, and the same change measured in two different runs counts as two bugs"
+    claim: "claimcheck verify-ledger exits 0 on an untouched ledger, including one that starts with older lines that have no prev, and refuses an unchained line that comes after chained lines"
     confidence: 0.88
-    criteria: [2, 3]
-    files: ["app/src/renderer/format.ts"]
-    kill_condition: "test: app/test/renderer.test.ts::claims with different planted bugs still add up"
+    criteria: [2, 5]
+    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_an_unchained_line_after_chained_lines_is_refused"
     verified_by:
-      - "cmd: cd app && npm test"
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'verifies or refused'"
 
   - id: c3
-    claim: "A claim's own facts line is unchanged, and a board whose claims ran no planted bugs shows no planted-bug sentence"
-    confidence: 0.9
+    claim: "verify-ledger exits 8 and names the first line that does not fit when a middle line is deleted, a line other than the last is edited (an older line counts), or two lines are swapped"
+    confidence: 0.85
+    criteria: [3]
+    files: ["src/claimcheck/__init__.py", "src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_middle_line_is_found"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'found or named'"
+
+  - id: c4
+    claim: "With --base REF, verify-ledger also exits 8 when the last line was deleted or edited, and passes when the ledger only gained lines"
+    confidence: 0.85
     criteria: [4]
-    files: ["app/src/renderer/format.ts"]
-    kill_condition: "test: app/test/renderer.test.ts::a claim facts line is unchanged and a board with no planted bugs has no such sentence"
+    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_last_line_passes_alone_but_not_against_the_committed_base"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'base'"
+
+  - id: c5
+    claim: "A line Desk appends carries the same prev the Python code would give, and verify-ledger accepts a ledger Desk appended to (Desk's own files are not listed because the commit hook only accepts non-ignored paths in a claim)"
+    confidence: 0.75
+    criteria: [6]
+    files: ["src/claimcheck/ledger.py"]
+    kill_condition: "test: app/test/ledger.test.ts::an outcome line continues the chain: prev is the hash the next line must carry"
     verified_by:
       - "cmd: cd app && npm test"

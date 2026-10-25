@@ -23,6 +23,11 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Test
         run: pytest
+      - name: Verify the ledger
+        run: claimcheck verify-ledger
+      - name: Verify the ledger only grew
+        if: github.event_name == 'pull_request'
+        run: claimcheck verify-ledger --base origin/${{ github.base_ref }}
 
   desk:
     name: Desk (Node 22)

@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import tempfile
 from pathlib import Path
 
-from . import ClaimcheckError
+from . import ClaimcheckError, LedgerError
 from . import config as C
 
 CLAIM_KEYS = frozenset(
@@ -94,7 +95,13 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
         validate_line(json.dumps(r))
     path = ledger_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = "".join(json.dumps(r, sort_keys=True, ensure_ascii=False) + "\n" for r in records)
+    head = chain_head(ledger_lines(path.read_bytes() if path.exists() else b""))
+    texts = []
+    for r in records:
+        text = json.dumps({**r, "prev": head}, sort_keys=True, ensure_ascii=False)
+        texts.append(text)
+        head = line_hash(text)
+    payload = "".join(t + "\n" for t in texts)
     fd, tmp = tempfile.mkstemp(prefix=".ledger-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
@@ -117,3 +124,83 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
         except OSError:
             pass
     return len(records)
+
+
+# ---- the hash chain ----------------------------------------------------------
+#
+# Every line claimcheck writes carries `prev`: the SHA-256 of the previous line's text
+# (no line break). The first chained line carries the hash of ALL lines before it joined
+# by newlines, so older lines written before chaining existed are sealed too, and a ledger
+# that starts empty uses 64 zeros. Editing, removing or moving any line breaks the next
+# line's `prev`. A chain alone cannot see the LAST line being cut off; `verify` closes that
+# by checking the ledger as committed at a base ref is an unchanged beginning of this one.
+
+ZERO_HASH = "0" * 64
+
+
+def line_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def ledger_lines(data: bytes) -> list[str]:
+    """Non-blank lines as text. A Windows checkout may end lines in CRLF, so strip the CR."""
+    return [l.rstrip("\r") for l in data.decode("utf-8").split("\n") if l.strip()]
+
+
+def _has_prev(text: str) -> bool:
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(obj, dict) and obj.get("prev") is not None
+
+
+def chain_head(lines: list[str]) -> str:
+    """The `prev` value the next line written must carry."""
+    if not lines:
+        return ZERO_HASH
+    if _has_prev(lines[-1]):
+        return line_hash(lines[-1])
+    return line_hash("\n".join(lines))
+
+
+def verify_chain(lines: list[str]) -> dict:
+    """Walk the whole ledger. Raises LedgerError naming the first line that does not fit."""
+    legacy = chained = 0
+    for n, text in enumerate(lines, 1):
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError:
+            raise LedgerError(f"ledger line {n} is not valid JSON")
+        if not isinstance(obj, dict):
+            raise LedgerError(f"ledger line {n} is not an object")
+        prev = obj.get("prev")
+        if prev is None:
+            if chained:
+                raise LedgerError(
+                    f"ledger line {n} has no prev hash but follows chained lines: "
+                    "it was inserted, or the chain was stripped from it"
+                )
+            legacy += 1
+            continue
+        if chained:
+            want = line_hash(lines[n - 2])
+        else:
+            want = line_hash("\n".join(lines[: n - 1])) if n > 1 else ZERO_HASH
+        if prev != want:
+            raise LedgerError(
+                f"ledger line {n}: its prev hash does not match the lines before it, so a line "
+                f"at or before line {n - 1} was removed, edited or moved"
+            )
+        chained += 1
+    return {"lines": len(lines), "legacy": legacy, "chained": chained}
+
+
+def verify_grew_only(lines: list[str], base_lines: list[str], ref: str) -> None:
+    """The ledger at `ref` must still be an unchanged beginning of the current ledger."""
+    if len(lines) < len(base_lines):
+        gone = len(base_lines) - len(lines)
+        raise LedgerError(f"{gone} line(s) from the end of the ledger at {ref} are gone")
+    for i, text in enumerate(base_lines):
+        if lines[i] != text:
+            raise LedgerError(f"ledger line {i + 1} differs from the ledger at {ref}")

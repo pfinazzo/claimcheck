@@ -41,6 +41,12 @@ class EmptyDiffError(ClaimcheckError):
     code = 7
 
 
+class LedgerError(ClaimcheckError):
+    """The ledger failed verification: a line was removed, edited, moved or inserted (exit 8)."""
+
+    code = 8
+
+
 class MutateLockError(ClaimcheckError):
     """A stale mutate sentinel is present (exit 6)."""
 
