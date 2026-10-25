@@ -20,6 +20,8 @@ import type {
 } from '../shared/types.ts';
 import { parseToml } from './toml.ts';
 import { toText } from '../shared/text.ts';
+import { GIT_TIMEOUT_MS } from './timeouts.ts';
+import { parseJsonOrUndefined } from '../shared/json.ts';
 
 const execFileP = promisify(execFile);
 
@@ -64,7 +66,7 @@ const readJson = async (file: string): Promise<unknown> => {
 
 const git = async (repo: string, args: string[]): Promise<string | null> => {
   try {
-    const { stdout } = await execFileP('git', args, { cwd: repo, windowsHide: true });
+    const { stdout } = await execFileP('git', args, { cwd: repo, windowsHide: true, timeout: GIT_TIMEOUT_MS });
     return stdout.trim();
   } catch {
     return null;
@@ -187,12 +189,9 @@ const readLedger = async (file: string): Promise<LedgerRecord[]> => {
   const out: LedgerRecord[] = [];
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) continue;
-    try {
-      const rec: unknown = JSON.parse(line);
-      if (isObject(rec)) out.push(rec);
-    } catch {
-      /* a torn or foreign line is skipped, never fatal */
-    }
+    // A torn or foreign line is not JSON. It is skipped, so one bad line never hides the rest.
+    const rec = parseJsonOrUndefined({ text: line });
+    if (isObject(rec)) out.push(rec);
   }
   return out;
 };

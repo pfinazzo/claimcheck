@@ -7,6 +7,7 @@
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { GH_TIMEOUT_MS } from './timeouts.ts';
 
 const execFileP = promisify(execFile);
 
@@ -14,7 +15,7 @@ type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) 
 
 export const ghReady = async ({ execFn = execFileP }: { execFn?: ExecFn } = {}): Promise<boolean> => {
   try {
-    await execFn('gh', ['auth', 'status'], { windowsHide: true });
+    await execFn('gh', ['auth', 'status'], { windowsHide: true, timeout: GH_TIMEOUT_MS });
     return true;
   } catch {
     return false;
@@ -50,7 +51,7 @@ export type PrInput = {
 };
 
 export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP }: PrInput): Promise<string> => {
-  const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true });
+  const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true, timeout: GH_TIMEOUT_MS });
   const url = String(stdout).split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) ?? String(stdout).trim();
   return url;
 };

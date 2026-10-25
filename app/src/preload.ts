@@ -16,15 +16,21 @@ class BridgeError extends Error {
   details?: unknown;
 }
 
-const call = (name: InvokeChannel) => async (payload?: unknown): Promise<unknown> => {
-  const res = (await ipcRenderer.invoke(`desk:${name}`, payload)) as Reply<unknown>;
-  if (!res.ok) {
-    const error = new BridgeError(res.error);
-    if (res.code) error.code = res.code;
-    if (res.details) error.details = res.details;
-    throw error;
-  }
-  return res.value;
+type Invokers = { [K in InvokeChannel]: DeskBridge[K] };
+
+/** One bridge call. The main process's handler decides the shape of the value; ipc.ts names it. */
+const call = <K extends InvokeChannel>(name: K): DeskBridge[K] => {
+  const invoke = async (payload?: unknown): Promise<unknown> => {
+    const res = (await ipcRenderer.invoke(`desk:${name}`, payload)) as Reply<unknown>;
+    if (!res.ok) {
+      const error = new BridgeError(res.error);
+      if (res.code) error.code = res.code;
+      if (res.details) error.details = res.details;
+      throw error;
+    }
+    return res.value;
+  };
+  return invoke as DeskBridge[K];
 };
 
 const subscribe = <T,>(channel: string) => (callback: (payload: T) => void): (() => void) => {
@@ -35,14 +41,14 @@ const subscribe = <T,>(channel: string) => (callback: (payload: T) => void): (()
   };
 };
 
-const invokers = Object.fromEntries(INVOKE_CHANNELS.map((name) => [name, call(name)]));
+const invokers = Object.fromEntries(INVOKE_CHANNELS.map((name) => [name, call(name)])) as Invokers;
 
-const bridge = {
+const bridge: DeskBridge = {
   ...invokers,
   onBoard: subscribe('desk:board'),
   onView: subscribe('desk:view'),
   onRunUpdate: subscribe('desk:run'),
   rendered: (): void => ipcRenderer.send('desk:rendered'),
-} as unknown as DeskBridge;
+};
 
 contextBridge.exposeInMainWorld('desk', bridge);

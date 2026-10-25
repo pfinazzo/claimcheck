@@ -9,7 +9,7 @@ import { spawn as nodeSpawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import type { SpawnOptions, ChildProcess } from 'node:child_process';
-import { createLineSplitter } from './proc.ts';
+import { createLineSplitter, findOnPath } from './proc.ts';
 
 const execFileP = promisify(execFile);
 
@@ -40,14 +40,8 @@ export const resolveClaimcheck = async ({ python, bin = null, env = process.env,
     if (/\.(c|m)?js$/i.test(override)) return { command: process.execPath, prefix: [override], env: process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {} };
     if (existsSync(override)) return { command: override, prefix: [] };
   }
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    const { stdout } = await execFn(finder, ['claimcheck'], { windowsHide: true });
-    const first = String(stdout).split(/\r?\n/).map((l) => l.trim()).filter(Boolean)[0];
-    if (first) return { command: first, prefix: [] };
-  } catch {
-    /* fall through */
-  }
+  const [first] = await findOnPath({ name: 'claimcheck', execFn });
+  if (first) return { command: first, prefix: [] };
   if (python) return { command: python, prefix: ['-m', 'claimcheck'] };
   return null;
 };

@@ -54,7 +54,7 @@ const fakeCli = ({ structured = { proposals: PROPOSALS }, error = null, onRun = 
       return { exitCode: error ? 1 : 0, result: 'done', structured, error, needsSignIn: false, stderr: '' };
     },
   };
-  return { cli, module: cli as unknown as Cli };
+  return { cli, module: cli as Cli };
 };
 
 const waitFor = async (fixer: ReturnType<typeof createFixer>, id: string, status: string, ms = 8000): Promise<PublicRun> => {
@@ -100,7 +100,7 @@ test('AC 19: propose (API) inlines the diff and uses the key store', async () =>
       seen.push(opts);
       return JSON.stringify({ proposals: PROPOSALS });
     },
-  } as unknown as Api;
+  } as Api;
   const keyStore = { hasKey: () => true } as never;
   const fixer = createFixer({ cliModule: fakeCli().module, apiModule, keyStore });
   const started = await fixer.startPropose({ board, claimId: 'c2', mode: 'api', model: 'claude-opus-5-5' });

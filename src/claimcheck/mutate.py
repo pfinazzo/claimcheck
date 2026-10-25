@@ -258,26 +258,40 @@ _TEST_ENV_OVERRIDES = {
 }
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
-    """Kill the test command and everything it started (shell=True only gives us the shell)."""
-    try:
-        if os.name == "nt":
+# taskkill and a killed process normally finish at once; these stop a stuck one from hanging the run.
+_KILL_TIMEOUT_S = 10
+
+
+def _signal_tree(proc: subprocess.Popen) -> None:
+    """Send the kill to the test command's whole process tree."""
+    if os.name == "nt":
+        try:
             subprocess.run(
                 ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=False,
+                timeout=_KILL_TIMEOUT_S,
             )
-        else:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        pass
+        except subprocess.TimeoutExpired:
+            # taskkill hung. _kill_tree still kills the shell itself right after this.
+            return
+        return
     try:
-        proc.kill()
-    except OSError:
-        pass
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        # The test command already exited, so its group is gone and there is nothing left to signal.
+        return
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the test command and everything it started (shell=True only gives us the shell)."""
+    _signal_tree(proc)
+    proc.kill()
     try:
-        proc.wait(timeout=10)
+        proc.wait(timeout=_KILL_TIMEOUT_S)
     except subprocess.TimeoutExpired:
-        pass
+        # A process stuck in the kernel can ignore SIGKILL for a while. The run moves on rather
+        # than hang; the operating system reaps the process once it lets go.
+        return
 
 
 def _run_tests(repo: Path, cmd: str, timeout: int) -> tuple[str, float]:
@@ -377,10 +391,13 @@ def _drift_message(m: Mutant) -> str:
 
 
 def _write_times(path: Path, atime_ns: int, mtime_ns: int) -> None:
+    """Set a file's access and modified times."""
     try:
         os.utime(path, ns=(atime_ns, mtime_ns))
-    except OSError:
-        pass
+    except PermissionError:
+        # Some filesystems refuse to set times on files we can still write. The bytes are what
+        # make the file correct; a refused time only makes tools like make rebuild it.
+        return
 
 
 def _restore_file(path: Path, original: bytes, times: tuple[int, int] | None = None) -> None:
@@ -626,6 +643,19 @@ def run_mutate(
     return result, code
 
 
+def _retry_restore(path: Path, state: _FileState) -> bool:
+    """One last try at putting a file back. False when it is still not the original.
+
+    A failure here is expected to be rare, and it is not lost: the backup and the sentinel stay
+    behind, and `claimcheck mutate --restore` finishes the job.
+    """
+    try:
+        _restore_file(path, state.data, (state.atime_ns, state.mtime_ns))
+        return _sha(path.read_bytes()) == state.sha
+    except OSError:
+        return False
+
+
 def _run_planted(
     repo: Path,
     selected: list[Mutant],
@@ -680,17 +710,7 @@ def _run_planted(
     finally:
         # Even after an exception or Ctrl-C: one more try at anything still dirty, then clean
         # up only if every file is back. A failed restore leaves backup + sentinel for --restore.
-        for rel in sorted(dirty):
-            st = states[rel]
-            try:
-                _restore_file(repo / rel, st.data, (st.atime_ns, st.mtime_ns))
-                if _sha((repo / rel).read_bytes()) == st.sha:
-                    dirty.discard(rel)
-            except OSError:
-                pass
-        if not dirty:
+        still_dirty = {rel for rel in dirty if not _retry_restore(repo / rel, states[rel])}
+        if not still_dirty:
             _rmtree(backup_dir)
-            try:
-                sentinel.unlink()
-            except FileNotFoundError:
-                pass
+            sentinel.unlink(missing_ok=True)

@@ -63,13 +63,22 @@ test('the proposal and build prompts carry no secret from the claim, the evidenc
 
 test('the API request is scrubbed even if the caller passes raw text', async () => {
   let sent: { system: string; messages: unknown } | undefined;
-  const client = { messages: { create: async (p: { system: string; messages: unknown }) => ((sent = p), { content: [{ type: 'text', text: '{}' }] }) } };
+  const client: ApiClient = {
+    messages: {
+      create: (params) => {
+        sent = params;
+        return Promise.resolve({ content: [{ type: 'text', text: '{}' }] });
+      },
+    },
+    models: { list: () => Promise.resolve({ data: [] }) },
+  };
+  const store: KeyStore = { saveKey: () => {}, hasKey: () => true, last4: () => null, clearKey: () => {}, loadKey: () => 'k' };
   await proposeWithStore({
-    store: { loadKey: () => 'k' } as unknown as KeyStore,
+    store,
     system: `system with ${KEY}`,
     user: `user with ${PASSWORD_LINE} and ${KEY}`,
     schema: {},
-    clientFactory: async () => client as unknown as ApiClient,
+    clientFactory: () => Promise.resolve(client),
   });
   assert.ok(sent);
   assertClean(sent.system, 'the API system prompt');

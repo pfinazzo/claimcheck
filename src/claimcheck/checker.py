@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from . import ProviderError, gitio, providers, redact
 from . import claims as CL
@@ -120,13 +121,18 @@ def validate_verdicts(obj: object, claim_ids: set[str]) -> list[str]:
     return errs
 
 
+def _parse_json_or_none(raw: str) -> Any:
+    """The parsed reply, or None when the model did not answer in JSON. ask() then retries."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
 def _salvage(raw: str, claim_ids: set[str]) -> dict[str, dict]:
     """Best-effort: keep individually valid verdicts from an otherwise invalid reply."""
     out: dict[str, dict] = {}
-    try:
-        obj = json.loads(raw)
-    except json.JSONDecodeError:
-        return out
+    obj = _parse_json_or_none(raw)
     vs = obj.get("verdicts") if isinstance(obj, dict) else None
     if not isinstance(vs, list):
         return out
@@ -161,9 +167,8 @@ def ask(provider: providers.Provider, system: str, user: str, claim_ids: list[st
     salvaged: dict[str, dict] = {}
     for _attempt in range(2):
         raw = provider.complete(system, user, schema=VERDICT_SCHEMA)
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError:
+        obj = _parse_json_or_none(raw)
+        if obj is None:
             continue
         if not validate_verdicts(obj, ids):
             by_id = {v["id"]: v for v in obj["verdicts"]}

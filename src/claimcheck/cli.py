@@ -82,22 +82,24 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_spec_state(repo: Path) -> tuple[str, int]:
+    """("none" | "draft" | "frozen", number of criteria). A repo with no readable spec is ("none", 0)."""
+    try:
+        text, crit = S.read_spec(repo)
+    except ClaimcheckError:
+        return "none", 0
+    try:
+        S.verify(repo)
+    except ClaimcheckError:
+        return ("none" if "Replace this placeholder" in text else "draft"), len(crit)
+    return "frozen", len(crit)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     repo = C.find_repo_root()
     cfg = C.load(repo)
     initialized = (C.cc_dir(repo) / C.CONFIG_FILE).exists()
-    spec_state, criteria = "none", 0
-    try:
-        text, crit = S.read_spec(repo)
-        criteria = len(crit)
-        placeholder = "Replace this placeholder" in text
-        try:
-            S.verify(repo)
-            spec_state = "frozen"
-        except ClaimcheckError:
-            spec_state = "none" if placeholder else "draft"
-    except ClaimcheckError:
-        pass
+    spec_state, criteria = _read_spec_state(repo)
     try:
         hook_on = "claimcheck" in hook.hook_file(repo).read_text(encoding="utf-8", errors="replace")
     except OSError:

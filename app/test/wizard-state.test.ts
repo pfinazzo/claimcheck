@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import type { ChildProcess } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { CcError, extractJson, startCc } from '../src/lib/cc-cli.ts';
 import { buildDraftInput, normalizeFinish, normalizeInit, normalizeStatus, normalizeStep } from '../src/lib/cc-protocol.ts';
 import {
@@ -140,7 +140,7 @@ test('extractJson finds the document in noisy output', () => {
 const fakeCc = ({ stdout = '', code = 0, stderr = '', delay = 5 }: { stdout?: string; code?: number; stderr?: string; delay?: number }) => {
   let stdin = '';
   const spawnFn = (() => {
-    const child = Object.assign(new EventEmitter(), {
+    const child = Object.assign(new ChildProcess(), {
       pid: 0,
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
@@ -152,7 +152,7 @@ const fakeCc = ({ stdout = '', code = 0, stderr = '', delay = 5 }: { stdout?: st
       if (stderr) child.stderr.emit('data', Buffer.from(stderr));
       child.emit('close', code);
     }, delay);
-    return child as unknown as ChildProcess;
+    return child;
   }) as never;
   return { spawnFn, stdin: () => stdin };
 };

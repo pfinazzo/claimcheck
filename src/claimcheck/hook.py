@@ -65,8 +65,9 @@ def install(repo: Path) -> bool:
         path.write_bytes(("#!/bin/sh\n" + hook_line()).encode("utf-8"))
     try:
         path.chmod(path.stat().st_mode | 0o111)
-    except OSError:
-        pass
+    except OSError as error:
+        # Without the execute bit git skips the hook without a word, so claims would go unchecked.
+        raise ClaimcheckError(f"wrote {path} but could not make it executable ({error}); run chmod +x on it") from error
     return True
 
 

@@ -12,7 +12,7 @@ import pytest
 
 from claimcheck import ProviderError, mutate
 from claimcheck import config as C
-from conftest import CALC_SRC, CLAIMS_FOR_CALC, PY
+from conftest import CALC_SRC, CLAIMS_FOR_CALC, PY, SUBPROCESS_TIMEOUT_S
 
 
 def _clean(repo):
@@ -64,7 +64,7 @@ def test_same_size_mutant_leaves_no_pyc_and_original_still_imports(calc_repo, mo
     env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
     out = subprocess.run(
         f"{PY} -c \"import sys; sys.path.insert(0, 'src'); import calc; print(calc.sub(5, 3))\"",
-        shell=True, cwd=calc_repo.path, env=env, capture_output=True, text=True,
+        shell=True, cwd=calc_repo.path, env=env, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S,
     )
     assert out.stdout.strip() == "2"
     assert (calc_repo.path / "src/calc.py").read_text(encoding="utf-8") == CALC_SRC

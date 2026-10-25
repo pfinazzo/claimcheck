@@ -8,6 +8,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from . import ClaimcheckError, EmptyDiffError
 
@@ -15,11 +16,21 @@ from . import ClaimcheckError, EmptyDiffError
 # real UTF-8 paths (not "caf\303\251"), plain a/ b/ diff prefixes, no color codes.
 _FIXED = ["-c", "core.quotepath=off", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "color.ui=never"]
 
+# git answers local commands in well under a second. A credential prompt or a stalled network
+# drive can make it wait forever, which would freeze the CLI with no message.
+GIT_TIMEOUT_S = 120
+
+
+def _run_git(repo: Path, argv: list[str], **options: Any) -> subprocess.CompletedProcess:
+    """Run one git command with the timeout. A timeout becomes a ClaimcheckError that names the command."""
+    try:
+        return subprocess.run(argv, cwd=repo, capture_output=True, timeout=GIT_TIMEOUT_S, **options)
+    except subprocess.TimeoutExpired as error:
+        raise ClaimcheckError(f"{' '.join(argv)} did not finish within {GIT_TIMEOUT_S} seconds and was stopped") from error
+
 
 def git(repo: Path, *args: str, check: bool = True) -> str:
-    proc = subprocess.run(
-        ["git", *_FIXED, *args], cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    proc = _run_git(repo, ["git", *_FIXED, *args], text=True, encoding="utf-8", errors="replace")
     if check and proc.returncode != 0:
         raise ClaimcheckError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
     return proc.stdout
@@ -152,9 +163,7 @@ def merge_base(repo: Path, base: str) -> str:
 
 
 def show_file_at(repo: Path, ref: str, path: str) -> str | None:
-    proc = subprocess.run(
-        ["git", "show", f"{ref}:{path}"], cwd=repo, capture_output=True, text=True, encoding="utf-8"
-    )
+    proc = _run_git(repo, ["git", "show", f"{ref}:{path}"], text=True, encoding="utf-8")
     return proc.stdout if proc.returncode == 0 else None
 
 
@@ -189,9 +198,7 @@ def commit(repo: Path, message: str) -> str:
 
 def is_ignored(repo: Path, path: str) -> bool:
     """True when git would ignore `path` (any .gitignore, the repo's exclude file, or a global one)."""
-    proc = subprocess.run(
-        ["git", *_FIXED, "check-ignore", "-q", "--no-index", "--", path], cwd=repo, capture_output=True
-    )
+    proc = _run_git(repo, ["git", *_FIXED, "check-ignore", "-q", "--no-index", "--", path])
     return proc.returncode == 0
 
 

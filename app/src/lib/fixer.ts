@@ -20,6 +20,8 @@ import { SAFE_REF } from './store.ts';
 import { BLOCKED_TOOLS, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, PROPOSE_TOOLS, describeClaim, implementPrompt, proposePrompt } from './prompts.ts';
 import { filterDiff, isSecretPath, redactText } from './redact.ts';
 import { toText } from '../shared/text.ts';
+import { GIT_TIMEOUT_MS } from './timeouts.ts';
+import { parseJsonOrUndefined } from '../shared/json.ts';
 
 const execFileP = promisify(execFile);
 
@@ -60,13 +62,9 @@ export const parseProposals = (result: unknown): Proposal[] => {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start >= 0 && end > start) {
-    try {
-      const parsed: unknown = JSON.parse(text.slice(start, end + 1));
-      const fromText = validProposals(isRecord(parsed) ? parsed.proposals : undefined);
-      if (fromText.length) return fromText;
-    } catch {
-      /* fall through */
-    }
+    const parsed = parseJsonOrUndefined({ text: text.slice(start, end + 1) });
+    const fromText = validProposals(isRecord(parsed) ? parsed.proposals : undefined);
+    if (fromText.length) return fromText;
   }
   throw new Error('Claude did not return any proposals.');
 };
@@ -120,7 +118,7 @@ export const runShell = ({ command, cwd, spawnFn = nodeSpawn, timeoutMs = 600000
   });
 
 const git = async (cwd: string, args: string[], execFn: ExecFn = execFileP): Promise<string> =>
-  String((await execFn('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout).trim();
+  String((await execFn('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: GIT_TIMEOUT_MS })).stdout).trim();
 
 /** A file name that holds credentials. Never sent to a model and never read by the app. */
 export const isSensitivePath = (rel: string): boolean => isSecretPath(rel) || String(rel).replace(/\\/g, '/').split('/').includes('.git');
@@ -138,7 +136,7 @@ export const readSafeRepoFile = async (repoPath: string, ref: string, { execFn =
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
     if (isSensitivePath(rel) || isSensitivePath(ref)) return null;
     try {
-      await execFn('git', ['check-ignore', '-q', '--', rel], { cwd: realRepo, windowsHide: true });
+      await execFn('git', ['check-ignore', '-q', '--', rel], { cwd: realRepo, windowsHide: true, timeout: GIT_TIMEOUT_MS });
       return null; // exit 0: the file is git-ignored
     } catch (error) {
       if ((error as { code?: unknown } | null)?.code !== 1) return null; // anything but "not ignored" means we cannot be sure
