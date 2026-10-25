@@ -4,7 +4,17 @@
 
 @author Patrick Finazzo ([pfinazzo](https://github.com/pfinazzo)). Developed privately starting Oct 15, 2026; published Oct 24, 2026.
 
-**A verification ledger for AI-written code.** An AI agent says its change works. claimcheck checks that claim three independent ways, writes the result to an append-only ledger, and shows you which claims are backed and which are only confident.
+**A second opinion for code written by AI.**
+
+AI coding assistants write code and then say it works. Sometimes they're wrong, and they sound just as sure either way. claimcheck doesn't take their word for it:
+
+1. **Before the work starts, you write down what "done" means, and it's locked** so nobody can quietly move the goalposts later.
+2. **Every change the AI makes has to come with a list of what it claims to do,** like "orders over $50 now ship free."
+3. **A separate AI checks each claim against the actual change.** It never sees the first AI's explanations or how confident it was, so it can't be talked into agreeing.
+4. **claimcheck slips small bugs into the new code on purpose** and reruns your tests. If the tests still pass, they weren't really checking that code.
+5. **Every result goes into a permanent record** that shows if anyone edits or deletes an entry later.
+
+At the end you can see which claims were actually verified and which were only confident.
 
 Setup is one command, and it walks you through everything:
 
