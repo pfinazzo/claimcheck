@@ -27,18 +27,18 @@ const PROPOSALS: Proposal[] = [
   { title: 'Rewrite is_adult', summary: 'Table-driven.', pros: ['clear'], cons: ['bigger'], effort: 'medium', touches: ['src/calc.py', 'tests/test_calc.py'] },
 ];
 
-interface RunOpts {
+type RunOpts = {
   prompt?: string;
   args?: readonly string[];
   cwd?: string;
   onEvent?: (e: StreamEvent) => void;
-}
+};
 
-interface FakeCliOptions {
+type FakeCliOptions = {
   structured?: unknown;
   error?: string | null;
   onRun?: (opts: RunOpts) => Promise<void> | void;
-}
+};
 
 const fakeCli = ({ structured = { proposals: PROPOSALS }, error = null, onRun = () => {} }: FakeCliOptions = {}) => {
   const calls: RunOpts[] = [];

@@ -16,9 +16,9 @@
  */
 
 export type TomlValue = string | number | boolean | TomlValue[] | TomlTable;
-export interface TomlTable {
+export type TomlTable = {
   [key: string]: TomlValue;
-}
+};
 
 class Skip extends Error {}
 

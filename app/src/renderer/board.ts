@@ -11,23 +11,23 @@ import { renderDetail, type DetailActions } from './detail.ts';
 import { h, type Child } from './dom.ts';
 import { factsLine, groupClaims, specWord, summaryLine } from './format.ts';
 
-export interface BoardUi {
+export type BoardUi = {
   board: Board | null;
   selectedId: string | null;
   runs: Map<string, PublicRun>;
   ghOk: boolean;
   running: boolean;
   drawer: { open: boolean; status: string; lines: string[] };
-}
+};
 
-export interface BoardActions extends DetailActions {
+export type BoardActions = DetailActions & {
   select: (id: string | null) => void;
   openRepo: () => void;
   connectClaude: () => void;
   runClaimcheck: () => void;
   writeSpec: () => void;
   closeDrawer: () => void;
-}
+};
 
 const btn = (label: string, onClick: () => void, cls = '', disabled = false): HTMLButtonElement =>
   h('button', { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, label);

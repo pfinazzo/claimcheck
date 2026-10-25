@@ -23,7 +23,7 @@ export type RunUpdate =
   | { type: 'run'; run: PublicRun }
   | { type: 'claimcheck'; status?: 'running' | 'done'; line?: string; exitCode?: number | null };
 
-export interface DeskBridge {
+export type DeskBridge = {
   openRepo: (payload?: { path?: string | null }) => Out<'openRepo'>;
   recents: () => Out<'recents'>;
   getBoard: () => Out<'getBoard'>;
@@ -56,7 +56,7 @@ export interface DeskBridge {
   onRunUpdate: (callback: (update: RunUpdate) => void) => () => void;
   /** Tells the main process the page has drawn (screenshot mode waits for this). */
   rendered: () => void;
-}
+};
 
 /** The names of the calls that go through ipcMain.handle, in the order the bridge lists them. */
 export const INVOKE_CHANNELS = [

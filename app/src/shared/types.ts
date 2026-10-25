@@ -10,12 +10,12 @@ export type ClaimStatus = 'open' | 'fixing' | 'resolved' | 'accepted';
 export type CheckVerdict = 'SUPPORTED' | 'REFUTED' | 'UNVERIFIABLE';
 export type Flag = 'low-confidence' | 'refuted' | 'unverified' | 'weak-tests' | 'no-mutants';
 
-export interface Criterion {
+export type Criterion = {
   id: number;
   text: string;
-}
+};
 
-export interface VerdictInfo {
+export type VerdictInfo = {
   id: string;
   /** Kept as text: a record written by something else may hold any word. */
   verdict: string;
@@ -25,18 +25,18 @@ export interface VerdictInfo {
   model: string | null;
   ts: string;
   runId: string;
-}
+};
 
-export interface Mutant {
+export type Mutant = {
   file: string;
   line_no: number | null;
   cls: string;
   original: string;
   mutated: string;
   outcome: string;
-}
+};
 
-export interface MutationInfo {
+export type MutationInfo = {
   total: number;
   killed: number;
   survived: number;
@@ -45,40 +45,40 @@ export interface MutationInfo {
   mutants: Mutant[];
   ts: string;
   runId: string;
-}
+};
 
-export interface AppSettings {
+export type AppSettings = {
   flagConfidence: number;
   flagCatchRate: number;
   python: string | null;
-}
+};
 
-export interface BoardConfig {
+export type BoardConfig = {
   base: string;
   test_cmd: string;
   ignore: string[];
   checker: { provider: string; model: string };
   app: AppSettings;
-}
+};
 
-export interface FixState {
+export type FixState = {
   runId?: string;
   branch?: string;
   worktree?: string;
   prUrl?: string | null;
   [key: string]: unknown;
-}
+};
 
-export interface LedgerRecord {
+export type LedgerRecord = {
   type?: unknown;
   claim_id?: unknown;
   ts?: unknown;
   outcome?: unknown;
   outcome_source?: unknown;
   [key: string]: unknown;
-}
+};
 
-export interface Claim {
+export type Claim = {
   id: string;
   claim: string;
   confidence: number | null;
@@ -97,9 +97,9 @@ export interface Claim {
   flags: string[];
   /** The exact text Copy prompt would copy; attached by the main process. */
   promptText?: string;
-}
+};
 
-export interface RepoInfo {
+export type RepoInfo = {
   name: string;
   path: string;
   origin: string | null;
@@ -109,26 +109,26 @@ export interface RepoInfo {
   lockOk: boolean;
   specState: 'none' | 'draft' | 'frozen' | 'drifted';
   lastRunTs: string | null;
-}
+};
 
-export interface CheckRun {
+export type CheckRun = {
   file: string;
   run_id: string;
   ts: string;
   provider: string;
   model: string | null;
   verdicts: { id: string; verdict: string; reason: string; evidence: string[] }[];
-}
+};
 
-export interface MutateRun {
+export type MutateRun = {
   file: string;
   run_id: string;
   ts: string;
   mutants: Mutant[];
   per_claim: Record<string, unknown>;
-}
+};
 
-export interface Board {
+export type Board = {
   repo: RepoInfo;
   config: BoardConfig;
   criteria: Criterion[];
@@ -139,28 +139,28 @@ export interface Board {
   /** Attached by the main process after the board is read. */
   connection?: ConnectionSummary;
   trust?: TrustInfo;
-}
+};
 
-export interface SpecLock {
+export type SpecLock = {
   spec_sha256?: unknown;
   criteria?: unknown;
   [key: string]: unknown;
-}
+};
 
-export interface AppStateClaim {
+export type AppStateClaim = {
   status?: string;
   note?: string;
   fix?: FixState;
   updatedAt?: string;
   [key: string]: unknown;
-}
+};
 
-export interface AppState {
+export type AppState = {
   claims: Record<string, AppStateClaim>;
   [key: string]: unknown;
-}
+};
 
-export interface OutcomeRecord {
+export type OutcomeRecord = {
   v: 1;
   type: 'outcome';
   ts: string;
@@ -169,29 +169,29 @@ export interface OutcomeRecord {
   outcome: 'held' | 'broken';
   outcome_source: 'test_failure' | 'revert' | 'fix_commit' | 'human';
   evidence: string;
-}
+};
 
-export interface Proposal {
+export type Proposal = {
   title: string;
   summary: string;
   pros: string[];
   cons: string[];
   effort: 'small' | 'medium' | 'large';
   touches: string[];
-}
+};
 
 /** What the prompts need to know about one claim in one repo. */
-export interface PromptContext {
+export type PromptContext = {
   repo: Pick<RepoInfo, 'origin' | 'path' | 'branch' | 'head'>;
   config: Pick<BoardConfig, 'test_cmd'> & Partial<BoardConfig>;
   claim: Claim;
-}
+};
 
 // ---- the claimcheck CLI protocol (machine commands) ----------------------------
 
 export type Stack = 'node' | 'python' | 'go' | 'rust' | 'maven' | 'gradle';
 
-export interface CcStatus {
+export type CcStatus = {
   initialized: boolean;
   spec: 'none' | 'draft' | 'frozen';
   criteria: number;
@@ -199,15 +199,15 @@ export interface CcStatus {
   base: string;
   branch: string;
   provider: string;
-}
+};
 
-export interface CcSecrets {
+export type CcSecrets = {
   created: boolean;
   added: string[];
   tracked: string[];
-}
+};
 
-export interface CcInit {
+export type CcInit = {
   repo: string;
   config: 'created' | 'exists';
   stack: { name: Stack | null; test_cmd: string; others: string[] };
@@ -217,59 +217,59 @@ export interface CcInit {
   agent_docs: { path: string; action: 'added' | 'updated' | 'unchanged' | 'created' }[];
   ci: { path: string; action: 'created' | 'exists' } | null;
   next: string;
-}
+};
 
-export interface DraftQuestion {
+export type DraftQuestion = {
   id: string;
   text: string;
   why: string;
-}
+};
 
-export interface DraftCriterion {
+export type DraftCriterion = {
   text: string;
   check: string;
-}
+};
 
-export interface LintNote {
+export type LintNote = {
   level: 'warning' | 'error' | 'info';
   message: string;
-}
+};
 
-export interface CcStep {
+export type CcStep = {
   questions: DraftQuestion[];
   criteria: DraftCriterion[];
   out_of_scope: string[];
   concerns: string[];
   ready: boolean;
   lint: Record<string, LintNote[]>;
-}
+};
 
-export interface CcFinish {
+export type CcFinish = {
   spec_path: string;
   criteria: number;
   frozen: boolean;
   lock_sha256: string | null;
   branch: string | null;
   commit: string | null;
-}
+};
 
-export interface DraftRound {
+export type DraftRound = {
   questions: DraftQuestion[];
   answers: string[];
-}
+};
 
-export interface DraftInput {
+export type DraftInput = {
   goal: string;
   rounds: DraftRound[];
   criteria: DraftCriterion[];
   out_of_scope: string[];
-}
+};
 
 // ---- app state the main process sends to the renderer ---------------------------
 
 export type ConnectionMode = 'cli' | 'api';
 
-export interface ConnectionSummary {
+export type ConnectionSummary = {
   mode: ConnectionMode;
   model: string;
   cliPath: string | null;
@@ -279,11 +279,11 @@ export interface ConnectionSummary {
   apiOk: boolean | null;
   claimcheckBin: string | null;
   useAuto: boolean;
-}
+};
 
-export interface TrustInfo {
+export type TrustInfo = {
   trusted: boolean;
   commands: { label: string; command: string }[];
-}
+};
 
 export type ViewName = 'empty' | 'board' | 'wizard';

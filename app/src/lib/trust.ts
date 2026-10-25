@@ -14,10 +14,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { Board } from '../shared/types.ts';
 
-export interface TrustedCommand {
+export type TrustedCommand = {
   label: string;
   command: string;
-}
+};
 
 /** Every command the app itself would run for this board, with where it came from. */
 export const commandsFor = (board: Pick<Board, 'config' | 'claims'>): TrustedCommand[] => {
@@ -35,10 +35,10 @@ export const digestOf = (commands: TrustedCommand[]): string => createHash('sha2
 
 const keyOf = (repoPath: string): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
 
-export interface TrustStore {
+export type TrustStore = {
   isTrusted: (repoPath: string, digest: string) => boolean;
   trust: (repoPath: string, digest: string) => void;
-}
+};
 
 export const createTrustStore = ({ dir }: { dir: string }): TrustStore => {
   const file = path.join(dir, 'trusted-repos.json');

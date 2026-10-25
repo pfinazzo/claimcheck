@@ -13,23 +13,23 @@ import { redactText } from './redact.ts';
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 
-export interface SafeStorageLike {
+export type SafeStorageLike = {
   isEncryptionAvailable?: () => boolean;
   encryptString: (text: string) => Buffer;
   decryptString: (data: Buffer) => string;
-}
+};
 
-export interface KeyStore {
+export type KeyStore = {
   saveKey: (key: string) => void;
   hasKey: () => boolean;
   last4: () => string | null;
   clearKey: () => void;
   /** Only the API client reads this; the renderer never sees it. */
   loadKey: () => string | null;
-}
+};
 
 /** The slice of the Anthropic SDK the app uses, so tests can pass a fake. */
-export interface ApiClient {
+export type ApiClient = {
   messages: {
     create: (params: {
       model: string;
@@ -40,7 +40,7 @@ export interface ApiClient {
     }) => Promise<{ stop_reason?: string | null; stop_details?: { explanation?: string } | null; content?: { type: string; text?: string }[] }>;
   };
   models: { list: (params: { limit: number }) => Promise<{ data?: { id: string }[] }> };
-}
+};
 
 export type ClientFactory = (apiKey: string) => Promise<ApiClient>;
 
@@ -95,13 +95,13 @@ export const testConnection = async ({ store, clientFactory = sdkClient }: { sto
   }
 };
 
-export interface ProposeInput {
+export type ProposeInput = {
   system: string;
   user: string;
   schema: unknown;
   model?: string | undefined;
   client: ApiClient;
-}
+};
 
 /** One structured-output call. Returns the first text block (JSON text). */
 export const propose = async ({ system, user, schema, model = DEFAULT_MODEL, client }: ProposeInput): Promise<string> => {

@@ -6,14 +6,14 @@
 
 const VALUE_FLAGS = ['--theme', '--size', '--view'];
 
-export interface ScreenshotArgs {
+export type ScreenshotArgs = {
   repo: string | undefined;
   out: string | undefined;
   theme: 'light' | 'dark' | null;
   width: number;
   height: number;
   view: string;
-}
+};
 
 /** The options, or null when the app was not started in screenshot mode. */
 export const parseScreenshotArgs = (args: readonly string[]): ScreenshotArgs | null => {

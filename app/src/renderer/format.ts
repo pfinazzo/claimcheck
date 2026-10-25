@@ -38,10 +38,10 @@ export const factsLine = (claim: Claim): string => {
 
 export const needsDecision = (board: Board, claim: Claim): boolean => board.queue.includes(claim.id);
 
-export interface Groups {
+export type Groups = {
   needs: Claim[];
   backed: Claim[];
-}
+};
 
 /** The decision queue in risk order, then everything else in file order. */
 export const groupClaims = (board: Board): Groups => {

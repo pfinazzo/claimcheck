@@ -16,14 +16,14 @@ export const SOURCES = ['test_failure', 'revert', 'fix_commit', 'human'] as cons
 
 export const utcNow = (): string => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-export interface OutcomeInput {
+export type OutcomeInput = {
   runId?: string | null;
   claimId: string;
   outcome: OutcomeRecord['outcome'];
   source: OutcomeRecord['outcome_source'];
   evidence?: string;
   ts?: string;
-}
+};
 
 /** Throws a plain message when a record would not be a valid outcome line. */
 export const validateOutcome = (rec: Record<string, unknown>): OutcomeRecord => {
