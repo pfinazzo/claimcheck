@@ -39,10 +39,22 @@ export const APP_DEFAULTS: AppSettings = { flagConfidence: 0.75, flagCatchRate: 
 /** A git ref that cannot be read as an option: no leading dash, no odd characters. */
 export const SAFE_REF = /^(?!-)[\w./-]+$/;
 
+type SpecState = 'none' | 'draft' | 'frozen' | 'drifted';
+
+/** No spec file, a spec without a lock (draft), or a locked spec that still matches (frozen) or not (drifted). */
+const toSpecState = ({ hasSpec, isLocked, lockOk }: { hasSpec: boolean; isLocked: boolean; lockOk: boolean }): SpecState => {
+  if (!hasSpec) return 'none';
+  if (!isLocked) return 'draft';
+  return lockOk ? 'frozen' : 'drifted';
+};
+
 const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
 const str = (v: unknown, fallback = ''): string => toText({ value: v, fallback });
-const strList = (v: unknown): string[] => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]).map((x) => str(x));
+const strList = (v: unknown): string[] => {
+  if (v === null || v === undefined) return [];
+  return (Array.isArray(v) ? v : [v]).map((x) => str(x));
+};
 const finite = (v: unknown): number | null => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 const isObject = (v: unknown): v is Raw => v !== null && typeof v === 'object' && !Array.isArray(v);
 
@@ -149,6 +161,25 @@ const cleanMutant = (m: Raw): Mutant => ({
   outcome: str(m.outcome),
 });
 
+/** A `<run>-check.json` file's contents, cleaned. */
+const toCheckRun = ({ name, data }: { name: string; data: Raw }): CheckRun => ({
+  file: name,
+  run_id: str(data.run_id),
+  ts: str(data.ts),
+  provider: str(data.provider),
+  model: data.model === null || data.model === undefined ? null : str(data.model),
+  verdicts: (Array.isArray(data.verdicts) ? data.verdicts : []).filter(isObject).map(cleanVerdict),
+});
+
+/** A `<run>-mutate.json` file's contents, cleaned. */
+const toMutateRun = ({ name, data }: { name: string; data: Raw }): MutateRun => ({
+  file: name,
+  run_id: str(data.run_id),
+  ts: str(data.ts),
+  mutants: (Array.isArray(data.mutants) ? data.mutants : []).filter(isObject).slice(0, MUTANT_LIMIT).map(cleanMutant),
+  per_claim: isObject(data.per_claim) ? data.per_claim : {},
+});
+
 const readRuns = async (runsDir: string): Promise<{ check: CheckRun[]; mutate: MutateRun[] }> => {
   let names: string[] = [];
   try {
@@ -156,30 +187,10 @@ const readRuns = async (runsDir: string): Promise<{ check: CheckRun[]; mutate: M
   } catch {
     return { check: [], mutate: [] };
   }
-  const check: CheckRun[] = [];
-  const mutate: MutateRun[] = [];
-  for (const name of names) {
-    const data = await readJson(path.join(runsDir, name));
-    if (!isObject(data)) continue;
-    const base = { file: name, run_id: str(data.run_id), ts: str(data.ts) };
-    if (name.endsWith('-check.json')) {
-      check.push({
-        ...base,
-        provider: str(data.provider),
-        model: data.model === null || data.model === undefined ? null : str(data.model),
-        verdicts: (Array.isArray(data.verdicts) ? data.verdicts : []).filter(isObject).map(cleanVerdict),
-      });
-    } else if (name.endsWith('-mutate.json')) {
-      mutate.push({
-        ...base,
-        mutants: (Array.isArray(data.mutants) ? data.mutants : []).filter(isObject).slice(0, MUTANT_LIMIT).map(cleanMutant),
-        per_claim: isObject(data.per_claim) ? data.per_claim : {},
-      });
-    }
-  }
+  const files = await Promise.all(names.map(async (name) => ({ name, data: await readJson(path.join(runsDir, name)) })));
   const newestFirst = (a: { ts: string; run_id: string }, b: { ts: string; run_id: string }): number => (runSortKey(a) < runSortKey(b) ? 1 : -1);
-  check.sort(newestFirst);
-  mutate.sort(newestFirst);
+  const check = files.flatMap(({ name, data }) => (name.endsWith('-check.json') && isObject(data) ? [toCheckRun({ name, data })] : [])).toSorted(newestFirst);
+  const mutate = files.flatMap(({ name, data }) => (name.endsWith('-mutate.json') && isObject(data) ? [toMutateRun({ name, data })] : [])).toSorted(newestFirst);
   return { check, mutate };
 };
 
@@ -318,7 +329,7 @@ export const readBoard = async (repoPath: string): Promise<Board> => {
       head: await git(repo, ['rev-parse', 'HEAD']),
       hasClaimcheck: configText !== null || claimsText !== null,
       lockOk,
-      specState: specText === null ? 'none' : lock ? (lockOk ? 'frozen' : 'drifted') : 'draft',
+      specState: toSpecState({ hasSpec: specText !== null, isLocked: Boolean(lock), lockOk }),
       lastRunTs: timestamps.at(-1) ?? null,
     },
     config,

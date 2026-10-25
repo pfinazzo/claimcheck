@@ -30,6 +30,7 @@ def _run_git(repo: Path, argv: list[str], **options: Any) -> subprocess.Complete
 
 
 def git(repo: Path, *args: str, check: bool = True) -> str:
+    """Run git in `repo` and return stdout. Raises ClaimcheckError on failure unless `check` is off."""
     proc = _run_git(repo, ["git", *_FIXED, *args], text=True, encoding="utf-8", errors="replace")
     if check and proc.returncode != 0:
         raise ClaimcheckError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
@@ -37,10 +38,12 @@ def git(repo: Path, *args: str, check: bool = True) -> str:
 
 
 def head_sha(repo: Path) -> str:
+    """The sha HEAD points at."""
     return git(repo, "rev-parse", "HEAD").strip()
 
 
 def rev_parse(repo: Path, ref: str) -> str:
+    """The commit sha `ref` names. Raises ClaimcheckError with how to fix it when the ref is missing."""
     out = git(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", check=False).strip()
     if not out:
         raise ClaimcheckError(
@@ -57,19 +60,17 @@ def staged_paths(repo: Path) -> list[tuple[str, str]]:
     (copy) and the new path as the given status, so both sides need a claim.
     """
     out = git(repo, "diff", "--cached", "--name-status", "-M", check=False)
-    result: list[tuple[str, str]] = []
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0][0]
-        if status in ("R", "C") and len(parts) >= 3:
-            if status == "R":
-                result.append(("D", parts[1].replace("\\", "/")))
-            result.append((status, parts[2].replace("\\", "/")))
-            continue
-        result.append((status, parts[-1].replace("\\", "/")))
-    return result
+    return [entry for line in out.splitlines() if line.strip() for entry in _name_status_entries(line)]
+
+
+def _name_status_entries(line: str) -> list[tuple[str, str]]:
+    """One `--name-status` line as (status, path) pairs: a rename also yields its old path as D."""
+    parts = line.split("\t")
+    status = parts[0][0]
+    if status not in ("R", "C") or len(parts) < 3:
+        return [(status, parts[-1].replace("\\", "/"))]
+    new_side = (status, parts[2].replace("\\", "/"))
+    return [("D", parts[1].replace("\\", "/")), new_side] if status == "R" else [new_side]
 
 
 def is_dirty(repo: Path, paths: list[str] | None = None) -> bool:
@@ -81,11 +82,14 @@ def is_dirty(repo: Path, paths: list[str] | None = None) -> bool:
 
 
 def path_dirty(repo: Path, path: str) -> bool:
+    """Whether one path has a staged or unstaged change."""
     return is_dirty(repo, [path])
 
 
 def commits_ahead(repo: Path, base: str) -> int:
-    rev_parse(repo, base)  # a missing base is a clear error, not a raw git one
+    # A missing base is a clear error, not a raw git one.
+    """How many commits HEAD has that `base` does not."""
+    rev_parse(repo, base)
     out = git(repo, "rev-list", "--count", f"{base}..HEAD").strip()
     return int(out or 0)
 
@@ -135,6 +139,7 @@ def require_diff(repo: Path, base: str, worktree: bool) -> str:
 
 
 def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:
+    """Files the diff under test touches: base...HEAD, or with `worktree` the working tree plus untracked files."""
     if worktree:
         out = git(repo, "diff", "--name-only", base, "--")
         extra = untracked_files(repo)
@@ -146,11 +151,13 @@ def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:
 
 
 def path_changed_in_range(repo: Path, base: str, path: str) -> bool:
+    """Whether `path` changed between `base` and HEAD."""
     out = git(repo, "diff", "--name-only", f"{base}...HEAD", "--", path)
     return bool(out.strip())
 
 
 def earliest_author_date(repo: Path, base: str) -> datetime | None:
+    """The author date of the first commit after `base`, or None when HEAD has none."""
     out = git(repo, "log", "--format=%aI", "--reverse", f"{base}..HEAD").strip()
     if not out:
         return None
@@ -159,15 +166,18 @@ def earliest_author_date(repo: Path, base: str) -> datetime | None:
 
 
 def merge_base(repo: Path, base: str) -> str:
+    """The commit where HEAD's history meets `base`."""
     return git(repo, "merge-base", base, "HEAD").strip()
 
 
 def show_file_at(repo: Path, ref: str, path: str) -> str | None:
+    """The file's text as committed at `ref`, or None when it did not exist there."""
     proc = _run_git(repo, ["git", "show", f"{ref}:{path}"], text=True, encoding="utf-8")
     return proc.stdout if proc.returncode == 0 else None
 
 
 def staged_file_content(repo: Path, path: str) -> str | None:
+    """The file as staged in the index, or None when it is not staged."""
     return show_file_at(repo, "", path)
 
 
@@ -177,6 +187,7 @@ def current_branch(repo: Path) -> str:
 
 
 def branch_exists(repo: Path, name: str) -> bool:
+    """Whether a local branch of that name exists."""
     return bool(git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}", check=False).strip())
 
 
@@ -187,6 +198,7 @@ def switch_new_branch(repo: Path, name: str) -> None:
 
 
 def stage(repo: Path, *paths: str) -> None:
+    """git add the paths."""
     git(repo, "add", "--", *paths)
 
 
@@ -203,5 +215,6 @@ def is_ignored(repo: Path, path: str) -> bool:
 
 
 def tracked_files(repo: Path) -> list[str]:
+    """Every file git tracks, with forward slashes."""
     out = git(repo, "ls-files", "-z", check=False)
     return [n.replace("\\", "/") for n in out.split("\0") if n]

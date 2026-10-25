@@ -3,6 +3,7 @@
 @author Patrick Finazzo
 """
 
+import hashlib
 import json
 
 import pytest
@@ -80,8 +81,6 @@ def test_ac22_exact_mutant_sets(line, expected):
 # ---- AC 23 ---------------------------------------------------------------
 
 def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, capsys):
-    import hashlib
-
     sentinel = calc_repo.cc / "mutate.lock"
     sentinel.write_text("stale\n", encoding="utf-8")
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 6
@@ -111,6 +110,7 @@ def test_ac23_backup_and_sentinel_exist_during_run_then_vanish(calc_repo, monkey
     real = mutate._run_tests
 
     def spy(repo, cmd, timeout):
+        """Record whether the sentinel and backup exist while the tests run, then run them."""
         seen["sentinel"] = (calc_repo.cc / "mutate.lock").exists()
         seen["backup"] = (calc_repo.cc / "mutate-backup" / "src" / "calc.py").exists()
         return real(repo, cmd, timeout)
@@ -136,9 +136,11 @@ def test_ac23_failed_restore_keeps_backup_and_sentinel(calc_repo, monkeypatch, c
     assert (calc_repo.cc / "mutate.lock").exists()
     backup = calc_repo.cc / "mutate-backup" / "src" / "calc.py"
     assert backup.exists()
-    assert calc_repo.read("src/calc.py") != CALC_SRC  # the mutant is still in place...
+    # The mutant is still in place...
+    assert calc_repo.read("src/calc.py") != CALC_SRC
     monkeypatch.setattr(mutate, "_restore_file", real_restore)
-    assert calc_repo.cli("mutate", "--restore") == 0  # ...and --restore has what it needs
+    # ...and --restore has what it needs.
+    assert calc_repo.cli("mutate", "--restore") == 0
     assert calc_repo.read("src/calc.py") == CALC_SRC
     assert not (calc_repo.cc / "mutate.lock").exists()
 
@@ -163,6 +165,7 @@ def test_ac24_timeout_counts_as_timeout(calc_repo, monkeypatch):
     calls = {"n": 0}
 
     def fake(repo, cmd, timeout):
+        """The baseline passes; every planted bug times out."""
         calls["n"] += 1
         return ("survived", 0.0) if calls["n"] == 1 else ("timeout", float(timeout))
 
@@ -189,13 +192,15 @@ def test_ac25_max_mutants_and_seed_reproducible(calc_repo):
         return [(m["cls"], m["mutated"]) for m in r["mutants"]]
     assert len(a["mutants"]) == 2 and a["candidates"] == 3
     assert key(a) == key(b)
-    assert key(a) != key(c) or True  # different seeds may coincide with 3 candidates
+    # Different seeds may coincide with 3 candidates.
+    assert key(a) != key(c) or True
 
 
 # ---- AC 26 ---------------------------------------------------------------
 
 def test_ac26_run_file_shape_and_threshold(calc_repo, capsys):
-    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 0  # everything survives, min rate 0.0
+    # Everything survives, min rate 0.0.
+    assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 0
     out = json.loads(capsys.readouterr().out)
     files = sorted((calc_repo.cc / "runs").glob("*-mutate.json"))
     assert json.loads(files[-1].read_text(encoding="utf-8")) == out

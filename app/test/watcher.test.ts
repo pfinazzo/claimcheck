@@ -18,11 +18,14 @@ test('AC 9: debounced to one call per burst; outside paths ignored', async () =>
   const w = watch(repo, () => {
     calls += 1;
   });
-  await sleep(200); // let the OS watcher settle
+  // Let the OS watcher settle.
+  await sleep(200);
   const runs = path.join(repo, '.claimcheck', 'runs');
   mkdirSync(runs, { recursive: true });
   for (let i = 0; i < 3; i += 1) {
     writeFileSync(path.join(runs, 'x.json'), `{"i":${i}}`, 'utf8');
+    // The writes must be spaced in time to form a burst, so each one waits for the last.
+    // eslint-disable-next-line no-await-in-loop
     await sleep(15);
   }
   await sleep(600);

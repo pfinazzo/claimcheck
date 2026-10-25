@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 
 import pytest
@@ -78,7 +79,8 @@ def test_hook_line_goes_before_a_trailing_exit(repo):
     lines = path.read_text(encoding="utf-8").splitlines()
     assert lines[-1] == "exit 0"
     assert hook.HOOK_MARKER in lines[-2]
-    assert hook.install(repo.path) is False  # idempotent
+    # Idempotent.
+    assert hook.install(repo.path) is False
 
 
 def test_hook_refuses_to_edit_a_non_shell_hook(repo):
@@ -147,7 +149,8 @@ def test_duplicate_verdicts_for_one_claim_are_invalid():
 
 
 def test_a_refutation_in_a_flawed_reply_survives_a_second_flawed_reply():
-    first = json.dumps({"verdicts": [_v("c1", "REFUTED")]})  # c2 missing: invalid
+    # C2 missing: invalid.
+    first = json.dumps({"verdicts": [_v("c1", "REFUTED")]})
     second = "not json at all"
     out = checker.ask(_Seq(first, second), "s", "u", ["c1", "c2"])
     assert out[0]["verdict"] == "REFUTED"
@@ -173,7 +176,8 @@ def test_append_never_fuses_onto_an_unterminated_last_line(cc_repo):
 
     ledger.append_atomic(cc_repo.path, [rec("c1")])
     path = ledger.ledger_path(cc_repo.path)
-    path.write_bytes(path.read_bytes().rstrip(b"\n"))  # a crash or an editor ate the newline
+    # A crash or an editor ate the newline.
+    path.write_bytes(path.read_bytes().rstrip(b"\n"))
     ledger.append_atomic(cc_repo.path, [rec("c2")])
     lines = path.read_text(encoding="utf-8").splitlines()
     assert [json.loads(line_text)["claim_id"] for line_text in lines] == ["c1", "c2"]
@@ -203,7 +207,8 @@ def test_missing_base_ref_is_a_clear_error(repo):
 
 def test_worktree_diff_includes_untracked_files_but_not_claimcheck(cc_repo):
     cc_repo.branch("f")
-    cc_repo.write("fresh.py", "def h(x, y):\n    return x - y\n")  # never added to git
+    # Never added to git.
+    cc_repo.write("fresh.py", "def h(x, y):\n    return x - y\n")
     diff = gitio.diff_text(cc_repo.path, "main", worktree=True)
     assert "+++ b/fresh.py" in diff and "return x - y" in diff
     assert ".claimcheck" not in diff
@@ -211,10 +216,9 @@ def test_worktree_diff_includes_untracked_files_but_not_claimcheck(cc_repo):
 
 
 def test_repo_root_with_non_ascii_directory(tmp_path, monkeypatch):
-    import subprocess
-
     d = tmp_path / "café-proj"
     d.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=d, check=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert C.find_repo_root(d) == d.resolve()
-    assert sys.getdefaultencoding()  # the point is that nothing above raised or returned mojibake
+    # The point is that nothing above raised or returned mojibake.
+    assert sys.getdefaultencoding()

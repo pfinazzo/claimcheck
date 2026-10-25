@@ -46,6 +46,7 @@ def run_setup(
     `test_cmd` overrides the detected test command when the config is first written.
     """
     def step(name: str, value):
+        """Report one finished setup step to `on_step` and pass its result through."""
         if on_step:
             on_step(name, value)
         return value

@@ -45,6 +45,7 @@ Before finishing:
 
 
 def block() -> str:
+    """The marked block of agent instructions, begin and end markers included."""
     return f"{BEGIN}\n{BLOCK_BODY}{END}\n"
 
 
@@ -62,20 +63,31 @@ def _write(path: Path, text: str, newline: str, bom: bool) -> None:
     path.write_bytes((b"\xef\xbb\xbf" if bom else b"") + data)
 
 
+def _find_block(text: str) -> tuple[int, int] | None:
+    """Where the existing block sits, as (start, end) with its trailing newline; None if absent."""
+    start = text.find("<!-- claimcheck:begin")
+    end = text.find(END, start) if start != -1 else -1
+    if end == -1:
+        return None
+    end += len(END)
+    return start, end + 1 if text[end : end + 1] == "\n" else end
+
+
+def _separator_before_block(text: str) -> str:
+    """The blank line a new block needs after existing text: none for an empty file."""
+    if not text:
+        return ""
+    return "\n" if text.endswith("\n") else "\n\n"
+
+
 def apply_to_text(text: str) -> tuple[str, str]:
     """Return (new_text, action) where action is added, updated or unchanged."""
     new_block = block()
-    start = text.find("<!-- claimcheck:begin")
-    if start != -1:
-        end = text.find(END, start)
-        if end != -1:
-            end += len(END)
-            if text[end : end + 1] == "\n":
-                end += 1
-            updated = text[:start] + new_block + text[end:]
-            return updated, ("unchanged" if updated == text else "updated")
-    sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
-    return text + sep + new_block, "added"
+    span = _find_block(text)
+    if span is None:
+        return text + _separator_before_block(text) + new_block, "added"
+    updated = text[: span[0]] + new_block + text[span[1] :]
+    return updated, ("unchanged" if updated == text else "updated")
 
 
 def install(repo: Path, *, create: str | None = None) -> list[tuple[str, str]]:

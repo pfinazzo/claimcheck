@@ -18,6 +18,16 @@ export type DialogHost = {
 
 const MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-5-5'];
 
+/** What the connection checks found; not checked yet shows nothing. */
+const CLI_OK_TEXT = new Map<unknown, string>([
+  [true, ' Signed in.'],
+  [false, ' Not signed in.'],
+]);
+const API_OK_TEXT = new Map<unknown, string>([
+  [true, ' It works.'],
+  [false, ' It did not work.'],
+]);
+
 const btn = (label: string, onClick: () => void, cls = ''): HTMLButtonElement => h('button', { class: `btn ${cls}`.trim(), attrs: { type: 'button' }, on: { click: onClick } }, label);
 const field = (label: string, ...c: Child[]): HTMLElement => h('label', { class: 'field' }, h('span', {}, label), ...c);
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -50,10 +60,10 @@ export const connectDialog = (desk: DeskBridge, host: DialogHost, current: Conne
     fn().catch((e) => host.toast(message(e), true));
   };
 
-  const cliStatus = h('p', { class: 'muted' }, c.cliPath ? `Found at ${c.cliPath}.` : 'Claude Code was not found yet.', c.cliOk === true ? ' Signed in.' : c.cliOk === false ? ' Not signed in.' : '');
+  const cliStatus = h('p', { class: 'muted' }, c.cliPath ? `Found at ${c.cliPath}.` : 'Claude Code was not found yet.', CLI_OK_TEXT.get(c.cliOk) ?? '');
   const cliPath = h('input', { attrs: { type: 'text', value: c.cliPath ?? '', placeholder: 'Detected automatically' } });
   const keyInput = h('input', { attrs: { type: 'password', autocomplete: 'off', placeholder: c.apiSaved ? `Saved. Ends in ${c.apiLast4 ?? ''}` : 'sk-ant-…' } });
-  const keyStatus = h('p', { class: 'muted' }, c.apiSaved ? `A key is saved (ends in ${c.apiLast4 ?? ''}).` : 'No key saved.', c.apiOk === true ? ' It works.' : c.apiOk === false ? ' It did not work.' : '');
+  const keyStatus = h('p', { class: 'muted' }, c.apiSaved ? `A key is saved (ends in ${c.apiLast4 ?? ''}).` : 'No key saved.', API_OK_TEXT.get(c.apiOk) ?? '');
   const model = h('select', { attrs: { 'aria-label': 'Model' } }, ...MODELS.map((m) => h('option', { attrs: { value: m, selected: m === c.model } }, m)));
   const mode = h('select', { attrs: { 'aria-label': 'Use for Fix this' } }, h('option', { attrs: { value: 'cli', selected: active === 'cli' } }, 'Claude Code'), h('option', { attrs: { value: 'api', selected: active === 'api' } }, 'API key'));
 

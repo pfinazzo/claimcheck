@@ -120,12 +120,37 @@ const welcome = (ctx: WizardCtx, s: WizardState): Child[] => {
   ];
 };
 
+/**
+ * Marks the wizard busy while `work` runs and redraws before and after. A failure is shown on the
+ * step (that is the handling: the user sees it and can retry), described by `describeError`.
+ */
+const runBusy = async ({ busy, rerender, work, describeError = msg }: { busy: NonNullable<Local['busy']>; rerender: () => void; work: () => Promise<void>; describeError?: (error: unknown) => string | null }): Promise<void> => {
+  local.busy = busy;
+  local.error = null;
+  rerender();
+  try {
+    await work();
+  } catch (error) {
+    local.error = describeError(error);
+  } finally {
+    local.busy = null;
+    rerender();
+  }
+};
+
 // ---- setup -----------------------------------------------------------------
+
+/** What setup did to .gitignore: created it, added lines, or nothing needed. */
+const describeSecrets = (secrets: CcInit['secrets']): string => {
+  if (secrets.created) return '.gitignore created, and .env and key files are ignored';
+  if (secrets.added.length) return `added ${secrets.added.length} lines so .env and key files are ignored`;
+  return '.env and key files are already ignored';
+};
 
 const checklist = (init: CcInit): HTMLElement => {
   const row = (name: string, note: string, warn = false): HTMLElement => h('li', { class: warn ? 'warn' : '' }, h('strong', {}, `${name} `), h('span', { class: 'muted' }, note));
   const rows: HTMLElement[] = [];
-  rows.push(row('Secrets', init.secrets.created ? '.gitignore created, and .env and key files are ignored' : init.secrets.added.length ? `added ${init.secrets.added.length} lines so .env and key files are ignored` : '.env and key files are already ignored'));
+  rows.push(row('Secrets', describeSecrets(init.secrets)));
   for (const t of init.secrets.tracked) rows.push(row(t, 'is already committed. Ignoring it does not remove it: run git rm --cached on it.', true));
   rows.push(row('Config', init.config === 'created' ? '.claimcheck/config.toml written' : '.claimcheck/config.toml already existed'));
   rows.push(row('Commit hook', init.hook.status === 'installed' ? 'installed where git looks for it' : 'already in place'));
@@ -143,19 +168,14 @@ const setup = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] =>
     out.push(
       h('label', { class: 'check' }, ci, ' Also add a GitHub Actions workflow that runs claimcheck on pull requests'),
       btn(local.busy === 'init' ? 'Setting up…' : 'Set up this repo', () => {
-        local.busy = 'init';
-        local.error = null;
-        rerender();
-        ctx.desk
-          .wizardInit({ ci: ctx.state().setup.ci })
-          .then((r) => ctx.set({ ...ctx.state(), setup: { ...ctx.state().setup, init: r, testCmd: ctx.state().setup.testCmd || r.stack.test_cmd } }))
-          .catch((e) => {
-            local.error = msg(e);
-          })
-          .finally(() => {
-            local.busy = null;
-            rerender();
-          });
+        void runBusy({
+          busy: 'init',
+          rerender,
+          work: async () => {
+            const r = await ctx.desk.wizardInit({ ci: ctx.state().setup.ci });
+            ctx.set({ ...ctx.state(), setup: { ...ctx.state().setup, init: r, testCmd: ctx.state().setup.testCmd || r.stack.test_cmd } });
+          },
+        });
       }, 'primary', local.busy === 'init'),
     );
   } else {
@@ -184,33 +204,32 @@ const setup = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] =>
 
 export const isConnected = (c: ConnectionSummary | null): boolean => Boolean(c) && ((c?.mode === 'cli' && c.cliOk === true) || (c?.mode === 'api' && c.apiOk === true));
 
+/** One line on the connection: connected, installed but not checked, or nothing yet. */
+const describeConnection = ({ ok, cliPath }: { ok: boolean; cliPath: string | null | undefined }): string => {
+  if (ok) return 'Connected.';
+  return cliPath ? 'Claude Code is installed. Check that it is signed in.' : 'No connection yet.';
+};
+
 const connect = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] => {
   const c = ctx.connection();
   const ok = isConnected(c);
   return [
     h('h2', {}, 'Connect Claude'),
     para('Claude writes the spec with you and later checks each claim. You can use your Claude Code sign-in or an API key.'),
-    h('p', { class: ok ? 'good' : 'muted' }, ok ? 'Connected.' : c?.cliPath ? 'Claude Code is installed. Check that it is signed in.' : 'No connection yet.'),
+    h('p', { class: ok ? 'good' : 'muted' }, describeConnection({ ok, cliPath: c?.cliPath })),
     h(
       'div',
       { class: 'row' },
       btn(local.busy === 'connect' ? 'Checking…' : 'Check my Claude Code sign-in', () => {
-        local.busy = 'connect';
-        local.error = null;
-        rerender();
-        ctx.desk
-          .testConnection({ mode: 'cli' })
-          .then(async (r) => {
+        void runBusy({
+          busy: 'connect',
+          rerender,
+          work: async () => {
+            const r = await ctx.desk.testConnection({ mode: 'cli' });
             if (!r.ok) local.error = `${toText({ value: r.error, fallback: 'It did not work.' })}${r.needsSignIn ? ' Press Connect Claude to sign in.' : ''}`;
             await ctx.refreshConnection();
-          })
-          .catch((e) => {
-            local.error = msg(e);
-          })
-          .finally(() => {
-            local.busy = null;
-            rerender();
-          });
+          },
+        });
       }, 'primary', local.busy === 'connect'),
       btn('Use an API key…', ctx.openConnect),
       btn(s.connectSkipped ? 'Skipping for now' : 'Skip for now', () => ctx.set({ ...s, connectSkipped: !s.connectSkipped })),
@@ -223,19 +242,16 @@ const connect = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] 
 
 const requestStep = (ctx: WizardCtx, sendAnswers: boolean, rerender: () => void): void => {
   const s = ctx.state();
-  local.busy = 'draft';
-  local.error = null;
-  rerender();
-  ctx.desk
-    .wizardDraft({ request: buildStepRequest(s, { sendAnswers }) })
-    .then((r) => ctx.set(applyStepResponse(ctx.state(), r, { sentAnswers: sendAnswers })))
-    .catch((e) => {
-      local.error = msg(e) === 'Cancelled.' ? null : msg(e);
-    })
-    .finally(() => {
-      local.busy = null;
-      rerender();
-    });
+  void runBusy({
+    busy: 'draft',
+    rerender,
+    work: async () => {
+      const r = await ctx.desk.wizardDraft({ request: buildStepRequest(s, { sendAnswers }) });
+      ctx.set(applyStepResponse(ctx.state(), r, { sentAnswers: sendAnswers }));
+    },
+    // Cancelling is the user's own choice, not an error to show.
+    describeError: (error) => (msg(error) === 'Cancelled.' ? null : msg(error)),
+  });
 };
 
 const thinking = (ctx: WizardCtx): HTMLElement => h('div', { class: 'working row' }, 'Claude is thinking…', btn('Cancel', () => void ctx.desk.wizardCancel()));
@@ -355,20 +371,15 @@ const freeze = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] =
     h('label', { class: 'check' }, h('input', { attrs: { type: 'checkbox', checked: s.freeze.makeBranch }, on: { change: (e) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, makeBranch: (e.target as HTMLInputElement).checked } }) } }), ' Commit it on a new task branch'),
     s.freeze.makeBranch ? h('label', { class: 'field' }, h('span', {}, 'Branch name (optional)'), h('input', { attrs: { type: 'text', value: s.freeze.branch, placeholder: 'task/add-free-shipping' }, on: { input: (e) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, branch: (e.target as HTMLInputElement).value } }, { render: false }) } })) : null,
     btn(local.busy === 'finish' ? 'Freezing…' : 'Freeze and commit', () => {
-      local.busy = 'finish';
-      local.error = null;
-      rerender();
       const cur = ctx.state();
-      ctx.desk
-        .wizardFinish({ request: buildFinishRequest(cur), freeze: true, makeBranch: cur.freeze.makeBranch, branch: cur.freeze.branch })
-        .then((r) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, result: r } }))
-        .catch((e) => {
-          local.error = msg(e);
-        })
-        .finally(() => {
-          local.busy = null;
-          rerender();
-        });
+      void runBusy({
+        busy: 'finish',
+        rerender,
+        work: async () => {
+          const r = await ctx.desk.wizardFinish({ request: buildFinishRequest(cur), freeze: true, makeBranch: cur.freeze.makeBranch, branch: cur.freeze.branch });
+          ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, result: r } });
+        },
+      });
     }, 'primary', local.busy === 'finish'),
   ];
 };
@@ -384,6 +395,24 @@ const done = (ctx: WizardCtx, s: WizardState): Child[] => {
 
 // ---- the whole wizard ---------------------------------------------------------
 
+/** The progress list's class for one step: the current one, one already done, or one still ahead. */
+const toStepClass = ({ isCurrent, isPast }: { isCurrent: boolean; isPast: boolean }): string => {
+  if (isCurrent) return 'current';
+  return isPast ? 'past' : '';
+};
+
+/** Saves the test command the user typed over the detected one, then moves on; a failure stays on this step. */
+const saveTestCmdThenNext = async ({ ctx, testCmd, rerender }: { ctx: WizardCtx; testCmd: string; rerender: () => void }): Promise<void> => {
+  try {
+    await ctx.desk.wizardSaveTestCmd({ testCmd });
+  } catch (error) {
+    local.error = msg(error);
+    rerender();
+    return;
+  }
+  ctx.set(goNext(ctx.state()));
+};
+
 export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
   const s = ctx.state();
   if (local.step !== s.step + s.beat) {
@@ -392,8 +421,15 @@ export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
     local.error = null;
   }
   const rerender = (): void => renderWizard(ctx, mountInto);
-  const body: Child[] =
-    s.step === 'welcome' ? welcome(ctx, s) : s.step === 'setup' ? setup(ctx, s, rerender) : s.step === 'connect' ? connect(ctx, s, rerender) : s.step === 'spec' ? spec(ctx, s, rerender) : s.step === 'freeze' ? freeze(ctx, s, rerender) : done(ctx, s);
+  const renderStep: Record<WizardState['step'], () => Child[]> = {
+    welcome: () => welcome(ctx, s),
+    setup: () => setup(ctx, s, rerender),
+    connect: () => connect(ctx, s, rerender),
+    spec: () => spec(ctx, s, rerender),
+    freeze: () => freeze(ctx, s, rerender),
+    done: () => done(ctx, s),
+  };
+  const body = renderStep[s.step]();
 
   const back = goBack(s);
   const advance = (): void => {
@@ -401,10 +437,7 @@ export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
       const init = s.setup.init;
       const typed = ctx.state().setup.testCmd.trim();
       if (init && typed && typed !== init.stack.test_cmd) {
-        ctx.desk.wizardSaveTestCmd({ testCmd: typed }).then(() => ctx.set(goNext(ctx.state()))).catch((e) => {
-          local.error = msg(e);
-          rerender();
-        });
+        void saveTestCmdThenNext({ ctx, testCmd: typed, rerender });
         return;
       }
     }
@@ -427,7 +460,7 @@ export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
     ),
   );
 
-  const steps = h('ol', { class: 'steps', attrs: { 'aria-label': 'Progress' } }, ...STEPS.map((id, i) => h('li', { class: id === s.step ? 'current' : i < stepNumber(s) - 1 ? 'past' : '' }, STEP_LABELS[id])));
+  const steps = h('ol', { class: 'steps', attrs: { 'aria-label': 'Progress' } }, ...STEPS.map((id, i) => h('li', { class: toStepClass({ isCurrent: id === s.step, isPast: i < stepNumber(s) - 1 }) }, STEP_LABELS[id])));
   const root = h(
     'div',
     { class: 'wizard' },

@@ -14,15 +14,15 @@ import os from 'node:os';
 import path from 'node:path';
 
 test('ghReady reflects gh auth status', async () => {
-  assert.equal(await ghReady({ execFn: async () => ({ stdout: '' }) }), true);
-  assert.equal(await ghReady({ execFn: async () => { throw new Error('not logged in'); } }), false);
+  assert.equal(await ghReady({ execFn: () => Promise.resolve({ stdout: '' }) }), true);
+  assert.equal(await ghReady({ execFn: () => Promise.reject(new Error('not logged in')) }), false);
 });
 
 test('openPullRequest runs gh pr create from the worktree and returns the URL', async () => {
   const calls: { cmd: string; args: string[]; opts: { cwd?: string } }[] = [];
-  const execFn = async (cmd: string, args: string[], opts: { cwd?: string } = {}) => {
+  const execFn = (cmd: string, args: string[], opts: { cwd?: string } = {}) => {
     calls.push({ cmd, args, opts });
-    return { stdout: 'Creating pull request…\nhttps://github.com/x/y/pull/7\n' };
+    return Promise.resolve({ stdout: 'Creating pull request…\nhttps://github.com/x/y/pull/7\n' });
   };
   const url = await openPullRequest({ cwd: '/wt', base: 'main', head: 'claimcheck/fix-c2-abc', title: 'claimcheck: c2 — Pin', body: 'b', execFn });
   assert.equal(url, 'https://github.com/x/y/pull/7');
@@ -44,11 +44,11 @@ test('AC 26: recents keep eight, newest first, de-duplicated', () => {
 });
 
 test('AC 25: runner resolves claimcheck on PATH, else python -m, else null', async () => {
-  const onPath = await resolveClaimcheck({ execFn: async () => ({ stdout: 'C:\\x\\claimcheck.exe\n' }) });
+  const onPath = await resolveClaimcheck({ execFn: () => Promise.resolve({ stdout: 'C:\\x\\claimcheck.exe\n' }) });
   assert.deepEqual(onPath, { command: 'C:\\x\\claimcheck.exe', prefix: [] });
-  const viaPy = await resolveClaimcheck({ python: 'py', execFn: async () => { throw new Error('no'); } });
+  const viaPy = await resolveClaimcheck({ python: 'py', execFn: () => Promise.reject(new Error('no')) });
   assert.deepEqual(viaPy, { command: 'py', prefix: ['-m', 'claimcheck'] });
-  assert.equal(await resolveClaimcheck({ execFn: async () => { throw new Error('no'); } }), null);
+  assert.equal(await resolveClaimcheck({ execFn: () => Promise.reject(new Error('no')) }), null);
   const lines: string[] = [];
   const res = await runClaimcheck({ repoPath: '.', provider: 'stub', resolved: null, onLine: (l) => lines.push(l) });
   assert.equal(res.exitCode, null);

@@ -188,7 +188,7 @@ const ctxFor = (initial: ReturnType<typeof demoWizard>): { ctx: WizardCtx; state
   let state = initial;
   const states = [initial];
   const ctx: WizardCtx = {
-    desk: new Proxy({}, { get: () => async () => { throw new Error('no bridge in this test'); } }) as never,
+    desk: new Proxy({}, { get: () => () => Promise.reject(new Error('no bridge in this test')) }) as never,
     state: () => state,
     set: (next) => { state = next; states.push(next); renderWizard(ctx, app); },
     connection: () => ({ mode: 'cli', model: 'm', cliPath: '/x/claude', cliOk: true, apiSaved: false, apiLast4: null, apiOk: null, claimcheckBin: null, useAuto: false }),

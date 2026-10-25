@@ -10,6 +10,7 @@ clean. Output, input and sleep are injectable so the whole thing can be tested w
 from __future__ import annotations
 
 import atexit
+import ctypes
 import itertools
 import os
 import random
@@ -43,7 +44,16 @@ GLYPHS_ASCII = {
 
 
 def strip_ansi(s: str) -> str:
+    """The text without color and cursor escape codes, for measuring its width."""
     return ANSI.sub("", s)
+
+
+def _enable_vt_on(kernel, std: int) -> None:
+    """Add ENABLE_VIRTUAL_TERMINAL_PROCESSING to one standard handle's console mode, if it has one."""
+    handle = kernel.GetStdHandle(std)
+    mode = ctypes.c_uint32()
+    if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+        kernel.SetConsoleMode(handle, mode.value | 0x0004)
 
 
 def enable_windows_vt() -> None:
@@ -51,18 +61,21 @@ def enable_windows_vt() -> None:
     if os.name != "nt":
         return
     try:
-        import ctypes
-
-        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        for std in (-11, -12):  # stdout, stderr
-            h = k.GetStdHandle(std)
-            mode = ctypes.c_uint32()
-            if k.GetConsoleMode(h, ctypes.byref(mode)):
-                k.SetConsoleMode(h, mode.value | 0x0004)
+        kernel = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        # -11 is stdout, -12 is stderr.
+        for std in (-11, -12):
+            _enable_vt_on(kernel, std)
     except (AttributeError, OSError):
         # An old console without these calls keeps its default mode. The text still prints;
         # only the colors show up as escape codes.
         return
+
+
+def _bar_color(frac: float) -> str:
+    """Green from 70% up, yellow from 40%, red below."""
+    if frac >= 0.7:
+        return "green"
+    return "yellow" if frac >= 0.4 else "red"
 
 
 def detect(stream=None, env: Mapping[str, str] | None = None) -> dict:
@@ -174,18 +187,20 @@ class Term:
             return
         self.hide_cursor()
         try:
-            n = len(text)
-            for _ in range(passes):
-                for head in range(-len(palette), n + len(palette)):
-                    line = []
-                    for i, ch in enumerate(text):
-                        d = head - i
-                        line.append(self.c(ch, str(palette[d])) if 0 <= d < len(palette) else self.c(ch, str(base)))
-                    self.w("\r" + indent + "".join(line))
-                    self.sleep(delay)
+            heads = range(-len(palette), len(text) + len(palette))
+            for head in [*heads] * passes:
+                self.w("\r" + indent + self._shimmer_frame(text, head, palette, base))
+                self.sleep(delay)
             self.w("\r" + CLEAR_LINE + indent + settled + "\n")
         finally:
             self.restore()
+
+    def _shimmer_frame(self, text: str, head: int, palette: list[int], base: int) -> str:
+        """The text with the highlight's bright end at position `head`, fading behind it."""
+        return "".join(
+            self.c(ch, str(palette[head - i])) if 0 <= head - i < len(palette) else self.c(ch, str(base))
+            for i, ch in enumerate(text)
+        )
 
     def gradient(self, text: str) -> str:
         if not self.color:
@@ -204,7 +219,7 @@ class Term:
             body = self.g["bar_full"] * full + partial.strip() + self.g["bar_empty"] * (width - full - (1 if partial.strip() else 0))
         else:
             body = self.g["bar_full"] * full + self.g["bar_empty"] * (width - full)
-        color = "green" if frac >= 0.7 else "yellow" if frac >= 0.4 else "red"
+        color = _bar_color(frac)
         return self.c(body[: max(full + 1, 0)], color) + self.c(body[max(full + 1, 0):], "grey") if self.color else body
 
     def animate_bar(self, label: str, to: float, *, width: int = 24, duration: float = 0.9, suffix: Callable[[float], str] | None = None) -> None:
@@ -221,7 +236,8 @@ class Term:
             steps = max(8, int(duration / 0.03))
             for i in range(steps + 1):
                 t = i / steps
-                v = to * (1 - (1 - t) ** 3)  # ease out
+                # Ease out.
+                v = to * (1 - (1 - t) ** 3)
                 self.w("\r" + CLEAR_LINE + frame(v))
                 self.sleep(duration / steps)
             self.w("\n")
@@ -309,11 +325,15 @@ class Term:
             if raw in ("m", "more") and more and not shown_more:
                 shown_more = True
                 hints = [h for h in hints if h != "m for more"]
-                for line in more.splitlines():
-                    self.p("    " + self.c(line, "grey"))
-                self.p()
+                self._say_more(more)
             else:
                 self.p(self.c("    (press Enter to go on)", "grey"))
+
+    def _say_more(self, more: str) -> None:
+        """The extra text `m` reveals, indented and grey, then a blank line."""
+        for line in more.splitlines():
+            self.p("    " + self.c(line, "grey"))
+        self.p()
 
     def yes_no(self, question: str, *, default: bool = True) -> bool:
         suffix = "[Y/n]" if default else "[y/N]"
@@ -372,7 +392,8 @@ class _Spin:
             self._thread.join(timeout=1)
         if not self.keep and ok:
             if self._thread:
-                self.t.w("\r" + CLEAR_LINE)  # transient: leave no trace of the wait
+                # Transient: leave no trace of the wait.
+                self.t.w("\r" + CLEAR_LINE)
             self.t.restore()
             return
         mark = self.t.c(self.t.g["ok"], "green", "bold") if ok else self.t.c(self.t.g["bad"], "red", "bold")

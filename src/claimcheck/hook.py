@@ -18,6 +18,7 @@ HOOK_MARKER = "claimcheck"
 
 
 def hook_line() -> str:
+    """The line the pre-commit hook runs: this Python, so the hook works without claimcheck on PATH."""
     exe = Path(sys.executable).as_posix()
     return f'"{exe}" -m claimcheck hook pre-commit || exit 1\n'
 
@@ -91,7 +92,8 @@ def pre_commit(repo: Path, cfg: C.Config) -> int:
     try:
         lock_ids = S.lock_ids(S.read_lock(repo))
     except SpecError:
-        lock_ids = None  # no lock: any cited criterion is a violation
+        # No lock: any cited criterion is a violation.
+        lock_ids = None
     cf = CL.load_and_validate(text, lock_ids)
 
     staged_set = set(code_paths)

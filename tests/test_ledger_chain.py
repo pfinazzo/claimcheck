@@ -25,7 +25,8 @@ def _rec(cid: str, confidence: float = 0.5) -> dict:
 
 
 def _legacy(cid: str) -> str:
-    return json.dumps(_rec(cid), sort_keys=True, ensure_ascii=False)  # the form written before chaining
+    # The form written before chaining.
+    return json.dumps(_rec(cid), sort_keys=True, ensure_ascii=False)
 
 
 def _read(repo) -> list[str]:
@@ -43,6 +44,7 @@ def _commit_ledger(repo) -> None:
 
 @pytest.fixture
 def chained(cc_repo):
+    """A repo whose ledger already holds four chained lines."""
     ledger.append_atomic(cc_repo.path, [_rec("c1"), _rec("c2"), _rec("c3"), _rec("c4")])
     return cc_repo
 
@@ -52,7 +54,8 @@ def chained(cc_repo):
 def test_each_line_carries_the_hash_of_the_line_before(chained):
     lines = _read(chained)
     objs = [json.loads(line_text) for line_text in lines]
-    assert objs[0]["prev"] == "0" * 64  # nothing before it
+    # Nothing before it.
+    assert objs[0]["prev"] == "0" * 64
     for i in range(1, 4):
         assert objs[i]["prev"] == ledger.line_hash(lines[i - 1])
 
@@ -98,7 +101,8 @@ def test_a_crlf_checkout_still_verifies(chained):
     path = chained.cc / "ledger.jsonl"
     path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
     assert chained.cli("verify-ledger") == 0
-    ledger.append_atomic(chained.path, [_rec("c5")])  # and it can keep growing
+    # And it can keep growing.
+    ledger.append_atomic(chained.path, [_rec("c5")])
     assert chained.cli("verify-ledger") == 0
 
 
@@ -159,7 +163,8 @@ def test_garbage_in_the_ledger_is_named(chained, capsys):
 def test_a_deleted_last_line_passes_alone_but_not_against_the_committed_base(chained, capsys):
     _commit_ledger(chained)
     _write(chained, _read(chained)[:-1])
-    assert chained.cli("verify-ledger") == 0  # a chain cannot see its own tail being cut off
+    # A chain cannot see its own tail being cut off.
+    assert chained.cli("verify-ledger") == 0
     assert chained.cli("verify-ledger", "--base", "HEAD") == 8
     assert "1 line(s) from the end of the ledger at HEAD are gone" in capsys.readouterr().err
 

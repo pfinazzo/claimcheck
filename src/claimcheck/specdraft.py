@@ -17,8 +17,9 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import ClaimcheckError, ProviderError, gitio, redact
+from . import ClaimcheckError, ProviderError, SpecError, gitio, redact
 from . import config as C
+from . import spec as S
 
 DRAFT_FILE = "spec-draft.json"
 MAX_QUESTIONS = 5
@@ -153,6 +154,34 @@ def _answer_tag(text: str) -> str:
     return "<answer>" + _clean(text).replace("</answer>", "") + "</answer>"
 
 
+def _interview_lines(draft: Draft) -> list[str]:
+    """Every round so far as prompt lines: each question and the person's answer, tagged."""
+    no_answer = "(no answer; use your judgment and say what you assumed in concerns)"
+    return [
+        line
+        for i, r in enumerate(draft.rounds, 1)
+        for line in [
+            f"### Round {i}",
+            *(
+                qa_line
+                for q, a in zip(r.questions, r.answers, strict=False)
+                for qa_line in (f"Q ({q.id}): {q.text}", f"A: {_answer_tag(a) if a.strip() else no_answer}")
+            ),
+        ]
+    ]
+
+
+def _criteria_lines(draft: Draft) -> list[str]:
+    """The criteria as they stand, with their checks and the out-of-scope list, as prompt lines."""
+    criteria = [
+        line
+        for i, c in enumerate(draft.criteria, 1)
+        for line in [f"{i}. {_clean(c.text)}", *([f"   check: {_clean(c.check)}"] if c.check else [])]
+    ]
+    out_of_scope = ["Out of scope so far: " + _clean("; ".join(draft.out_of_scope))] if draft.out_of_scope else []
+    return ["## Criteria as they stand (the person may have edited these; keep their wording)", *criteria, *out_of_scope]
+
+
 def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int) -> tuple[str, str]:
     """Pure: (system, user)."""
     parts = [
@@ -160,22 +189,9 @@ def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int)
         "## Files in the repo (names only)\n" + ("\n".join(files) if files else "(none listed)") + "\n",
     ]
     if draft.rounds:
-        lines = ["## Interview so far"]
-        for i, r in enumerate(draft.rounds, 1):
-            lines.append(f"### Round {i}")
-            for q, a in zip(r.questions, r.answers, strict=False):
-                lines.append(f"Q ({q.id}): {q.text}")
-                lines.append(f"A: {_answer_tag(a) if a.strip() else '(no answer; use your judgment and say what you assumed in concerns)'}")
-        parts.append("\n".join(lines) + "\n")
+        parts.append("\n".join(["## Interview so far", *_interview_lines(draft)]) + "\n")
     if draft.criteria:
-        lines = ["## Criteria as they stand (the person may have edited these; keep their wording)"]
-        for i, c in enumerate(draft.criteria, 1):
-            lines.append(f"{i}. {_clean(c.text)}")
-            if c.check:
-                lines.append(f"   check: {_clean(c.check)}")
-        if draft.out_of_scope:
-            lines.append("Out of scope so far: " + _clean("; ".join(draft.out_of_scope)))
-        parts.append("\n".join(lines) + "\n")
+        parts.append("\n".join(_criteria_lines(draft)) + "\n")
     parts.append(
         f"## This is round {round_no} of at most {max_rounds}.\n"
         + ("Draft the first criteria and ask your most important questions.\n" if not draft.rounds else
@@ -231,7 +247,8 @@ def next_round(provider, draft: Draft, files: list[str], round_no: int, max_roun
             raise
         except ClaimcheckError:
             raise
-        except Exception as e:  # network, SDK, subprocess
+        # Network, SDK, subprocess.
+        except Exception as e:
             raise ProviderError(f"provider failed: {e}") from e
         try:
             return parse_reply(raw)
@@ -265,7 +282,8 @@ def lint(criteria: list[Criterion]) -> dict[int, list[str]]:
         m = _VAGUE.search(c.text)
         if m:
             w.append(f"vague word {m.group(0)!r}: say what a test would see instead")
-        if not _OBSERVABLE.search(c.text + " " + c.check):  # a concrete check line is observable enough
+        # A concrete check line is observable enough.
+        if not _OBSERVABLE.search(c.text + " " + c.check):
             w.append("no observable behavior named (a value, a result, a state change)")
         if len(c.text) > 200:
             w.append("over 200 characters: it may be two criteria")
@@ -296,16 +314,19 @@ def render_spec(draft: Draft) -> str:
 
 
 def draft_path(repo: Path) -> Path:
+    """Where the in-progress interview draft is saved."""
     return C.cc_dir(repo) / DRAFT_FILE
 
 
 def save_draft(repo: Path, draft: Draft) -> None:
+    """Write the draft to disk so an interrupted interview can pick up where it stopped."""
     p = draft_path(repo)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(draft.to_json(), encoding="utf-8", newline="\n")
 
 
 def load_draft(repo: Path) -> Draft | None:
+    """The saved draft, or None when there is none or it cannot be read (the interview then starts fresh)."""
     p = draft_path(repo)
     if not p.is_file():
         return None
@@ -317,9 +338,6 @@ def load_draft(repo: Path) -> Draft | None:
 
 def write_spec(repo: Path, draft: Draft, *, refuse_if: Callable[[Path], list[str]] | None = None) -> Path:
     """Write spec.md. `refuse_if` returns code paths already changed; any means the diff is open."""
-    from . import SpecError
-    from . import spec as S
-
     if refuse_if is not None:
         open_paths = refuse_if(repo)
         if open_paths:
@@ -329,7 +347,8 @@ def write_spec(repo: Path, draft: Draft, *, refuse_if: Callable[[Path], list[str
                 "Start the next task on a fresh branch from the base."
             )
     text = render_spec(draft)
-    S.parse_criteria(text)  # the file we write must parse
+    # The file we write must parse.
+    S.parse_criteria(text)
     path = S.spec_path(repo)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8", newline="\n")
@@ -374,6 +393,41 @@ def _index(arg: str, n: int) -> int | None:
     return int(arg) - 1 if arg.isdigit() and 1 <= int(arg) <= n else None
 
 
+def _edit_criterion(draft: Draft, cmd: str, i: int, say: Say, ask: Ask) -> None:
+    """d removes criterion `i`, e rewrites its text, c sets how it is checked."""
+    if cmd == "d":
+        say(f"  removed: {draft.criteria.pop(i).text}")
+        return
+    if cmd == "c":
+        draft.criteria[i].check = " ".join(ask(f"  How is {i + 1} checked?> ").split())
+        return
+    new = " ".join(ask(f"  New text for {i + 1}> ").split())
+    if new:
+        draft.criteria[i].text = new
+
+
+def _apply_edit(draft: Draft, cmd: str, arg: str, say: Say, ask: Ask) -> bool:
+    """Carry out one review command. False when the command was not understood."""
+    if cmd == "?":
+        say(HELP)
+        return True
+    i = _index(arg, len(draft.criteria)) if cmd in ("e", "c", "d") else None
+    if i is not None:
+        _edit_criterion(draft, cmd, i, say, ask)
+        return True
+    if cmd == "a":
+        new = " ".join(ask("  New criterion> ").split())
+        if new:
+            draft.criteria.append(Criterion(new, " ".join(ask("  How is it checked? (optional)> ").split())))
+        return True
+    if cmd == "o":
+        new = " ".join(ask("  Out of scope> ").split())
+        if new:
+            draft.out_of_scope.append(new)
+        return True
+    return False
+
+
 def _review(draft: Draft, reply: Reply, say: Say, ask: Ask, *, last_round: bool) -> str:
     """Let the human edit. Returns "next", "save" or "quit"."""
     done_hint = "Enter to save" if (reply.ready and not reply.questions) or last_round else "Enter to continue"
@@ -387,29 +441,20 @@ def _review(draft: Draft, reply: Reply, say: Say, ask: Ask, *, last_round: bool)
             return "save"
         if cmd in ("quit", "q"):
             return "quit"
-        if cmd == "?":
-            say(HELP)
-        elif cmd in ("e", "c", "d") and (i := _index(arg, len(draft.criteria))) is not None:
-            if cmd == "d":
-                say(f"  removed: {draft.criteria.pop(i).text}")
-            elif cmd == "e":
-                new = " ".join(ask(f"  New text for {i + 1}> ").split())
-                if new:
-                    draft.criteria[i].text = new
-            else:
-                draft.criteria[i].check = " ".join(ask(f"  How is {i + 1} checked?> ").split())
-        elif cmd == "a":
-            new = " ".join(ask("  New criterion> ").split())
-            if new:
-                draft.criteria.append(Criterion(new, " ".join(ask("  How is it checked? (optional)> ").split())))
-        elif cmd == "o":
-            new = " ".join(ask("  Out of scope> ").split())
-            if new:
-                draft.out_of_scope.append(new)
+        if _apply_edit(draft, cmd, arg, say, ask):
+            _show(draft, None, say)
         else:
             say("  I did not understand that. Type ? for the commands.")
-            continue
-        _show(draft, None, say)
+
+
+def _say_questions(reply: Reply, say: Say) -> None:
+    """Claude's questions for this round, each with why it matters when Claude said."""
+    if reply.questions:
+        say("Claude asks:")
+    for n, q in enumerate(reply.questions, 1):
+        say(f"  {n}. {q.text}")
+        if q.why:
+            say(f"     (why: {q.why})")
 
 
 def run_interview(
@@ -434,16 +479,9 @@ def run_interview(
         say(f"\n--- Round {round_no} of up to {max_rounds} ---")
         reply = next_round(provider, draft, files, round_no, max_rounds)
         draft.criteria, draft.out_of_scope = reply.criteria, reply.out_of_scope
-        answers: list[str] = []
-        if reply.questions:
-            say("Claude asks:")
-            for n, q in enumerate(reply.questions, 1):
-                say(f"  {n}. {q.text}")
-                if q.why:
-                    say(f"     (why: {q.why})")
+        _say_questions(reply, say)
         _show(draft, reply, say)
-        for n in range(1, len(reply.questions) + 1):
-            answers.append(ask(f"\nYour answer to {n} (blank = you decide)> ").strip())
+        answers = [ask(f"\nYour answer to {n} (blank = you decide)> ").strip() for n in range(1, len(reply.questions) + 1)]
         draft.rounds.append(Round(reply.questions, answers))
         save_draft(repo, draft)
         action = _review(draft, reply, say, ask, last_round=round_no == max_rounds)
@@ -460,12 +498,14 @@ SETUP_FILE = "setup.json"
 
 def slug(goal: str) -> str:
     # Decompose accents first so "café" becomes "cafe" and not "caf" plus a word break.
+    """A short branch-safe name from the goal: ascii, lowercase, at most five words."""
     plain = unicodedata.normalize("NFKD", goal).encode("ascii", "ignore").decode("ascii")
     words = re.sub(r"[^a-z0-9]+", " ", plain.lower()).split()[:5]
     return "-".join(words)[:40].strip("-") or "task"
 
 
 def unique_branch(repo: Path, wanted: str) -> str:
+    """`wanted`, or `wanted-2`, `wanted-3`... whichever branch does not exist yet."""
     name, n = wanted, 2
     while gitio.branch_exists(repo, name):
         name, n = f"{wanted}-{n}", n + 1
@@ -511,8 +551,6 @@ def finish(
     Nothing is pushed. The commit holds .claimcheck plus the files `init` touched, and the commit
     hook runs as usual.
     """
-    from . import spec as S
-
     path = write_spec(repo, draft, refuse_if=lambda r: S.open_code_paths(r, cfg, cfg.base))
     result: dict = {
         "spec_path": str(path),

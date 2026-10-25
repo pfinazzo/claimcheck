@@ -66,7 +66,8 @@ def test_ac5_refreeze_clean_overwrites(cc_repo):
 
 
 def test_ac5_refreeze_refused_when_code_is_dirty(cc_repo, capsys):
-    cc_repo.write("x.py", "x = 1\n")  # a new, untracked code file is an open diff
+    # A new, untracked code file is an open diff.
+    cc_repo.write("x.py", "x = 1\n")
     assert cc_repo.cli("spec", "freeze") == 3
     assert "refusing to re-freeze with an open diff" in capsys.readouterr().err
 
@@ -85,7 +86,8 @@ def test_ac5_refreeze_allowed_when_only_the_spec_and_docs_changed(cc_repo):
 def test_ac5_second_freeze_after_a_spec_only_commit_on_the_branch(cc_repo):
     cc_repo.branch("task-two")
     cc_repo.write(".claimcheck/spec.md", TWO_CRITERIA_SPEC + "- [ ] 3. A third thing.\n")
-    cc_repo.commit("spec only")  # one commit ahead of the base, but no code in it
+    # One commit ahead of the base, but no code in it.
+    cc_repo.commit("spec only")
     assert cc_repo.cli("spec", "freeze") == 0
 
 
@@ -139,11 +141,14 @@ def test_ac7_lock_refrozen_inside_diff_refused(calc_repo, capsys):
     # The diff's first commit is dated 2020; now an agent hand-edits spec + lock and commits.
     calc_repo.write(".claimcheck/spec.md", TWO_CRITERIA_SPEC + "- [ ] 3. added late\n")
     text, crit = S.read_spec(calc_repo.path)
-    lock = S.build_lock(calc_repo.path, text, crit)  # frozen_at = now (> 2020)
+    # Frozen_at = now (> 2020)
+    lock = S.build_lock(calc_repo.path, text, crit)
     calc_repo.write(".claimcheck/spec.lock", json.dumps(lock, indent=2, sort_keys=True) + "\n")
     calc_repo.commit("late criterion", date="2020-01-06T00:00:00+00:00")
-    assert calc_repo.cli("spec", "verify") == 0  # spec and lock agree with each other...
-    assert calc_repo.cli("check", "--provider", "stub") == 3  # ...but the lock moved inside the diff
+    # Spec and lock agree with each other...
+    assert calc_repo.cli("spec", "verify") == 0
+    # ...but the lock moved inside the diff.
+    assert calc_repo.cli("check", "--provider", "stub") == 3
     err = capsys.readouterr().err
     assert "re-frozen" in err and "late criteria: [3]" in err
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 3

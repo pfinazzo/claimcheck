@@ -48,7 +48,8 @@ def test_preserves_crlf_and_bom(tmp_path):
     agentdocs.install(tmp_path)
     raw = (tmp_path / "CLAUDE.md").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf# T\r\n")
-    assert b"\n" not in raw.replace(b"\r\n", b"")  # every newline is CRLF
+    # Every newline is CRLF.
+    assert b"\n" not in raw.replace(b"\r\n", b"")
     assert agentdocs.install(tmp_path) == [("CLAUDE.md", "unchanged")]
 
 

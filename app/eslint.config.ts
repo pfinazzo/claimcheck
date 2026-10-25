@@ -15,6 +15,8 @@ const RESTRICTED_SYNTAX = [
   { selector: 'TSEnumDeclaration', message: 'Use a union of string literals or a lookup table, not an enum.' },
   { selector: 'TSInterfaceDeclaration', message: 'Use a `type` alias, not an interface.' },
   { selector: 'TSAsExpression > TSAsExpression', message: 'Never double-cast through unknown; narrow the value instead.' },
+  { selector: 'SwitchStatement', message: 'Use a lookup table, not a switch.' },
+  { selector: 'MemberExpression[property.name="then"]', message: 'Use await, not .then().' },
   { selector: 'CatchClause > BlockStatement[body.length=0]', message: 'Never swallow an error. Recover with a named fallback, or rethrow with context.' },
 ];
 
@@ -37,7 +39,11 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-definitions': ['error', 'type'],
       '@typescript-eslint/no-non-null-assertion': 'error',
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
-      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/require-await': 'error',
+      'max-depth': ['error', 2],
+      'no-nested-ternary': 'error',
+      'no-await-in-loop': 'error',
+      'no-inline-comments': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
       'no-empty': ['error', { allowEmptyCatch: false }],
       'prefer-const': 'error',

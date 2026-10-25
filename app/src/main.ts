@@ -24,7 +24,8 @@ const argv = process.argv.slice(1);
 const screenshot = parseScreenshotArgs(argv);
 
 let win: BrowserWindow | null = null;
-let api: ReturnType<typeof createDeskApi> | null = null;
+type DeskApi = ReturnType<typeof createDeskApi>;
+let api: DeskApi | null = null;
 
 const send = (channel: string, payload: unknown): void => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -69,7 +70,7 @@ const errorFields = (error: unknown): { message: string; code: string | null; de
   };
 };
 
-const wire = (): ReturnType<typeof createDeskApi> => {
+const wire = (): DeskApi => {
   const userDir = path.join(app.getPath('userData'), 'claimcheck-desk');
   const keyStore = createKeyStore({ safeStorage, dir: userDir });
   const desk = createDeskApi({
@@ -148,32 +149,46 @@ const captureAndExit = async (): Promise<void> => {
   }
 };
 
-void app.whenReady().then(() => {
-  if (screenshot?.theme) nativeTheme.themeSource = screenshot.theme;
-  api = wire();
-  win = createWindow();
-  const desk = api;
-  if (screenshot) {
-    setTimeout(() => {
-      process.stderr.write('screenshot timed out\n');
-      app.exit(1);
-    }, 25000);
-    win.webContents.once('did-finish-load', () => {
-      if (screenshot.view.startsWith('wizard:')) return; // the page renders canned wizard data and signals itself
-      void desk.openRepo(screenshot.repo).then((res) => {
-        if (!res.ok) {
-          process.stderr.write(`${res.error}\n`);
-          app.exit(1);
-        }
-      });
-    });
-  } else {
-    win.webContents.once('did-finish-load', () => {
-      const last = desk.lastRepo();
-      if (last) void desk.openRepo(last).catch(() => {});
-    });
+/** Screenshot mode: loads the repo the arguments name; the wizard views render canned data and signal themselves. */
+const openScreenshotRepo = async ({ desk, shot }: { desk: DeskApi; shot: NonNullable<typeof screenshot> }): Promise<void> => {
+  if (shot.view.startsWith('wizard:')) return;
+  const res = await desk.openRepo(shot.repo);
+  if (res.ok) return;
+  process.stderr.write(`${res.error}\n`);
+  app.exit(1);
+};
+
+/** Normal start: reopens the last repo, if any. A repo that no longer opens just leaves the empty board. */
+const reopenLastRepo = async ({ desk }: { desk: DeskApi }): Promise<void> => {
+  const last = desk.lastRepo();
+  if (!last) return;
+  try {
+    await desk.openRepo(last);
+  } catch {
+    // The board stays empty and the user picks a repo; nothing to report.
+    return;
   }
-});
+};
+
+const start = async (): Promise<void> => {
+  await app.whenReady();
+  if (screenshot?.theme) nativeTheme.themeSource = screenshot.theme;
+  const desk = wire();
+  api = desk;
+  win = createWindow();
+  if (!screenshot) {
+    win.webContents.once('did-finish-load', () => void reopenLastRepo({ desk }));
+    return;
+  }
+  setTimeout(() => {
+    process.stderr.write('screenshot timed out\n');
+    app.exit(1);
+  }, 25000);
+  const shot = screenshot;
+  win.webContents.once('did-finish-load', () => void openScreenshotRepo({ desk, shot }));
+};
+
+void start();
 
 app.on('window-all-closed', () => {
   api?.close();

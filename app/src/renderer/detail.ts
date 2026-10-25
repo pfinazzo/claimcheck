@@ -86,10 +86,20 @@ const historyLine = (r: LedgerRecord): string => {
   return `${ts}  outcome ${toText({ value: r.outcome })} (${toText({ value: r.outcome_source })}) ${toText({ value: r.evidence })}`.trim();
 };
 
+/** How a test or kill-condition result reads (pass, check by hand, else fail) and the class that colours it. */
+const RESULT_WORD = new Map<unknown, string>([
+  [true, 'pass'],
+  ['manual', 'check by hand'],
+]);
+const RESULT_CLASS = new Map<unknown, string>([
+  [true, 'pass'],
+  ['manual', 'manual'],
+]);
+
 const resultBlock = (label: string, r: ShellResult | null | undefined): HTMLElement | null => {
   if (!r) return null;
-  const word = r.ok === true ? 'pass' : r.ok === 'manual' ? 'check by hand' : 'fail';
-  return h('div', { class: `result ${r.ok === true ? 'pass' : r.ok === 'manual' ? 'manual' : 'fail'}` }, h('strong', {}, `${label}: ${word}`), r.tail ? code(r.tail) : null);
+  const word = RESULT_WORD.get(r.ok) ?? 'fail';
+  return h('div', { class: `result ${RESULT_CLASS.get(r.ok) ?? 'fail'}` }, h('strong', {}, `${label}: ${word}`), r.tail ? code(r.tail) : null);
 };
 
 const activity = (run: PublicRun): HTMLElement => h('div', { class: 'activity' }, ...(run.activity.length ? run.activity.slice(-30).map((a) => h('div', {}, a)) : [h('div', {}, 'Starting…')]));

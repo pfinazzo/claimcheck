@@ -20,6 +20,7 @@ import { SAFE_REF } from './store.ts';
 import { BLOCKED_TOOLS, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, PROPOSE_TOOLS, describeClaim, implementPrompt, proposePrompt } from './prompts.ts';
 import { filterDiff, isSecretPath, redactText } from './redact.ts';
 import { toText } from '../shared/text.ts';
+import { toPromise } from '../shared/promise.ts';
 import { GIT_TIMEOUT_MS } from './timeouts.ts';
 import { parseJsonOrUndefined } from '../shared/json.ts';
 
@@ -128,6 +129,18 @@ export const isSensitivePath = (rel: string): boolean => isSecretPath(rel) || St
  * (symlinks resolved), not a credential file, and not git-ignored. Returns the
  * text or null.
  */
+/** Whether git ignores `rel`. Unsure (git failed any other way) counts as ignored, so the file stays out. */
+const isIgnoredOrUnsure = async ({ repo, rel, execFn }: { repo: string; rel: string; execFn: ExecFn }): Promise<boolean> => {
+  try {
+    await execFn('git', ['check-ignore', '-q', '--', rel], { cwd: repo, windowsHide: true, timeout: GIT_TIMEOUT_MS });
+    // Exit 0: the file is git-ignored.
+    return true;
+  } catch (error) {
+    // Exit 1 means "not ignored"; anything else means we cannot be sure.
+    return (error as { code?: unknown } | null)?.code !== 1;
+  }
+};
+
 export const readSafeRepoFile = async (repoPath: string, ref: string, { execFn = execFileP, maxBytes = 200000 }: { execFn?: ExecFn; maxBytes?: number } = {}): Promise<string | null> => {
   try {
     const realRepo = await fsp.realpath(repoPath);
@@ -135,15 +148,11 @@ export const readSafeRepoFile = async (repoPath: string, ref: string, { execFn =
     const rel = path.relative(realRepo, real);
     if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
     if (isSensitivePath(rel) || isSensitivePath(ref)) return null;
-    try {
-      await execFn('git', ['check-ignore', '-q', '--', rel], { cwd: realRepo, windowsHide: true, timeout: GIT_TIMEOUT_MS });
-      return null; // exit 0: the file is git-ignored
-    } catch (error) {
-      if ((error as { code?: unknown } | null)?.code !== 1) return null; // anything but "not ignored" means we cannot be sure
-    }
+    if (await isIgnoredOrUnsure({ repo: realRepo, rel, execFn })) return null;
     const stat = await fsp.stat(real);
     if (!stat.isFile() || stat.size > maxBytes) return null;
-    return redactText(await fsp.readFile(real, 'utf8')).text; // a key inside an ordinary file is removed too
+    // A key inside an ordinary file is removed too.
+    return redactText(await fsp.readFile(real, 'utf8')).text;
   } catch {
     return null;
   }
@@ -253,7 +262,8 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
     } catch {
       diff = '(diff unavailable)';
     }
-    diff = filterDiff(diff).text; // secret files withheld, secret-looking values redacted, size capped
+    // Secret files withheld, secret-looking values redacted, size capped.
+    diff = filterDiff(diff).text;
     const parts = [`## Diff of ${files.join(', ')}\n\`\`\`diff\n${diff}\n\`\`\``];
     const testRef = ctx.claim.killCondition.match(/^test:\s*([^\s:]+)/)?.[1];
     if (testRef) {
@@ -264,29 +274,38 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
     return parts.join('\n\n');
   };
 
-  const startPropose = async ({ board, claimId, mode = 'cli', model }: { board: Board; claimId: string; mode?: 'cli' | 'api'; model?: string | undefined }): Promise<PublicRun> => {
+  type ProposeJob = { run: FixRun; prompt: string; model?: string | undefined };
+
+  /** Asks the API for proposals and stores them on the run. */
+  const proposeViaApi = async ({ run, ctx, prompt, model }: ProposeJob & { ctx: ReturnType<typeof contextFor> }): Promise<void> => {
+    if (!keyStore?.hasKey()) throw new Error('No API key saved. Connect Claude first.');
+    addActivity(run, 'Sending the claim, its diff and tests to the API…');
+    const text = await apiModule.proposeWithStore({ store: keyStore, system: prompt, user: await inlineContext(ctx), schema: PROPOSALS_SCHEMA, model });
+    run.proposals = parseProposals(text);
+  };
+
+  /** Has Claude Code read the repository and propose fixes, and stores them on the run. */
+  const proposeViaCli = async ({ run, prompt, model, repoPath }: ProposeJob & { repoPath: string }): Promise<void> => {
+    const bin = claudeBin ?? (await cliModule.findClaude());
+    if (!bin) throw new Error('Claude Code is not installed on this computer (or set CLAUDE_BIN).');
+    addActivity(run, 'Claude Code is reading the repository (read-only)…');
+    const out = await cliModule.runClaude({ prompt, args: PROPOSE_ARGS, cwd: repoPath, bin, ...(model ? { model } : {}), spawnFn, onEvent: (e) => addActivity(run, cliModule.describeEvent(e)) });
+    if (out.error) {
+      run.needsSignIn = out.needsSignIn;
+      throw new Error(out.error);
+    }
+    run.proposals = parseProposals(out);
+  };
+
+  const startPropose = ({ board, claimId, mode = 'cli', model }: { board: Board; claimId: string; mode?: 'cli' | 'api'; model?: string | undefined }): Promise<PublicRun> => toPromise(() => {
     if (isBusy()) throw new Error('Another fix is still running.');
     const ctx = contextFor(board, claimId);
     const prompt = proposePrompt(ctx);
     const run = newRun({ kind: 'propose', claimId, mode, proposals: null, prompt, repoPath: board.repo.path });
     void (async () => {
       try {
-        if (mode === 'api') {
-          if (!keyStore?.hasKey()) throw new Error('No API key saved. Connect Claude first.');
-          addActivity(run, 'Sending the claim, its diff and tests to the API…');
-          const text = await apiModule.proposeWithStore({ store: keyStore, system: prompt, user: await inlineContext(ctx), schema: PROPOSALS_SCHEMA, model });
-          run.proposals = parseProposals(text);
-        } else {
-          const bin = claudeBin ?? (await cliModule.findClaude());
-          if (!bin) throw new Error('Claude Code is not installed on this computer (or set CLAUDE_BIN).');
-          addActivity(run, 'Claude Code is reading the repository (read-only)…');
-          const out = await cliModule.runClaude({ prompt, args: PROPOSE_ARGS, cwd: board.repo.path, bin, ...(model ? { model } : {}), spawnFn, onEvent: (e) => addActivity(run, cliModule.describeEvent(e)) });
-          if (out.error) {
-            run.needsSignIn = out.needsSignIn;
-            throw new Error(out.error);
-          }
-          run.proposals = parseProposals(out);
-        }
+        if (mode === 'api') await proposeViaApi({ run, ctx, prompt, model });
+        else await proposeViaCli({ run, prompt, model, repoPath: board.repo.path });
         run.status = 'done';
       } catch (error) {
         run.status = 'failed';
@@ -295,7 +314,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
       publish(run);
     })();
     return toPublic(run);
-  };
+  });
 
   const verify = async (run: FixRun, ctx: ReturnType<typeof contextFor>): Promise<FixRun> => {
     const tests = await runShell({ command: ctx.config.test_cmd, cwd: run.worktree ?? undefined, spawnFn });
@@ -346,7 +365,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
     updateAppState(ctx.repo.path, ctx.claim.id, { status: 'resolved', fix });
   };
 
-  const startImplement = async ({ board, claimId, proposeRunId, choice, model }: { board: Board; claimId: string; proposeRunId: string; choice: number; model?: string | undefined }): Promise<PublicRun> => {
+  const startImplement = ({ board, claimId, proposeRunId, choice, model }: { board: Board; claimId: string; proposeRunId: string; choice: number; model?: string | undefined }): Promise<PublicRun> => toPromise(() => {
     if (isBusy()) throw new Error('Another fix is still running.');
     const proposeRun = runs.get(proposeRunId);
     if (!proposeRun || proposeRun.kind !== 'propose' || proposeRun.status !== 'done') throw new Error('Those proposals are not ready.');
@@ -386,7 +405,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
       publish(run);
     })();
     return toPublic(run);
-  };
+  });
 
   const acceptRisk = ({ board, claimId, note }: { board: Board; claimId: string; note?: unknown }) => {
     const ctx = contextFor(board, claimId);

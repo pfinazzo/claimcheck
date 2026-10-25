@@ -46,18 +46,13 @@ export const demoWizard = (step: number, beat = 0): WizardState => {
     { id: 'q1', text: 'What should an order of exactly $50 pay for shipping?', why: 'It decides which side of the boundary criterion 1 lands on.' },
     { id: 'q2', text: 'Does the $50 include tax and discounts, or only the item subtotal?', why: 'The threshold has to be measured on one agreed number.' },
   ];
-  switch (step) {
-    case 1:
-      return { ...base, beat: Math.min(Math.max(beat, 0), 2) };
-    case 2:
-      return { ...withSetup, step: 'setup' };
-    case 3:
-      return { ...withSetup, step: 'connect' };
-    case 4:
-      return { ...withSetup, step: 'spec', goal: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', started: true, rounds: [], current: { questions, answers: ['Yes, exactly $50 ships free.', ''] }, draft };
-    case 5:
-      return { ...withSetup, step: 'freeze', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true } };
-    default:
-      return { ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', result: finish } };
-  }
+  const doneState = (): WizardState => ({ ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', result: finish } });
+  const stateByStep = new Map<number, () => WizardState>([
+    [1, () => ({ ...base, beat: Math.min(Math.max(beat, 0), 2) })],
+    [2, () => ({ ...withSetup, step: 'setup' })],
+    [3, () => ({ ...withSetup, step: 'connect' })],
+    [4, () => ({ ...withSetup, step: 'spec', goal: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', started: true, rounds: [], current: { questions, answers: ['Yes, exactly $50 ships free.', ''] }, draft })],
+    [5, () => ({ ...withSetup, step: 'freeze', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true } })],
+  ]);
+  return (stateByStep.get(step) ?? doneState)();
 };

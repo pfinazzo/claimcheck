@@ -58,6 +58,62 @@ const makeScanner = (text: string) => {
     }
   };
 
+  /** A \uXXXX or \UXXXXXXXX escape at the cursor. */
+  const readUnicodeEscape = ({ digits }: { digits: number }): string => {
+    const hex = text.slice(i + 2, i + 2 + digits);
+    if (!new RegExp(`^[0-9A-Fa-f]{${digits}}$`).test(hex)) fail('bad unicode escape');
+    i += 2 + digits;
+    return String.fromCodePoint(parseInt(hex, 16));
+  };
+
+  /** A backslash at the end of a line in a multi-line string: the newline and the indent after it vanish. */
+  const skipLineEndingBackslash = (): void => {
+    let j = i + 1;
+    while (at(j) === ' ' || at(j) === '\t') j += 1;
+    if (at(j) === '\r') j += 1;
+    if (at(j) !== '\n') fail('bad escape');
+    while (/[ \t\r\n]/.test(at(j) || 'x')) j += 1;
+    i = j;
+  };
+
+  /** One backslash escape at the cursor. Moves past it and returns the text it stands for. */
+  const readEscape = ({ multi }: { multi: boolean }): string => {
+    const next = at(i + 1);
+    const simple = ESCAPES[next];
+    if (next !== '' && simple !== undefined) {
+      i += 2;
+      return simple;
+    }
+    if (next === 'u' || next === 'U') return readUnicodeEscape({ digits: next === 'u' ? 4 : 8 });
+    if (!multi || !/[ \t\r\n]/.test(next)) return fail('bad escape');
+    skipLineEndingBackslash();
+    return '';
+  };
+
+  /**
+   * The closing """ of a multi-line string, if the cursor is on it. Up to two quotes right before
+   * the delimiter belong to the text, so they come back as the string's last characters.
+   * Not at the end yet: null.
+   */
+  const readMultiLineClose = (): string | null => {
+    if (!startsWith('"""')) return null;
+    let run = 3;
+    while (at(i + run) === '"') run += 1;
+    if (run > 5) fail('too many quotes');
+    i += run;
+    return '"'.repeat(run - 3);
+  };
+
+  /** The closing quote of a one-line string, if the cursor is on it ("" then), else null. */
+  const readOneLineClose = (): string | null => {
+    if (at(i) === '"') {
+      i += 1;
+      return '';
+    }
+    if (at(i) === '\n') fail('newline in string');
+    return null;
+  };
+
   const readBasicString = (multi: boolean): string => {
     let out = '';
     i += multi ? 3 : 1;
@@ -65,46 +121,11 @@ const makeScanner = (text: string) => {
     else if (multi && at(i) === '\n') i += 1;
     for (;;) {
       if (i >= text.length) fail('unterminated string');
+      const closing = multi ? readMultiLineClose() : readOneLineClose();
+      if (closing !== null) return out + closing;
       const ch = at(i);
-      if (multi) {
-        if (startsWith('"""')) {
-          // up to two extra quotes may directly precede the closing delimiter and belong to the text
-          let run = 3;
-          while (at(i + run) === '"') run += 1;
-          if (run > 5) fail('too many quotes');
-          out += '"'.repeat(run - 3);
-          i += run;
-          return out;
-        }
-      } else {
-        if (ch === '"') {
-          i += 1;
-          return out;
-        }
-        if (ch === '\n') fail('newline in string');
-      }
-      if (ch === '\\') {
-        const next = at(i + 1);
-        const simple = ESCAPES[next];
-        if (next !== '' && simple !== undefined) {
-          out += simple;
-          i += 2;
-        } else if (next === 'u' || next === 'U') {
-          const len = next === 'u' ? 4 : 8;
-          const hex = text.slice(i + 2, i + 2 + len);
-          if (!new RegExp(`^[0-9A-Fa-f]{${len}}$`).test(hex)) fail('bad unicode escape');
-          out += String.fromCodePoint(parseInt(hex, 16));
-          i += 2 + len;
-        } else if (multi && /[ \t\r\n]/.test(next)) {
-          // line-ending backslash: swallow the newline and the whitespace after it
-          let j = i + 1;
-          while (at(j) === ' ' || at(j) === '\t') j += 1;
-          if (at(j) === '\r') j += 1;
-          if (at(j) !== '\n') fail('bad escape');
-          while (/[ \t\r\n]/.test(at(j) || 'x')) j += 1;
-          i = j;
-        } else fail('bad escape');
-      } else {
+      if (ch === '\\') out += readEscape({ multi });
+      else {
         out += ch;
         i += 1;
       }
@@ -128,17 +149,18 @@ const makeScanner = (text: string) => {
     return readLiteralString(startsWith("'''"));
   };
 
+  const readBareKey = (): string => {
+    const start = i;
+    while (i < text.length && BARE.test(at(i))) i += 1;
+    if (i === start) fail('empty key');
+    return text.slice(start, i);
+  };
+
   const readKey = (): string[] => {
     const parts: string[] = [];
     for (;;) {
       skipSpaces();
-      if (at(i) === '"' || at(i) === "'") parts.push(readString());
-      else {
-        const start = i;
-        while (i < text.length && BARE.test(at(i))) i += 1;
-        if (i === start) fail('empty key');
-        parts.push(text.slice(start, i));
-      }
+      parts.push(at(i) === '"' || at(i) === "'" ? readString() : readBareKey());
       skipSpaces();
       if (at(i) === '.') i += 1;
       else return parts;
@@ -282,49 +304,71 @@ const enter = (root: TomlTable, parts: string[], { array }: { array: boolean }):
   return node;
 };
 
+type Scanner = ReturnType<typeof makeScanner>;
+
+/** A [table] or [[array of tables]] header at the cursor. Returns the table later keys go into. */
+const readHeader = ({ scanner, root }: { scanner: Scanner; root: TomlTable }): TomlTable => {
+  const array = scanner.peek(1) === '[';
+  scanner.advance(array ? 2 : 1);
+  const parts = scanner.readKey();
+  scanner.skipSpaces();
+  if (!scanner.startsWith(array ? ']]' : ']')) scanner.fail('bad header');
+  scanner.advance(array ? 2 : 1);
+  return enter(root, parts, { array });
+};
+
+/** One `key = value` line at the cursor, stored in the current table. */
+const readKeyValue = ({ scanner, current }: { scanner: Scanner; current: TomlTable }): void => {
+  const parts = scanner.readKey();
+  scanner.skipSpaces();
+  if (scanner.peek() !== '=') scanner.fail('expected =');
+  scanner.advance();
+  scanner.assign(current, parts, scanner.readValue());
+};
+
+/** One line of the file. Returns the table the next line writes into. */
+const readLine = ({ scanner, root, current }: { scanner: Scanner; root: TomlTable; current: TomlTable }): TomlTable => {
+  scanner.skipSpaces();
+  const ch = scanner.peek();
+  if (ch === '') return current;
+  if (ch === '\n' || ch === '\r') {
+    scanner.advance();
+    return current;
+  }
+  if (ch === '#') {
+    scanner.skipComment();
+    return current;
+  }
+  const next = ch === '[' ? readHeader({ scanner, root }) : current;
+  if (ch !== '[') readKeyValue({ scanner, current });
+  scanner.skipSpaces();
+  scanner.skipComment();
+  if (!scanner.eof() && scanner.peek() !== '\n' && scanner.peek() !== '\r') scanner.fail('junk after value');
+  return next;
+};
+
+/**
+ * One line, or, when the parser can't read it, nothing: the line is skipped so one odd line never
+ * hides the rest of the config. Returns the table the next line writes into.
+ */
+const readLineOrSkip = ({ scanner, root, current }: { scanner: Scanner; root: TomlTable; current: TomlTable }): TomlTable => {
+  const lineStart = scanner.pos;
+  try {
+    return readLine({ scanner, root, current });
+  } catch (error) {
+    if (!(error instanceof Skip)) throw error;
+    scanner.pos = Math.max(scanner.pos, lineStart);
+    scanner.skipLine();
+    return current;
+  }
+};
+
 export const parseToml = (input: unknown): TomlTable => {
   const text = toText({ value: input }).replace(/^\uFEFF/, '');
-  const s = makeScanner(text);
+  const scanner = makeScanner(text);
   const root: TomlTable = {};
   let current: TomlTable = root;
-  while (!s.eof()) {
-    const lineStart = s.pos;
-    try {
-      s.skipSpaces();
-      const ch = s.peek();
-      if (ch === '') break;
-      if (ch === '\n' || ch === '\r') {
-        s.advance();
-        continue;
-      }
-      if (ch === '#') {
-        s.skipComment();
-        continue;
-      }
-      if (ch === '[') {
-        const array = s.peek(1) === '[';
-        s.advance(array ? 2 : 1);
-        const parts = s.readKey();
-        s.skipSpaces();
-        if (!s.startsWith(array ? ']]' : ']')) s.fail('bad header');
-        s.advance(array ? 2 : 1);
-        current = enter(root, parts, { array });
-      } else {
-        const parts = s.readKey();
-        s.skipSpaces();
-        if (s.peek() !== '=') s.fail('expected =');
-        s.advance();
-        s.assign(current, parts, s.readValue());
-      }
-      s.skipSpaces();
-      s.skipComment();
-      if (!s.eof() && s.peek() !== '\n' && s.peek() !== '\r') s.fail('junk after value');
-    } catch (error) {
-      if (!(error instanceof Skip)) throw error;
-      s.pos = Math.max(s.pos, lineStart);
-      s.skipLine();
-    }
-  }
+  while (!scanner.eof()) current = readLineOrSkip({ scanner, root, current });
   return root;
 };
 
@@ -352,14 +396,12 @@ export const setTomlString = (text: string, key: string, value: string): string 
   const headerLine = /^\s*\[/;
   let firstTable = lines.findIndex((l) => headerLine.test(l));
   if (firstTable < 0) firstTable = lines.length;
-  for (let n = 0; n < firstTable; n += 1) {
-    const current = lines[n] ?? '';
-    if (keyLine.test(current)) {
-      // A multi-line value would leave debris; only the common single-line form is replaced here.
-      if (/("""|''')/.test(current)) throw new Error(`${key} is a multi-line string; edit config.toml by hand.`);
-      lines[n] = line;
-      return lines.join(newline);
-    }
+  const existing = lines.slice(0, firstTable).findIndex((l) => keyLine.test(l));
+  if (existing >= 0) {
+    // A multi-line value would leave debris; only the common single-line form is replaced here.
+    if (/("""|''')/.test(lines[existing] ?? '')) throw new Error(`${key} is a multi-line string; edit config.toml by hand.`);
+    lines[existing] = line;
+    return lines.join(newline);
   }
   // insert after the last top-level key/value line before the first table, else at the top
   let at = 0;

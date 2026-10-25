@@ -82,32 +82,40 @@ export const findClaude = async ({ env = process.env }: { env?: NodeJS.ProcessEn
  * to it) and the script last, so the LAST quoted path is the program, and a bare
  * node is never the answer when something follows it.
  */
+/** The program a .cmd shim launches, read from the shim itself; null if it names none. */
+const readShimTarget = ({ bin, readShim }: { bin: string; readShim: (p: string) => string }): string | null => {
+  const found = [...readShim(bin).matchAll(/"%~?dp0%?\\?([^"]+)"/g)].map((m) => m[1] ?? '');
+  const candidates = found.filter((rel) => rel !== '' && !/(^|[\\/])node(\.exe)?$/i.test(rel));
+  const last = candidates.at(-1);
+  return last ? path.join(path.dirname(bin), last) : null;
+};
+
+/** Where npm puts Claude Code next to a .cmd shim, if it is there. */
+const findPackagedClaude = (bin: string): string | null =>
+  [path.join('bin', 'claude.exe'), 'cli.js']
+    .map((candidate) => path.join(path.dirname(bin), 'node_modules', '@anthropic-ai', 'claude-code', candidate))
+    .find((p) => existsSync(p)) ?? null;
+
 export const resolveSpawn = (bin: string, { readShim = (p: string) => readFileSync(p, 'utf8') }: { readShim?: (p: string) => string } = {}): { command: string; prefix: string[] } => {
-  if (/\.cmd$/i.test(bin)) {
-    let target: string | null = null;
-    try {
-      const shim = readShim(bin);
-      const found = [...shim.matchAll(/"%~?dp0%?\\?([^"]+)"/g)].map((m) => m[1] ?? '');
-      const candidates = found.filter((rel) => rel !== '' && !/(^|[\\/])node(\.exe)?$/i.test(rel));
-      const last = candidates.at(-1);
-      if (last) target = path.join(path.dirname(bin), last);
-    } catch {
-      target = null;
-    }
-    if (!target || !existsSync(target)) {
-      for (const candidate of [path.join('bin', 'claude.exe'), 'cli.js']) {
-        const p = path.join(path.dirname(bin), 'node_modules', '@anthropic-ai', 'claude-code', candidate);
-        if (existsSync(p)) {
-          target = p;
-          break;
-        }
-      }
-    }
-    if (target && existsSync(target)) {
-      return /\.(c|m)?js$/i.test(target) ? { command: 'node', prefix: [target] } : { command: target, prefix: [] };
-    }
+  if (!/\.cmd$/i.test(bin)) return { command: bin, prefix: [] };
+  let target: string | null;
+  try {
+    target = readShimTarget({ bin, readShim });
+  } catch {
+    // An unreadable shim is not fatal: the packaged locations below are tried next.
+    target = null;
   }
-  return { command: bin, prefix: [] };
+  if (!target || !existsSync(target)) target = findPackagedClaude(bin);
+  if (!target) return { command: bin, prefix: [] };
+  return /\.(c|m)?js$/i.test(target) ? { command: 'node', prefix: [target] } : { command: target, prefix: [] };
+};
+
+/** One content block of an assistant message to zero or one events. */
+const toStreamEvents = (raw: unknown): StreamEvent[] => {
+  const block = rec(raw);
+  if (block?.type === 'text' && typeof block.text === 'string' && block.text) return [{ type: 'text', text: block.text }];
+  if (block?.type === 'tool_use') return [{ type: 'tool', name: toText({ value: block.name }), input: rec(block.input) ?? {} }];
+  return [];
 };
 
 /** One `stream-json` line to zero or more events. */
@@ -122,14 +130,7 @@ export const parseStreamLine = (line: string): StreamEvent[] => {
   if (!obj) return [];
   const message = rec(obj.message);
   if (obj.type === 'assistant' && message && Array.isArray(message.content)) {
-    const events: StreamEvent[] = [];
-    for (const raw of message.content) {
-      const block = rec(raw);
-      if (!block) continue;
-      if (block.type === 'text' && typeof block.text === 'string' && block.text) events.push({ type: 'text', text: block.text });
-      else if (block.type === 'tool_use') events.push({ type: 'tool', name: toText({ value: block.name }), input: rec(block.input) ?? {} });
-    }
-    return events;
+    return message.content.flatMap(toStreamEvents);
   }
   if (obj.type === 'result') {
     return [
@@ -202,7 +203,8 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
     }
     child.on('error', (error) => finish(failed(`Claude Code could not be started: ${error.message}`)));
     child.stdin?.on('error', () => {});
-    child.stdin?.end(redactText(prompt).text, 'utf8'); // last line of defence: nothing secret-looking leaves
+    // Last line of defence: nothing secret-looking leaves.
+    child.stdin?.end(redactText(prompt).text, 'utf8');
     child.stdout?.on('data', (chunk: Buffer | string) => lines.push(chunk));
     child.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
     child.on('close', (code) => {
