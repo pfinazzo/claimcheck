@@ -38,8 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-{setup}      # While the claimcheck repository is private, installing from GitHub needs a token.
-      - run: pip install "claimcheck[claude] @ git+{INSTALL_URL}"
+{setup}      - run: pip install "claimcheck[claude] @ git+{INSTALL_URL}"
       - run: claimcheck run --provider claude --base origin/${{{{ github.base_ref }}}}
         env:
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}

@@ -4,46 +4,29 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "Every ledger line claimcheck writes carries prev, the SHA-256 of the previous line's text; the first chained line carries the hash of all older lines joined by newlines, or 64 zeros for an empty ledger"
-    confidence: 0.9
+    claim: "The workflow that init --ci github writes no longer contains the comment about the claimcheck repository being private or needing a token, for every detected stack, and is still valid YAML"
+    confidence: 0.93
     criteria: [1]
-    files: ["src/claimcheck/ledger.py"]
-    kill_condition: "test: tests/test_ledger_chain.py::test_the_first_chained_line_seals_all_older_lines"
+    files: ["src/claimcheck/ci.py"]
+    kill_condition: "test: tests/test_ci_template.py::test_the_workflow_does_not_assume_a_private_repo_or_a_token"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'hash_of_the_line or continues or seals or pins'"
+      - "cmd: python -m pytest -q tests/test_ci_template.py"
+      - "obs: rendered the workflow for seven stacks and parsed each with a YAML loader"
 
   - id: c2
-    claim: "claimcheck verify-ledger exits 0 on an untouched ledger, including one that starts with older lines that have no prev, and refuses an unchained line that comes after chained lines"
-    confidence: 0.88
-    criteria: [2, 5]
-    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
-    kill_condition: "test: tests/test_ledger_chain.py::test_an_unchained_line_after_chained_lines_is_refused"
+    claim: "The workflow still installs claimcheck from https://github.com/pfinazzo/claimcheck.git and still runs claimcheck run --provider claude --base origin/${{ github.base_ref }} with ANTHROPIC_API_KEY from the repository secrets"
+    confidence: 0.9
+    criteria: [2]
+    files: ["src/claimcheck/ci.py"]
+    kill_condition: "test: tests/test_ci_template.py::test_the_workflow_installs_from_the_public_address_and_runs_against_the_base"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'verifies or refused'"
+      - "cmd: python -m pytest -q tests/test_ci_template.py -k installs"
 
   - id: c3
-    claim: "verify-ledger exits 8 and names the first line that does not fit when a middle line is deleted, a line other than the last is edited (an older line counts), or two lines are swapped"
-    confidence: 0.85
+    claim: "A test fails if the README install command stops matching the GitHub address in the workflow template, because the template's install URL is the one the test compares against"
+    confidence: 0.8
     criteria: [3]
-    files: ["src/claimcheck/__init__.py", "src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
-    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_middle_line_is_found"
+    files: ["src/claimcheck/ci.py"]
+    kill_condition: "test: tests/test_ci_template.py::test_the_readme_install_command_uses_the_templates_address"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'found or named'"
-
-  - id: c4
-    claim: "With --base REF, verify-ledger also exits 8 when the last line was deleted or edited, and passes when the ledger only gained lines"
-    confidence: 0.85
-    criteria: [4]
-    files: ["src/claimcheck/ledger.py", "src/claimcheck/cli.py"]
-    kill_condition: "test: tests/test_ledger_chain.py::test_a_deleted_last_line_passes_alone_but_not_against_the_committed_base"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ledger_chain.py -k 'base'"
-
-  - id: c5
-    claim: "A line Desk appends carries the same prev the Python code would give, and verify-ledger accepts a ledger Desk appended to (Desk's own files are not listed because the commit hook only accepts non-ignored paths in a claim)"
-    confidence: 0.75
-    criteria: [6]
-    files: ["src/claimcheck/ledger.py"]
-    kill_condition: "test: app/test/ledger.test.ts::an outcome line continues the chain: prev is the hash the next line must carry"
-    verified_by:
-      - "cmd: cd app && npm test"
+      - "cmd: python -m pytest -q tests/test_ci_template.py -k readme"
