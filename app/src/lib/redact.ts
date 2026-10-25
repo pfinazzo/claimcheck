@@ -8,6 +8,8 @@
  * @author Patrick Finazzo
  */
 
+import { toText } from '../shared/text.ts';
+
 const NAME_GLOBS = [
   '.env', '.env.*', '*.env', '*.pem', '*.key', '*.p12', '*.pfx', '*.jks', '*.keystore', '*.p8', '*.ppk', '*.kdbx', '*.gpg',
   'id_rsa*', 'id_dsa*', 'id_ecdsa*', 'id_ed25519*', '.npmrc', '.pypirc', '.netrc', '_netrc', '.pgpass', '.git-credentials',
@@ -82,7 +84,7 @@ export type Redaction = {
 };
 
 export const redactText = (input: unknown): Redaction => {
-  let text = String(input ?? '');
+  let text = toText({ value: input });
   let count = 0;
   const kinds: Record<string, number> = {};
   const add = (kind: string): void => {
@@ -127,7 +129,7 @@ export type Sent = {
 export const filterDiff = (diff: unknown): { text: string; sent: Sent } => {
   const sent: Sent = { filesOmitted: [], redactions: 0, kinds: {}, truncated: false };
   const sections: Array<{ path: string | null; lines: string[] }> = [];
-  for (const line of String(diff ?? '').split('\n')) {
+  for (const line of toText({ value: diff }).split('\n')) {
     const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
     if (m) sections.push({ path: m[2] ?? null, lines: [line] });
     else if (sections.length) sections.at(-1)?.lines.push(line);

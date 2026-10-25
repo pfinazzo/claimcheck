@@ -9,9 +9,10 @@ import json
 
 import pytest
 
-from claimcheck import ClaimcheckError, ProviderError, gitio, specdraft as SD
+from claimcheck import ClaimcheckError, ProviderError, gitio
 from claimcheck import config as C
 from claimcheck import spec as S
+from claimcheck import specdraft as SD
 from claimcheck.providers.stub import StubProvider
 
 
@@ -146,7 +147,9 @@ def test_interview_runs_rounds_until_ready_and_saves(repo):
     draft, status = SD.run_interview(StubProvider(), repo.path, "Add free shipping over 50", say=say, ask=ask)
     assert status == "saved" and len(draft.rounds) == 2
     assert draft.rounds[0].answers == ["edge: 50 is free", "nothing else"] and draft.rounds[1].questions == []
-    assert SD.load_draft(repo.path).goal == "Add free shipping over 50"  # persisted for --resume
+    # The draft is saved so --resume can pick it up.
+    saved = SD.load_draft(repo.path)
+    assert saved is not None and saved.goal == "Add free shipping over 50"
     assert next(it, "unused") == "unused"
 
 

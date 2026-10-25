@@ -11,7 +11,6 @@ from pathlib import Path
 
 from . import ClaimcheckError, EmptyDiffError
 
-
 # Fixed settings for every call, so a person's git config cannot change what we parse:
 # real UTF-8 paths (not "caf\303\251"), plain a/ b/ diff prefixes, no color codes.
 _FIXED = ["-c", "core.quotepath=off", "-c", "diff.noprefix=false", "-c", "diff.mnemonicPrefix=false", "-c", "color.ui=never"]
@@ -131,7 +130,7 @@ def changed_files(repo: Path, base: str, worktree: bool) -> list[str]:
     else:
         out = git(repo, "diff", "--name-only", f"{base}...HEAD", "--")
         extra = []
-    names = [l.strip().replace("\\", "/") for l in out.splitlines() if l.strip()]
+    names = [line_text.strip().replace("\\", "/") for line_text in out.splitlines() if line_text.strip()]
     return names + [n for n in extra if n not in names]
 
 

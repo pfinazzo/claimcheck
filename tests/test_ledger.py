@@ -27,7 +27,7 @@ def test_ac28_run_appends_one_line_per_claim(calc_repo, capsys):
     assert out["ledger_lines_appended"] == 2
     lines = calc_repo.read(".claimcheck/ledger.jsonl").splitlines()
     assert len(lines) == 2
-    recs = [ledger.validate_line(l) for l in lines]
+    recs = [ledger.validate_line(line_text) for line_text in lines]
     assert [r["claim_id"] for r in recs] == ["c1", "c2"]
     for r in recs:
         assert r["type"] == "claim" and r["v"] == 1
@@ -45,7 +45,7 @@ def test_ac28_exit_is_max_of_parts(calc_repo, monkeypatch):
     monkeypatch.setenv("CLAIMCHECK_STUB_FILE", str(fixtures))
     assert calc_repo.cli("run", "--provider", "stub", "--test-cmd", "exit 0") == 2
     lines = calc_repo.read(".claimcheck/ledger.jsonl").splitlines()
-    recs = [json.loads(l) for l in lines]
+    recs = [json.loads(line_text) for line_text in lines]
     assert recs[1]["checker"]["verdict"] == "REFUTED"
     assert recs[0]["mutation"]["catch_rate"] == 0.0
 

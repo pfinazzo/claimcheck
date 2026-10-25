@@ -9,6 +9,7 @@ import type { PublicRun, ShellResult } from '../lib/fixer.ts';
 import type { Claim, LedgerRecord, Proposal } from '../shared/types.ts';
 import { h, type Child } from './dom.ts';
 import { FLAG_TEXT, caughtWords, factsLine, pct, verdictWord } from './format.ts';
+import { toText } from '../shared/text.ts';
 
 export type DetailActions = {
   fix: (claimId: string) => void;
@@ -76,13 +77,13 @@ const plantedBugs = (claim: Claim): HTMLElement => {
 };
 
 const historyLine = (r: LedgerRecord): string => {
-  const ts = String(r.ts ?? '');
+  const ts = toText({ value: r.ts });
   if (r.type === 'claim') {
     const checkerInfo = r.checker as { verdict?: unknown } | undefined;
     const mut = r.mutation as { catch_rate?: number | null } | undefined;
-    return `${ts}  claim run, confidence ${String(r.confidence)}, checker ${String(checkerInfo?.verdict ?? 'none')}, caught ${pct(mut?.catch_rate ?? null)}`;
+    return `${ts}  claim run, confidence ${toText({ value: r.confidence })}, checker ${toText({ value: checkerInfo?.verdict, fallback: 'none' })}, caught ${pct(mut?.catch_rate ?? null)}`;
   }
-  return `${ts}  outcome ${String(r.outcome)} (${String(r.outcome_source)}) ${String(r.evidence ?? '')}`.trim();
+  return `${ts}  outcome ${toText({ value: r.outcome })} (${toText({ value: r.outcome_source })}) ${toText({ value: r.evidence })}`.trim();
 };
 
 const resultBlock = (label: string, r: ShellResult | null | undefined): HTMLElement | null => {

@@ -19,6 +19,7 @@ import type {
   AppSettings, AppState, Board, BoardConfig, CheckRun, Claim, ClaimStatus, Criterion, LedgerRecord, Mutant, MutateRun, MutationInfo, SpecLock,
 } from '../shared/types.ts';
 import { parseToml } from './toml.ts';
+import { toText } from '../shared/text.ts';
 
 const execFileP = promisify(execFile);
 
@@ -38,14 +39,14 @@ export const SAFE_REF = /^(?!-)[\w./-]+$/;
 
 const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
-const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : v === null || v === undefined ? fallback : String(v));
+const str = (v: unknown, fallback = ''): string => toText({ value: v, fallback });
 const strList = (v: unknown): string[] => (Array.isArray(v) ? v : v === null || v === undefined ? [] : [v]).map((x) => str(x));
 const finite = (v: unknown): number | null => (v !== null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 const isObject = (v: unknown): v is Raw => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 const readText = async (file: string): Promise<string | null> => {
   try {
-    return (await fs.readFile(file, 'utf8')).replace(/^﻿/, '');
+    return (await fs.readFile(file, 'utf8')).replace(/^\uFEFF/, '');
   } catch {
     return null;
   }

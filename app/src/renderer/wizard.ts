@@ -13,6 +13,7 @@ import {
 } from '../shared/wizard-state.ts';
 import { h, type Child } from './dom.ts';
 import { shortHash } from './format.ts';
+import { toText } from '../shared/text.ts';
 
 export type WizardCtx = {
   desk: DeskBridge;
@@ -200,7 +201,7 @@ const connect = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] 
         ctx.desk
           .testConnection({ mode: 'cli' })
           .then(async (r) => {
-            if (!r.ok) local.error = `${String(r.error ?? 'It did not work.')}${r.needsSignIn ? ' Press Connect Claude to sign in.' : ''}`;
+            if (!r.ok) local.error = `${toText({ value: r.error, fallback: 'It did not work.' })}${r.needsSignIn ? ' Press Connect Claude to sign in.' : ''}`;
             await ctx.refreshConnection();
           })
           .catch((e) => {

@@ -7,6 +7,7 @@
 import type { DeskBridge } from '../shared/ipc.ts';
 import type { ConnectionSummary } from '../shared/types.ts';
 import { h, mount, type Child } from './dom.ts';
+import { toText } from '../shared/text.ts';
 
 export type DialogHost = {
   /** Fills the dialog and shows it. */
@@ -70,7 +71,7 @@ export const connectDialog = (desk: DeskBridge, host: DialogHost, current: Conne
         guard(async () => {
           cliStatus.textContent = 'Testing…';
           const r = await desk.testConnection({ mode: 'cli' });
-          cliStatus.textContent = r.ok ? 'Signed in.' : `${String(r.error ?? 'It did not work.')}${r.needsSignIn ? ' Press Sign in.' : ''}`;
+          cliStatus.textContent = r.ok ? 'Signed in.' : `${toText({ value: r.error, fallback: 'It did not work.' })}${r.needsSignIn ? ' Press Sign in.' : ''}`;
         }),
         'primary',
       ),
@@ -87,7 +88,7 @@ export const connectDialog = (desk: DeskBridge, host: DialogHost, current: Conne
       keyStatus.textContent = 'Testing…';
       const r = await desk.testConnection({ mode: 'api' });
       await again();
-      host.toast(r.ok ? 'The key works.' : String(r.error ?? 'The key did not work.'), !r.ok);
+      host.toast(r.ok ? 'The key works.' : toText({ value: r.error, fallback: 'The key did not work.' }), !r.ok);
     }), 'primary'), c.apiSaved ? btn('Clear', guard(async () => { await desk.connect({ action: 'clear-key' }); await again(); })) : null)),
     keyStatus,
   );

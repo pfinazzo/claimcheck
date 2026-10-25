@@ -12,7 +12,6 @@ from claimcheck import SpecError
 from claimcheck import spec as S
 from conftest import TWO_CRITERIA_SPEC
 
-
 # ---- AC 4 ----------------------------------------------------------------
 
 def test_ac4_parse_ok():
@@ -128,7 +127,7 @@ def test_ac6_modified(cc_repo, capsys):
 
 
 def test_ac6_removed(cc_repo, capsys):
-    one = "\n".join(l for l in TWO_CRITERIA_SPEC.splitlines() if not l.startswith("- [ ] 2.")) + "\n"
+    one = "\n".join(line_text for line_text in TWO_CRITERIA_SPEC.splitlines() if not line_text.startswith("- [ ] 2.")) + "\n"
     cc_repo.write(".claimcheck/spec.md", one)
     assert cc_repo.cli("spec", "verify") == 3
     assert "removed: [2]" in capsys.readouterr().err

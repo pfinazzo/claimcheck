@@ -16,7 +16,8 @@
     "build:renderer": "esbuild src/renderer/main.ts --bundle --format=iife --target=chrome130 --outfile=dist/renderer.js --log-level=warning",
     "build": "npm run build:main && npm run build:preload && npm run build:renderer",
     "start": "npm run build && electron .",
-    "test": "npm run typecheck && npm run build && node --test \"test/**/*.test.ts\"",
+    "lint": "eslint --max-warnings 0 .",
+    "test": "npm run typecheck && npm run lint && npm run build && node --test \"test/**/*.test.ts\"",
     "screenshot": "npm run build && electron . --screenshot"
   },
   "dependencies": {
@@ -24,11 +25,15 @@
     "js-yaml": "^4.1.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.19.2",
     "electron": "^44.7.2",
     "esbuild": "^0.25.12",
+    "eslint": "^9.39.5",
+    "jiti": "^2.7.0",
     "linkedom": "^0.18.14",
-    "typescript": "~5.9"
+    "typescript": "~5.9",
+    "typescript-eslint": "^8.72.0"
   }
 }

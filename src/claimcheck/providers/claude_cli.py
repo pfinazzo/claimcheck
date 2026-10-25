@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 from .. import ProviderError, redact
@@ -25,7 +26,7 @@ DISALLOWED = ["Bash", "Edit", "Write", "Read", "Glob", "Grep", "WebFetch", "WebS
 SIGN_IN = re.compile(r"not logged in|please run /login|invalid api key|unauthorized|authentication|credit balance", re.I)
 
 
-def find_claude(env: dict | None = None) -> str | None:
+def find_claude(env: Mapping[str, str] | None = None) -> str | None:
     env = env if env is not None else os.environ
     override = env.get("CLAUDE_BIN")
     if override and Path(override).exists():
@@ -66,7 +67,7 @@ def parse_output(stdout: str) -> str:
     try:
         data = json.loads(stdout)
     except json.JSONDecodeError:
-        raise ProviderError(f"claude CLI gave non-JSON output: {stdout[:200]!r}")
+        raise ProviderError(f"claude CLI gave non-JSON output: {stdout[:200]!r}") from None
     if not isinstance(data, dict):
         raise ProviderError("claude CLI output was not an object")
     if data.get("is_error"):
@@ -86,13 +87,14 @@ def parse_output(stdout: str) -> str:
 class ClaudeCliProvider:
     def __init__(self, model: str | None = None, binary: str | None = None, timeout_s: int = DEFAULT_TIMEOUT_S):
         self.model = model
-        self.binary = binary or find_claude()
+        found = binary or find_claude()
         self.timeout_s = timeout_s
-        if not self.binary:
+        if not found:
             raise ProviderError(
                 "the claude CLI was not found on PATH. Install Claude Code and sign in, "
                 "or set ANTHROPIC_API_KEY to use the API provider."
             )
+        self.binary: str = found
 
     def complete(self, system: str, user: str, *, schema: dict) -> str:
         # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
@@ -115,9 +117,9 @@ class ClaudeCliProvider:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0,
             )
         except subprocess.TimeoutExpired:
-            raise ProviderError(f"claude CLI did not answer within {self.timeout_s}s")
+            raise ProviderError(f"claude CLI did not answer within {self.timeout_s}s") from None
         except OSError as e:
-            raise ProviderError(f"claude CLI could not be started: {e}")
+            raise ProviderError(f"claude CLI could not be started: {e}") from e
         if proc.returncode != 0 and not proc.stdout.strip():
             err = (proc.stderr or "").strip()
             if SIGN_IN.search(err):

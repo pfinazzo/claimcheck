@@ -12,7 +12,7 @@ import type { WizardState } from '../shared/wizard-state.ts';
 import { renderBoard, type BoardActions, type BoardUi } from './board.ts';
 import { connectDialog, openDialog, trustDialog, type DialogHost } from './dialogs.ts';
 import { demoWizard } from './demo.ts';
-import { h, mount, type Child } from './dom.ts';
+import { h, mount } from './dom.ts';
 import { renderWizard, type WizardCtx } from './wizard.ts';
 
 const desk = window.desk;
@@ -61,7 +61,7 @@ const renderAll = (): void => {
   } else {
     const claimsTop = scrollOf('.claims');
     const detailTop = scrollOf('.detail');
-    mount(app, ...(renderBoard(ui, boardActions) as Child[]));
+    mount(app, ...(renderBoard(ui, boardActions)));
     const claims = document.querySelector('.claims');
     const detail = document.querySelector('.detail');
     if (claims) claims.scrollTop = claimsTop;

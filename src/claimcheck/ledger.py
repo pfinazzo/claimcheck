@@ -34,7 +34,7 @@ def validate_line(s: str) -> dict:
     try:
         obj = json.loads(s)
     except json.JSONDecodeError as e:
-        raise ClaimcheckError(f"ledger line is not JSON: {e}")
+        raise ClaimcheckError(f"ledger line is not JSON: {e}") from e
     if not isinstance(obj, dict):
         raise ClaimcheckError("ledger line must be an object")
     t = obj.get("type")
@@ -144,7 +144,7 @@ def line_hash(text: str) -> str:
 
 def ledger_lines(data: bytes) -> list[str]:
     """Non-blank lines as text. A Windows checkout may end lines in CRLF, so strip the CR."""
-    return [l.rstrip("\r") for l in data.decode("utf-8").split("\n") if l.strip()]
+    return [line_text.rstrip("\r") for line_text in data.decode("utf-8").split("\n") if line_text.strip()]
 
 
 def _has_prev(text: str) -> bool:
@@ -171,7 +171,7 @@ def verify_chain(lines: list[str]) -> dict:
         try:
             obj = json.loads(text)
         except json.JSONDecodeError:
-            raise LedgerError(f"ledger line {n} is not valid JSON")
+            raise LedgerError(f"ledger line {n} is not valid JSON") from None
         if not isinstance(obj, dict):
             raise LedgerError(f"ledger line {n} is not an object")
         prev = obj.get("prev")

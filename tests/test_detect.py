@@ -20,6 +20,7 @@ def _touch(root, rel, text=""):
 def test_python_project_uses_pytest(tmp_path):
     _touch(tmp_path, "pyproject.toml", "[project]\nname='x'\n")
     det = detect.detect(tmp_path)
+    assert det.stack is not None
     assert det.stack.name == "python"
     assert det.test_cmd == "python -m pytest -q"
 
@@ -40,6 +41,7 @@ def test_python_unittest_and_pytest_prefers_pytest(tmp_path):
 def test_node_with_real_test_script(tmp_path):
     _touch(tmp_path, "package.json", '{"scripts": {"test": "vitest run"}}')
     det = detect.detect(tmp_path)
+    assert det.stack is not None
     assert det.stack.name == "node"
     assert det.test_cmd == "npm test"
 
@@ -78,6 +80,7 @@ def test_first_match_wins_and_others_are_named(tmp_path):
     _touch(tmp_path, "package.json", '{"scripts": {"test": "jest"}}')
     _touch(tmp_path, "pyproject.toml", "")
     det = detect.detect(tmp_path)
+    assert det.stack is not None
     assert det.stack.name == "node"
     assert det.others == ["python"]
 

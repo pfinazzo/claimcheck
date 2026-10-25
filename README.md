@@ -678,11 +678,14 @@ Use `--no-animation`, or set `NO_COLOR=1`. On older Windows consoles, Windows Te
 python -m venv .venv
 .venv/Scripts/activate          # on macOS and Linux: source .venv/bin/activate
 pip install -e ".[dev,claude]"
-pytest                          # about 330 tests, around 100 seconds
+ruff check                      # lint: the coding conventions a linter can check
+mypy                            # type check of src/ and tests/
+pytest                          # about 380 tests, around 100 seconds
 
 cd app
 npm install
-npm test                        # type checks, builds, then about 90 tests
+npm run lint                    # ESLint with the same conventions
+npm test                        # type checks, lints, builds, then about 90 tests
 npm run build                   # bundles the main process, the preload and the page into dist/
 ```
 

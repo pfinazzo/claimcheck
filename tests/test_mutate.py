@@ -7,8 +7,8 @@ import json
 
 import pytest
 
-from claimcheck import mutate
 from claimcheck import config as C
+from claimcheck import mutate
 from conftest import CALC_SRC, PY
 
 TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"
@@ -87,7 +87,8 @@ def test_ac23_stale_sentinel_exits_6_and_restore_puts_files_back(calc_repo, caps
     assert calc_repo.cli("mutate", "--test-cmd", "exit 0") == 6
     assert "--restore" in capsys.readouterr().err
 
-    sha = lambda s: hashlib.sha256(s.encode("utf-8")).hexdigest()
+    def sha(s):
+        return hashlib.sha256(s.encode("utf-8")).hexdigest()
     sentinel.write_text(
         json.dumps({"version": 2, "files": {"src/calc.py": {
             "original_sha256": sha("ORIGINAL\n"), "mutated_sha256": sha("MUTATED\n")}}}),
@@ -184,7 +185,8 @@ def test_ac25_max_mutants_and_seed_reproducible(calc_repo):
     a, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=7)
     b, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=7)
     c, _ = mutate.run_mutate(calc_repo.path, cfg, test_cmd="exit 0", max_mutants=2, seed=8)
-    key = lambda r: [(m["cls"], m["mutated"]) for m in r["mutants"]]
+    def key(r):
+        return [(m["cls"], m["mutated"]) for m in r["mutants"]]
     assert len(a["mutants"]) == 2 and a["candidates"] == 3
     assert key(a) == key(b)
     assert key(a) != key(c) or True  # different seeds may coincide with 3 candidates

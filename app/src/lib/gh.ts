@@ -12,7 +12,7 @@ const execFileP = promisify(execFile);
 
 type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer; stderr?: string | Buffer }>;
 
-export const ghReady = async ({ execFn = execFileP as unknown as ExecFn }: { execFn?: ExecFn } = {}): Promise<boolean> => {
+export const ghReady = async ({ execFn = execFileP }: { execFn?: ExecFn } = {}): Promise<boolean> => {
   try {
     await execFn('gh', ['auth', 'status'], { windowsHide: true });
     return true;
@@ -49,7 +49,7 @@ export type PrInput = {
   execFn?: ExecFn;
 };
 
-export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP as unknown as ExecFn }: PrInput): Promise<string> => {
+export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP }: PrInput): Promise<string> => {
   const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true });
   const url = String(stdout).split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) ?? String(stdout).trim();
   return url;

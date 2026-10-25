@@ -19,6 +19,7 @@ import { createTextCollector, killTree } from './proc.ts';
 import { SAFE_REF } from './store.ts';
 import { BLOCKED_TOOLS, IMPLEMENT_TOOLS, PROPOSALS_SCHEMA, PROPOSE_TOOLS, describeClaim, implementPrompt, proposePrompt } from './prompts.ts';
 import { filterDiff, isSecretPath, redactText } from './redact.ts';
+import { toText } from '../shared/text.ts';
 
 const execFileP = promisify(execFile);
 
@@ -55,7 +56,7 @@ export const parseProposals = (result: unknown): Proposal[] => {
   const structured = r.structured ?? r.structured_output;
   const fromStructured = validProposals(isRecord(structured) ? structured.proposals : undefined);
   if (fromStructured.length) return fromStructured;
-  const text = typeof result === 'string' ? result : String(r.result ?? '');
+  const text = typeof result === 'string' ? result : toText({ value: r.result });
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start >= 0 && end > start) {
@@ -72,7 +73,7 @@ export const parseProposals = (result: unknown): Proposal[] => {
 
 const SAFE_TEST_ID = /^[\w./:[\]-]+$/;
 
-const tail = (text: unknown, n = 40): string => String(text ?? '').split(/\r?\n/).filter(Boolean).slice(-n).join('\n');
+const tail = (text: unknown, n = 40): string => toText({ value: text }).split(/\r?\n/).filter(Boolean).slice(-n).join('\n');
 
 export type ShellResult = {
   ok: boolean | 'manual';
@@ -86,7 +87,7 @@ export type ShellResult = {
  * promise itself and kills the whole process tree (on Windows `shell: true`
  * puts cmd.exe in front, and killing only that leaves the real program running).
  */
-export const runShell = ({ command, cwd, spawnFn = nodeSpawn as SpawnFn, timeoutMs = 600000 }: { command: string; cwd: string | undefined; spawnFn?: SpawnFn; timeoutMs?: number }): Promise<ShellResult> =>
+export const runShell = ({ command, cwd, spawnFn = nodeSpawn, timeoutMs = 600000 }: { command: string; cwd: string | undefined; spawnFn?: SpawnFn; timeoutMs?: number }): Promise<ShellResult> =>
   new Promise((resolve) => {
     const out = createTextCollector();
     let settled = false;
@@ -118,7 +119,7 @@ export const runShell = ({ command, cwd, spawnFn = nodeSpawn as SpawnFn, timeout
     });
   });
 
-const git = async (cwd: string, args: string[], execFn: ExecFn = execFileP as unknown as ExecFn): Promise<string> =>
+const git = async (cwd: string, args: string[], execFn: ExecFn = execFileP): Promise<string> =>
   String((await execFn('git', args, { cwd, windowsHide: true, maxBuffer: 16 * 1024 * 1024 })).stdout).trim();
 
 /** A file name that holds credentials. Never sent to a model and never read by the app. */
@@ -129,7 +130,7 @@ export const isSensitivePath = (rel: string): boolean => isSecretPath(rel) || St
  * (symlinks resolved), not a credential file, and not git-ignored. Returns the
  * text or null.
  */
-export const readSafeRepoFile = async (repoPath: string, ref: string, { execFn = execFileP as unknown as ExecFn, maxBytes = 200000 }: { execFn?: ExecFn; maxBytes?: number } = {}): Promise<string | null> => {
+export const readSafeRepoFile = async (repoPath: string, ref: string, { execFn = execFileP, maxBytes = 200000 }: { execFn?: ExecFn; maxBytes?: number } = {}): Promise<string | null> => {
   try {
     const realRepo = await fsp.realpath(repoPath);
     const real = await fsp.realpath(path.resolve(realRepo, ref));
@@ -217,7 +218,7 @@ export type FixerOptions = {
   onUpdate?: (run: PublicRun) => void;
 };
 
-export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn as SpawnFn, execFn = execFileP as unknown as ExecFn, claudeBin = null, onUpdate = () => {} }: FixerOptions = {}) => {
+export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn, execFn = execFileP, claudeBin = null, onUpdate = () => {} }: FixerOptions = {}) => {
   const runs = new Map<string, FixRun>();
   const publish = (run: FixRun): void => onUpdate(toPublic(run));
   const isBusy = (): boolean => [...runs.values()].some((r) => r.status === 'running');
@@ -391,7 +392,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
 
   const acceptRisk = ({ board, claimId, note }: { board: Board; claimId: string; note?: unknown }) => {
     const ctx = contextFor(board, claimId);
-    const reason = String(note ?? '').trim();
+    const reason = toText({ value: note }).trim();
     if (!reason) throw new Error('Write one line on why this risk is acceptable.');
     // Pressing the button twice must not write two outcome lines.
     const existing = readAppState(ctx.repo.path).claims[claimId];
@@ -403,7 +404,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
   const toPublic = (run: FixRun): PublicRun => ({
     id: run.id, kind: run.kind, claimId: run.claimId, status: run.status, startedAt: run.startedAt, mode: run.mode ?? 'cli',
     activity: run.activity, proposals: run.proposals ?? null, proposal: run.proposal ?? null, error: run.error, needsSignIn: run.needsSignIn,
-    branch: run.branch ?? null, worktree: run.worktree ?? null, tests: run.tests ?? null, killCondition: run.killCondition ?? null, commits: run.commits ?? [],
+    branch: run.branch ?? null, worktree: run.worktree ?? null, tests: run.tests ?? null, killCondition: run.killCondition ?? null, commits: run.commits,
     summary: run.summary ?? null, prompt: run.prompt ?? null, prUrl: run.prUrl ?? null,
   });
 

@@ -12,6 +12,7 @@ import path from 'node:path';
 import type { Proposal, PromptContext } from '../shared/types.ts';
 import { appRoot } from './paths.ts';
 import { redactText } from './redact.ts';
+import { toText } from '../shared/text.ts';
 
 const promptsDir = (): string => path.join(appRoot(), 'prompts');
 
@@ -97,7 +98,7 @@ export const PROPOSALS_SCHEMA = {
 
 const readTemplate = (name: string): string => readFileSync(path.join(promptsDir(), name), 'utf8');
 
-const fill = (template: string, values: Record<string, unknown>): string => template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => String(values[key] ?? ''));
+const fill = (template: string, values: Record<string, unknown>): string => template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => toText({ value: values[key] }));
 
 const bullet = (items: string[] | undefined, empty = '(none)'): string => (items?.length ? items.map((i) => `- ${i}`).join('\n') : empty);
 

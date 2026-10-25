@@ -37,7 +37,7 @@ test('signIn on win32 hands spawn the verbatim launch', { skip: process.platform
   signIn({ bin: EXE, spawnFn: ((...a: unknown[]) => (calls.push(a), { unref() {} })) as never });
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.[0], 'cmd.exe');
-  assert.equal((calls[0]?.[2] as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments, true);
+  assert.equal((calls[0][2] as { windowsVerbatimArguments?: boolean }).windowsVerbatimArguments, true);
 });
 
 // Real cmd.exe, harmless payload: the child writes a marker file, which only happens if `start`

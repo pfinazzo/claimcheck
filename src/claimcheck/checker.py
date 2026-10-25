@@ -6,14 +6,11 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-from . import ClaimsError, ProviderError
+from . import ProviderError, gitio, providers, redact
 from . import claims as CL
 from . import config as C
-from . import gitio, redact
-from . import providers
 from . import spec as S
 from .spec import Criterion
 
@@ -56,12 +53,12 @@ For every claim id return exactly one verdict:
 UNVERIFIABLE). Be literal and skeptical. Reply with JSON only."""
 
 
-def _redacted(claims: object) -> list[dict]:
+def _redacted(claims: CL.ClaimsFile | list[CL.Claim] | list[dict] | None) -> list[dict]:
     """Accept a ClaimsFile, a list of Claim, or already-redacted dicts; never leak confidence / verified_by."""
     if isinstance(claims, CL.ClaimsFile):
         return CL.redact(claims)
     out: list[dict] = []
-    for c in claims or []:  # type: ignore[union-attr]
+    for c in claims or []:
         if isinstance(c, CL.Claim):
             out.append(CL.redact(CL.ClaimsFile(1, "", "", [c]))[0])
         elif isinstance(c, dict):
@@ -69,16 +66,16 @@ def _redacted(claims: object) -> list[dict]:
     return out
 
 
-def build_prompt(criteria: list[Criterion], diff_text: str, claims: object) -> tuple[str, str]:
+def build_prompt(criteria: list[Criterion], diff_text: str, claims: CL.ClaimsFile | list[CL.Claim] | list[dict] | None) -> tuple[str, str]:
     """Pure: (system, user). Redacts the claims itself, so confidence / verified_by never reach the model."""
-    claims = _redacted(claims)
+    redacted_claims = _redacted(claims)
     crit_lines = "\n".join(f"{c.id}. {c.text}" for c in criteria)
     user = (
         "## Frozen acceptance criteria\n"
         f"{crit_lines}\n\n"
         "## Claims\n"
         "```json\n"
-        f"{json.dumps(claims, indent=2, ensure_ascii=False)}\n"
+        f"{json.dumps(redacted_claims, indent=2, ensure_ascii=False)}\n"
         "```\n\n"
         "## Diff\n"
         "```diff\n"
@@ -218,9 +215,9 @@ def run_check(
         provider = providers.load(provider_name, model=model)
         verdicts = ask(provider, system, user, claim_ids) if claim_ids else []
     except ValueError as e:
-        raise ProviderError(str(e))
+        raise ProviderError(str(e)) from e
     except Exception as e:  # SDK errors, network, import errors
-        raise ProviderError(f"{type(e).__name__}: {e}")
+        raise ProviderError(f"{type(e).__name__}: {e}") from e
 
     result = {
         "run_id": C.new_run_id(),

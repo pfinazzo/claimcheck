@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import checker, detect, gitio, initflow, redact, specdraft as SD
-from claimcheck import config as C
+from claimcheck import gitio, initflow, redact
+from claimcheck import specdraft as SD
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "secret_cases.json").read_text(encoding="utf-8"))
 RAND = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1"
@@ -125,7 +125,7 @@ def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, monkeypatch
 def test_a_key_pasted_into_an_answer_is_redacted_before_sending():
     draft = SD.Draft(
         goal=f"use sk-ant-api03-{RAND} to call the api",
-        rounds=[SD.Round([SD.Question("q1", "which env?")], [f"password = 'correct-horse-battery'"])],
+        rounds=[SD.Round([SD.Question("q1", "which env?")], ["password = 'correct-horse-battery'"])],
         criteria=[SD.Criterion(f"Calls with ghp_{RAND}", "")],
     )
     _, user = SD.build_prompt(draft, [], 2, 6)

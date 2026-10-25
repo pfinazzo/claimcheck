@@ -18,10 +18,9 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from . import ClaimsError, MutateLockError, ProviderError, SpecError
+from . import ClaimsError, MutateLockError, ProviderError, SpecError, gitio
 from . import claims as CL
 from . import config as C
-from . import gitio
 from . import spec as S
 
 CLASSES = ("sign_flip", "off_by_one", "swap_args", "boundary")
@@ -120,12 +119,10 @@ def _boundary(line: str, spans: list[tuple[int, int]]) -> list[str]:
         op = m.group(0)
         prev = line[i - 1] if i > 0 else ""
         nxt = line[j] if j < len(line) else ""
-        if op in ("<", "<="):
-            if prev == "<" or nxt == "<" or nxt == "-" or prev == "=":
-                continue
-        if op in (">", ">="):
-            if prev == ">" or nxt == ">" or prev == "-" or prev == "=":
-                continue
+        if op in ("<", "<=") and (prev in ("<", "=") or nxt in ("<", "-")):
+            continue
+        if op in (">", ">=") and (prev in (">", "-", "=") or nxt == ">"):
+            continue
         if op == "<" and nxt == ">":
             continue
         rep = {"<": "<=", "<=": "<", ">": ">=", ">=": ">"}[op]
@@ -228,7 +225,7 @@ def added_lines(diff: str, ignore: list[str]) -> list[tuple[str, int, str]]:
             file = _header_path(raw)
             if file is not None and C.is_ignored(file, ignore):
                 file = None
-        elif raw.startswith("Binary files") or raw.startswith("GIT binary patch"):
+        elif raw.startswith(("Binary files", "GIT binary patch")):
             file = None
         else:
             m = _HUNK_RE.match(raw)
@@ -287,8 +284,9 @@ def _run_tests(repo: Path, cmd: str, timeout: int) -> tuple[str, float]:
     t0 = time.monotonic()
     env = dict(os.environ)
     env.update(_TEST_ENV_OVERRIDES)
+    # mypy only narrows on sys.platform, so the Windows-only flag is guarded by it.
     kw: dict = {}
-    if os.name == "nt":
+    if sys.platform == "win32":
         kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     else:
         kw["start_new_session"] = True
@@ -415,6 +413,49 @@ def _read_sentinel(path: Path) -> dict[str, dict]:
         return {}
 
 
+def _why_not_restorable(info: object, bak: bytes, cur: bytes | None) -> str | None:
+    """The reason a backup may not be written over the current file, or None when it may."""
+    if not isinstance(info, dict):
+        return "the lock file has no record of what the run wrote, so your edits cannot be told apart from the planted bug"
+    if info.get("original_sha256") != _sha(bak):
+        return "the backup does not match the recorded original"
+    if cur is None:
+        return "the file is missing or not a regular file"
+    if _sha(cur) not in (info["original_sha256"], info.get("mutated_sha256")):
+        return "it changed since the run (it is neither the original nor the planted bug)"
+    return None
+
+
+def _restore_one(repo: Path, backup_file: Path, record: dict[str, dict]) -> tuple[bool, str | None]:
+    """Put one backup back.
+
+    Returns (whether the original was written, the reason the file was kept or None). A file that
+    already equals the original only loses its backup.
+    """
+    rel = backup_file.relative_to(C.cc_dir(repo) / C.MUTATE_BACKUP_DIR).as_posix()
+    dest = repo / rel
+    info = record.get(rel)
+    try:
+        bak = backup_file.read_bytes()
+        cur = dest.read_bytes() if dest.is_file() else None
+    except OSError as e:
+        return False, f"cannot read it ({e})"
+    why = _why_not_restorable(info, bak, cur)
+    if why is not None or info is None or cur is None:
+        return False, why
+    if _sha(cur) == info["original_sha256"]:
+        backup_file.unlink()
+        return False, None
+    try:
+        dest.write_bytes(bak)
+        if "mtime_ns" in info:
+            _write_times(dest, int(info.get("atime_ns", info["mtime_ns"])), int(info["mtime_ns"]))
+    except OSError as e:
+        return False, f"writing it failed ({e})"
+    backup_file.unlink()
+    return True, None
+
+
 def restore(repo: Path) -> list[str]:
     """`--restore`: put backed-up originals back, but never over work the run did not write.
 
@@ -427,49 +468,17 @@ def restore(repo: Path) -> list[str]:
     backup = cc / C.MUTATE_BACKUP_DIR
     sentinel = cc / C.MUTATE_SENTINEL
     record = _read_sentinel(sentinel)
-    restored: list[str] = []
-    refused: dict[str, dict] = {}
-    if backup.exists():
-        for f in sorted(p for p in backup.rglob("*") if p.is_file()):
-            rel = f.relative_to(backup).as_posix()
-            dest = repo / rel
-            info = record.get(rel)
-            why = None
-            try:
-                bak = f.read_bytes()
-                cur = dest.read_bytes() if dest.is_file() else None
-            except OSError as e:
-                bak, cur, why = b"", None, f"cannot read it ({e})"
-            if why is None and not isinstance(info, dict):
-                why = "the lock file has no record of what the run wrote, so your edits cannot be told apart from the planted bug"
-            elif why is None and info.get("original_sha256") != _sha(bak):
-                why = "the backup does not match the recorded original"
-            elif why is None and cur is None:
-                why = "the file is missing or not a regular file"
-            if why is None:
-                cur_sha = _sha(cur)
-                if cur_sha == info["original_sha256"]:
-                    f.unlink()  # already the original: nothing to do
-                    continue
-                if cur_sha == info.get("mutated_sha256"):
-                    try:
-                        dest.write_bytes(bak)
-                        if "mtime_ns" in info:
-                            _write_times(dest, int(info.get("atime_ns", info["mtime_ns"])), int(info["mtime_ns"]))
-                    except OSError as e:
-                        why = f"writing it failed ({e})"
-                    else:
-                        restored.append(rel)
-                        f.unlink()
-                        continue
-                else:
-                    why = "it changed since the run (it is neither the original nor the planted bug)"
+    backups = sorted(p for p in backup.rglob("*") if p.is_file()) if backup.exists() else []
+    outcomes = {f.relative_to(backup).as_posix(): _restore_one(repo, f, record) for f in backups}
+    restored = [rel for rel, (was_written, _) in outcomes.items() if was_written]
+    refused = {rel: record.get(rel) or {} for rel, (_, why) in outcomes.items() if why is not None}
+    for rel, (_, why) in outcomes.items():
+        if why is not None:
             sys.stderr.write(
                 f"claimcheck: not restoring {rel}: {why}. The file was left as it is and the backup "
                 f"is still at {C.CLAIMCHECK_DIR}/{C.MUTATE_BACKUP_DIR}/{rel}. "
                 f"Delete {C.CLAIMCHECK_DIR}/{C.MUTATE_SENTINEL} once you have sorted it out.\n"
             )
-            refused[rel] = info if isinstance(info, dict) else {}
     if refused:
         _write_sentinel(sentinel, refused)
         return restored
@@ -571,7 +580,8 @@ def run_mutate(
     backup_dir = C.cc_dir(repo) / C.MUTATE_BACKUP_DIR
     records: list[dict] = []
     if selected:
-        _run_planted(repo, selected, states, test_cmd, timeout, backup_dir, sentinel, records)
+        loaded = {rel: state for rel, state in states.items() if state is not None}
+        _run_planted(repo, selected, loaded, test_cmd, timeout, backup_dir, sentinel, records)
 
     per_claim: dict[str, dict] | None = None
     if claims_file is not None:
@@ -590,7 +600,8 @@ def run_mutate(
                     f"the min_catch_rate gate cannot judge it.\n"
                 )
 
-    result = {
+    summary = _summary(records)
+    result: dict = {
         "run_id": C.new_run_id(),
         "ts": C.utc_now_iso(),
         "base": gitio.rev_parse(repo, base),
@@ -601,7 +612,7 @@ def run_mutate(
         "candidates": len(all_mutants),
         "skipped_undecodable": skipped,
         "mutants": records,
-        "summary": _summary(records),
+        "summary": summary,
     }
     if per_claim is not None:
         result["per_claim"] = per_claim
@@ -610,7 +621,7 @@ def run_mutate(
     runs.mkdir(parents=True, exist_ok=True)
     (runs / f"{result['run_id']}-mutate.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    rate = result["summary"]["catch_rate"]
+    rate = summary["catch_rate"]
     code = 0 if rate is None or rate >= cfg.mutate_min_catch_rate else 2
     return result, code
 
@@ -618,7 +629,7 @@ def run_mutate(
 def _run_planted(
     repo: Path,
     selected: list[Mutant],
-    states: dict[str, _FileState | None],
+    states: dict[str, _FileState],
     test_cmd: str,
     timeout: int,
     backup_dir: Path,

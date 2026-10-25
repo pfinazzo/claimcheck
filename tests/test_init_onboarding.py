@@ -12,11 +12,17 @@ import re
 
 import pytest
 
-from claimcheck import ClaimcheckError, ProviderError, gitio, initflow, onboard, providers, tui
+from claimcheck import (
+    ProviderError,
+    gitio,
+    initflow,
+    onboard,
+    providers,
+    tui,
+)
 from claimcheck import config as C
 from claimcheck.providers import claude_cli
 from claimcheck.providers.stub import StubProvider
-
 
 # ---- setup core -------------------------------------------------------------
 
@@ -58,6 +64,7 @@ def test_run_setup_can_create_the_agent_file_only_when_asked(repo):
 
 def test_the_workflow_file_is_valid_yaml_with_a_working_expression():
     import yaml
+
     from claimcheck import ci
 
     data = yaml.safe_load(ci.render("node"))
@@ -239,7 +246,7 @@ def test_plain_terminal_has_no_escape_codes():
 
 
 def test_animated_terminal_ends_on_the_final_frame_and_restores_the_cursor():
-    sleeps = []
+    sleeps: list = []
     t, out = _term(animate=True, color=True, unicode=True, sleep=sleeps.append, seed=1)
     t.shimmer("claimcheck", passes=1)
     t.animate_bar("conf", 0.92, suffix=lambda v: f"{v:.2f}")
