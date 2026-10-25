@@ -76,7 +76,7 @@ def pre_commit(repo: Path, cfg: C.Config) -> int:
     """Return the exit code; messages go to stderr."""
     staged = gitio.staged_paths(repo)
     # Deletions count: removing code is a change a claim must cover too.
-    code_paths = sorted({p for _status, p in staged if not C.is_ignored(p, cfg.ignore)})
+    code_paths = sorted({p for _status, p in staged if not C.is_ignored(p, cfg["ignore"])})
     if not code_paths:
         return 0
 
@@ -98,18 +98,18 @@ def pre_commit(repo: Path, cfg: C.Config) -> int:
 
     staged_set = set(code_paths)
     problems: list[str] = []
-    for c in cf.claims:
-        extra = [f for f in c.files if f not in staged_set]
+    for c in cf["claims"]:
+        extra = [f for f in c["files"] if f not in staged_set]
         if extra:
-            problems.append(f"claim {c.id}: files not in the staged diff: {extra}")
+            problems.append(f"claim {c['id']}: files not in the staged diff: {extra}")
     if problems:
         raise ClaimsError("\n  ".join(["claims do not match the staged diff:"] + problems))
 
-    covered = {f for c in cf.claims for f in c.files}
+    covered = {f for c in cf["claims"] for f in c["files"]}
     uncovered = [p for p in code_paths if p not in covered]
     if uncovered:
         msg = "staged paths with no claim covering them: " + ", ".join(uncovered)
-        if cfg.require_full_coverage:
+        if cfg["require_full_coverage"]:
             raise ClaimsError(msg)
         print(f"claimcheck warning: {msg}", file=sys.stderr)
     return 0

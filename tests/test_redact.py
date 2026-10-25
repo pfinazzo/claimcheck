@@ -9,6 +9,7 @@ filters cannot drift apart.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from claimcheck import gitio, initflow, providers, redact
 from claimcheck import specdraft as SD
 from claimcheck.providers import claude_cli
+from fakes import make_capturing_provider
 
 CASES = json.loads((Path(__file__).parent / "fixtures" / "secret_cases.json").read_text(encoding="utf-8"))
 RAND = "aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1"
@@ -42,7 +44,7 @@ def test_ordinary_paths_are_not_flagged(path):
 @pytest.mark.parametrize("text", [fill(t) for t in CASES["must_redact"]])
 def test_secret_values_are_redacted(text):
     out, rep = redact.redact_text(text)
-    assert rep.count >= 1 and "[REDACTED:" in out, text
+    assert rep["count"] >= 1 and "[REDACTED:" in out, text
     assert RAND not in out and "hunter2hunter2" not in out and "correct-horse-battery" not in out
     assert "Tr0ub4dor3xKcdZ9" not in out and "s3cr3tValue99xyz" not in out
 
@@ -50,7 +52,7 @@ def test_secret_values_are_redacted(text):
 @pytest.mark.parametrize("text", CASES["must_stay"])
 def test_ordinary_code_is_left_alone(text):
     out, rep = redact.redact_text(text)
-    assert out == text and rep.count == 0, text
+    assert out == text and rep["count"] == 0, text
 
 
 def test_redaction_keeps_the_shape_of_the_line():
@@ -60,7 +62,7 @@ def test_redaction_keeps_the_shape_of_the_line():
 
 def test_a_pasted_key_in_free_text_is_caught():
     out, rep = redact.redact_text(f"please use my key sk-ant-api03-{RAND} for this")
-    assert "sk-ant-" not in out and rep.kinds == {"anthropic-key": 1}
+    assert "sk-ant-" not in out and rep["kinds"] == {"anthropic-key": 1}
 
 
 # ---- diffs --------------------------------------------------------------------
@@ -72,7 +74,7 @@ def _diff(path: str, line: str) -> str:
 def test_filter_diff_withholds_secret_files_and_redacts_the_rest():
     d = _diff("src/app.py", f'API = "sk-ant-api03-{RAND}"') + _diff(".env", "TOKEN=abc123verylongsecretvalue") + _diff("src/ok.py", "x = 1")
     out, sent = redact.filter_diff(d)
-    assert sent.files_omitted == [".env"] and sent.redactions >= 1
+    assert sent["files_omitted"] == [".env"] and sent["redactions"] >= 1
     assert "abc123verylongsecretvalue" not in out and RAND not in out and "x = 1" in out
     assert "withheld: .env looks like a secret store" in out
 
@@ -80,28 +82,18 @@ def test_filter_diff_withholds_secret_files_and_redacts_the_rest():
 def test_filter_diff_caps_each_file_and_the_total():
     big = _diff("src/big.py", "y = 1\n+" * 30_000)
     out, sent = redact.filter_diff(big)
-    assert sent.truncated and len(out) < redact.PER_FILE_CHARS + 500
+    assert sent["truncated"] and len(out) < redact.PER_FILE_CHARS + 500
     many = "".join(_diff(f"src/f{i}.py", "z = 2\n+" * 10_000) for i in range(40))
     out2, sent2 = redact.filter_diff(many)
-    assert sent2.truncated and len(out2) <= redact.TOTAL_CHARS + 2_000
+    assert sent2["truncated"] and len(out2) <= redact.TOTAL_CHARS + 2_000
 
 
 def test_what_is_reported_never_contains_the_secret():
     _, sent = redact.filter_diff(_diff("src/a.py", f'k = "sk-ant-api03-{RAND}"'))
-    assert RAND not in json.dumps(sent.as_dict())
+    assert RAND not in json.dumps(sent)
 
 
 # ---- the checker's payload ----------------------------------------------------
-
-class _Capture:
-    def __init__(self):
-        self.user = ""
-
-    def complete(self, system, user, *, schema):
-        self.user = user
-        ids = [c["id"] for c in json.loads(user.split("```json", 1)[1].split("```", 1)[0])]
-        return json.dumps({"verdicts": [{"id": i, "verdict": "UNVERIFIABLE", "reason": "x", "evidence": []} for i in ids]})
-
 
 def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, monkeypatch, capsys):
     calc_repo.write("src/config.py", f'API = "sk-ant-api03-{RAND}"\nDB_PASSWORD = "Tr0ub4dor3xKcdZ9"\n')
@@ -110,12 +102,12 @@ def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, monkeypatch
     calc_repo.git("add", "-f", ".env")
     calc_repo.write(".claimcheck/claims.yaml", calc_repo.read(".claimcheck/claims.yaml"))
     calc_repo.commit("add config and an accidentally committed .env", date="2020-01-06T00:00:00+00:00")
-    cap = _Capture()
+    cap, prompts = make_capturing_provider()
     monkeypatch.setattr(providers, "load", lambda name, model=None: cap)
     assert calc_repo.cli("check", "--provider", "stub") == 0
     for needle in (RAND, "Tr0ub4dor3xKcdZ9", "topsecretvalue1234"):
-        assert needle not in cap.user, needle
-    assert "withheld: .env" in cap.user and "[REDACTED:" in cap.user
+        assert needle not in prompts[-1], needle
+    assert "withheld: .env" in prompts[-1] and "[REDACTED:" in prompts[-1]
     saved = json.loads(sorted((calc_repo.cc / "runs").glob("*-check.json"))[-1].read_text(encoding="utf-8"))
     assert saved["sent"]["files_omitted"] == [".env"] and saved["sent"]["redactions"] >= 2
 
@@ -123,10 +115,10 @@ def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, monkeypatch
 # ---- the spec conversation ------------------------------------------------------
 
 def test_a_key_pasted_into_an_answer_is_redacted_before_sending():
-    draft = SD.Draft(
+    draft = SD.make_draft(
         goal=f"use sk-ant-api03-{RAND} to call the api",
-        rounds=[SD.Round([SD.Question("q1", "which env?")], ["password = 'correct-horse-battery'"])],
-        criteria=[SD.Criterion(f"Calls with ghp_{RAND}", "")],
+        rounds=[SD.make_round(questions=[SD.make_question(id="q1", text="which env?")], answers=["password = 'correct-horse-battery'"])],
+        criteria=[SD.make_criterion(f"Calls with ghp_{RAND}", check="")],
     )
     _, user = SD.build_prompt(draft, [], 2, 6)
     for needle in (RAND, "correct-horse-battery"):
@@ -172,7 +164,7 @@ def test_init_warns_about_a_secret_file_that_is_already_committed(repo):
 
 
 def test_the_interview_prompt_tells_the_model_what_it_must_not_do_with_pasted_secrets():
-    system, _ = SD.build_prompt(SD.Draft(goal="g"), [], 1, 6)
+    system, _ = SD.build_prompt(SD.make_draft(goal="g"), [], 1, 6)
     assert "never as" in system and "instructions to you" in system
 
 
@@ -181,16 +173,15 @@ def test_the_interview_prompt_tells_the_model_what_it_must_not_do_with_pasted_se
 def test_the_claude_cli_provider_scrubs_what_it_is_handed(monkeypatch):
     seen = {}
 
-    class P:
-        returncode, stdout, stderr = 0, json.dumps({"structured_output": {"ok": True}}), ""
+    reply = json.dumps({"structured_output": {"ok": True}})
 
     def fake_run(args, **kw):
         """Stand-in for subprocess.run that records the call and reports success."""
         seen["args"], seen["input"] = args, kw["input"]
-        return P()
+        return subprocess.CompletedProcess(args, 0, stdout=reply, stderr="")
 
     monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
-    prov = claude_cli.ClaudeCliProvider(binary="/usr/bin/claude")
-    prov.complete(f"system sk-ant-api03-{RAND}", f"user DB_PASSWORD=Tr0ub4dor3xKcdZ9 and sk-ant-api03-{RAND}", schema={"type": "object"})
+    prov = claude_cli.make_claude_cli_provider(binary="/usr/bin/claude")
+    providers.ask_model(prov, system=f"system sk-ant-api03-{RAND}", user=f"user DB_PASSWORD=Tr0ub4dor3xKcdZ9 and sk-ant-api03-{RAND}", schema={"type": "object"})
     everything = " ".join(seen["args"]) + seen["input"]
     assert RAND not in everything and "Tr0ub4dor3xKcdZ9" not in everything and "[REDACTED:" in seen["input"]

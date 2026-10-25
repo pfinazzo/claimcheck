@@ -97,7 +97,7 @@ def test_ac31_examples_are_valid_fixtures(repo):
     assert repo.cli("spec", "freeze") == 0
     lock_ids = S.lock_ids(S.read_lock(repo.path))
     cf = CL.load_file(EXAMPLES / "claims.yaml", lock_ids)
-    assert [c.id for c in cf.claims] == ["c1", "c2", "c3"]
+    assert [c["id"] for c in cf["claims"]] == ["c1", "c2", "c3"]
     assert repo.cli("claims", "validate", str(EXAMPLES / "claims.yaml")) == 0
 
     cfg = tomllib.loads((EXAMPLES / "config.toml").read_text(encoding="utf-8"))

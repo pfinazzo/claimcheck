@@ -56,21 +56,15 @@ UNVERIFIABLE). Be literal and skeptical. Reply with JSON only."""
 
 def _redacted(claims: CL.ClaimsFile | list[CL.Claim] | list[dict] | None) -> list[dict]:
     """Accept a ClaimsFile, a list of Claim, or already-redacted dicts; never leak confidence / verified_by."""
-    if isinstance(claims, CL.ClaimsFile):
+    if isinstance(claims, dict):
         return CL.redact(claims)
-    out: list[dict] = []
-    for c in claims or []:
-        if isinstance(c, CL.Claim):
-            out.append(CL.redact(CL.ClaimsFile(1, "", "", [c]))[0])
-        elif isinstance(c, dict):
-            out.append({k: c[k] for k in ("id", "claim", "criteria", "files", "kill_condition") if k in c})
-    return out
+    return CL.redact_claims([c for c in claims or [] if isinstance(c, dict)])
 
 
 def build_prompt(criteria: list[Criterion], diff_text: str, claims: CL.ClaimsFile | list[CL.Claim] | list[dict] | None) -> tuple[str, str]:
     """Pure: (system, user). Redacts the claims itself, so confidence / verified_by never reach the model."""
     redacted_claims = _redacted(claims)
-    crit_lines = "\n".join(f"{c.id}. {c.text}" for c in criteria)
+    crit_lines = "\n".join(f"{c['id']}. {c['text']}" for c in criteria)
     user = (
         "## Frozen acceptance criteria\n"
         f"{crit_lines}\n\n"
@@ -176,7 +170,7 @@ def ask(provider: providers.Provider, system: str, user: str, claim_ids: list[st
     ids = set(claim_ids)
     salvaged: dict[str, dict] = {}
     for _attempt in range(2):
-        raw = provider.complete(system, user, schema=VERDICT_SCHEMA)
+        raw = providers.ask_model(provider, system=system, user=user, schema=VERDICT_SCHEMA)
         obj = _parse_json_or_none(raw)
         if obj is None:
             continue
@@ -207,9 +201,9 @@ def run_check(
     claims_file: CL.ClaimsFile | None = None,
 ) -> tuple[dict, int]:
     """Returns (result, exit_code). Raises SpecError / ClaimsError / ProviderError."""
-    base = base or cfg.base
-    provider_name = provider_name or cfg.checker_provider
-    model = model or cfg.checker_model
+    base = base or cfg["base"]
+    provider_name = provider_name or cfg["checker_provider"]
+    model = model or cfg["checker_model"]
 
     # Before any spec, claims or provider work.
     raw_diff = gitio.require_diff(repo, base, worktree)
@@ -225,7 +219,7 @@ def run_check(
     # redacted, size capped. What was held back is recorded in the result (never its content).
     diff, sent = redact.filter_diff(raw_diff)
     system, user = build_prompt(criteria, diff, claims_file)
-    claim_ids = [c.id for c in claims_file.claims]
+    claim_ids = [c["id"] for c in claims_file["claims"]]
 
     try:
         provider = providers.load(provider_name, model=model)
@@ -245,7 +239,7 @@ def run_check(
         "provider": provider_name,
         "model": None if provider_name == "stub" else model,
         "verdicts": verdicts,
-        "sent": sent.as_dict(),
+        "sent": dict(sent),
     }
     runs = C.cc_dir(repo) / C.RUNS_DIR
     runs.mkdir(parents=True, exist_ok=True)

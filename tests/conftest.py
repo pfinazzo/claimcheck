@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -67,61 +68,73 @@ def test_is_adult_below():
 CALC_CONFTEST = "import sys, pathlib\nsys.path.insert(0, str(pathlib.Path(__file__).parent / 'src'))\n"
 
 
-class Repo:
-    def __init__(self, path: Path):
-        self.path = path
+def make_repo(path: Path) -> types.SimpleNamespace:
+    """A test repo at `path`: its path plus closures for git, file writes and reads, and commits."""
 
-    def git(self, *args: str, check: bool = True, env: dict | None = None) -> str:
-        full_env = dict(os.environ)
-        if env:
-            full_env.update(env)
+    def git(*args: str, check: bool = True, env: dict | None = None) -> str:
+        """Run git in the repo; fail the test on a non-zero exit unless check=False."""
+        full_env = {**os.environ, **(env or {})}
         proc = subprocess.run(
-            ["git", *args], cwd=self.path, capture_output=True, text=True, env=full_env, timeout=SUBPROCESS_TIMEOUT_S
+            ["git", *args], cwd=path, capture_output=True, text=True, env=full_env, timeout=SUBPROCESS_TIMEOUT_S
         )
         if check and proc.returncode != 0:
             raise AssertionError(f"git {' '.join(args)} failed:\n{proc.stdout}\n{proc.stderr}")
         return proc.stdout
 
-    def write(self, rel: str, text: str) -> Path:
-        p = self.path / rel
+    def write(rel: str, text: str) -> Path:
+        """Write `text` to `rel`, creating parent folders, with LF line endings."""
+        p = path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text, encoding="utf-8", newline="\n")
         return p
 
-    def read(self, rel: str) -> str:
-        return (self.path / rel).read_text(encoding="utf-8")
+    def read(rel: str) -> str:
+        """Read `rel` as UTF-8."""
+        return (path / rel).read_text(encoding="utf-8")
 
-    def commit(self, msg: str, *, verify: bool = False, date: str | None = None) -> str:
-        self.git("add", "-A")
-        args = ["commit", "-q", "-m", msg]
-        if not verify:
-            args.append("--no-verify")
+    def sha(ref: str = "HEAD") -> str:
+        """The commit sha `ref` points at."""
+        return git("rev-parse", ref).strip()
+
+    def commit(msg: str, *, verify: bool = False, date: str | None = None) -> str:
+        """Stage everything and commit (hooks skipped unless verify), returning the new sha."""
+        git("add", "-A")
+        args = ["commit", "-q", "-m", msg, *([] if verify else ["--no-verify"])]
         env = {"GIT_AUTHOR_DATE": date, "GIT_COMMITTER_DATE": date} if date else None
-        self.git(*args, env=env)
-        return self.sha()
+        git(*args, env=env)
+        return sha()
 
-    def try_commit(self, msg: str) -> subprocess.CompletedProcess:
-        self.git("add", "-A")
+    def try_commit(msg: str) -> subprocess.CompletedProcess:
+        """Stage everything and commit with hooks on, returning the result instead of failing."""
+        git("add", "-A")
         return subprocess.run(
-            ["git", "commit", "-q", "-m", msg], cwd=self.path, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S
+            ["git", "commit", "-q", "-m", msg], cwd=path, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S
         )
 
-    def sha(self, ref: str = "HEAD") -> str:
-        return self.git("rev-parse", ref).strip()
+    def branch(name: str) -> None:
+        """Create and switch to branch `name`."""
+        git("checkout", "-q", "-b", name)
 
-    def branch(self, name: str) -> None:
-        self.git("checkout", "-q", "-b", name)
-
-    @property
-    def cc(self) -> Path:
-        return self.path / ".claimcheck"
-
-    def cli(self, *argv: str) -> int:
+    def run_cli(*argv: str) -> int:
+        """Run the claimcheck CLI with `argv`, returning its exit code."""
         return cli.main(list(argv))
+
+    return types.SimpleNamespace(
+        path=path,
+        cc=path / ".claimcheck",
+        git=git,
+        write=write,
+        read=read,
+        sha=sha,
+        commit=commit,
+        try_commit=try_commit,
+        branch=branch,
+        cli=run_cli,
+    )
 
 
 @pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
+def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.SimpleNamespace:
     """An empty git repo with an isolated git config and a fixed test identity."""
     empty_cfg = tmp_path / "gitconfig"
     empty_cfg.write_text("", encoding="utf-8")
@@ -137,7 +150,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
 
     path = tmp_path / "repo"
     path.mkdir()
-    r = Repo(path)
+    r = make_repo(path)
     r.git("init", "-q")
     r.git("symbolic-ref", "HEAD", "refs/heads/main")
     r.git("config", "core.autocrlf", "false")
@@ -148,7 +161,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Repo:
 
 
 @pytest.fixture
-def cc_repo(repo: Repo) -> Repo:
+def cc_repo(repo: types.SimpleNamespace) -> types.SimpleNamespace:
     """init + two frozen criteria committed on main; HEAD == main, tree clean."""
     assert repo.cli("init") == 0
     repo.write(".claimcheck/spec.md", TWO_CRITERIA_SPEC)
@@ -159,7 +172,7 @@ def cc_repo(repo: Repo) -> Repo:
 
 
 @pytest.fixture
-def calc_repo(cc_repo: Repo) -> Repo:
+def calc_repo(cc_repo: types.SimpleNamespace) -> types.SimpleNamespace:
     """cc_repo + tests on main, then branch `feat` adding src/calc.py and claims."""
     cc_repo.write("conftest.py", CALC_CONFTEST)
     cc_repo.write("tests/test_calc.py", CALC_TESTS)

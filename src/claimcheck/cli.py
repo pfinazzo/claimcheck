@@ -9,6 +9,7 @@ Exit codes: 0 ok, 2 verdict/threshold failure, 3 spec refusal, 4 claims/hook fai
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 from pathlib import Path
@@ -60,7 +61,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         _out(initflow.run_setup(repo, create_agent_doc=args.agent_doc, ci_provider=args.ci))
         return 0
     if _interactive() and not args.yes:
-        term = tui.Term(animate=False if args.no_animation else None)
+        term = tui.make_term(animate=False if args.no_animation else None)
         tui.enable_windows_vt()
         return onboard.run_onboarding(term, repo, tour=not args.no_tour, goal=args.goal)
     # Plain mode: same work, no prompts, no animation. This is what scripts and CI get.
@@ -111,9 +112,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         "spec": spec_state,
         "criteria": criteria,
         "hook": hook_on,
-        "base": cfg.base,
+        "base": cfg["base"],
         "branch": gitio.current_branch(repo) or None,
-        "provider": cfg.checker_provider,
+        "provider": cfg["checker_provider"],
     }
     if args.json:
         _out(info)
@@ -140,26 +141,26 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
 
     # One round, stateless: the caller keeps the conversation.
     if args.step:
-        round_draft = specdraft.Draft.from_dict(_read_json_stdin())
-        if not round_draft.goal.strip():
+        round_draft = specdraft.draft_from_dict(_read_json_stdin())
+        if not round_draft["goal"].strip():
             raise ClaimcheckError("a goal is needed")
         provider = providers.load(provider_name, model=None)
-        reply = specdraft.next_round(provider, round_draft, specdraft.repo_files(repo), len(round_draft.rounds) + 1, args.max_rounds)
+        reply = specdraft.next_round(provider, round_draft, specdraft.repo_files(repo), len(round_draft["rounds"]) + 1, args.max_rounds)
         _out(
             {
-                "questions": [vars(q) for q in reply.questions],
-                "criteria": [vars(c) for c in reply.criteria],
-                "out_of_scope": reply.out_of_scope,
-                "concerns": reply.concerns,
-                "ready": reply.ready,
-                "lint": {str(i): w for i, w in specdraft.lint(reply.criteria).items()},
+                "questions": [dict(q) for q in reply["questions"]],
+                "criteria": [dict(c) for c in reply["criteria"]],
+                "out_of_scope": reply["out_of_scope"],
+                "concerns": reply["concerns"],
+                "ready": reply["ready"],
+                "lint": {str(i): w for i, w in specdraft.lint(reply["criteria"]).items()},
             }
         )
         return 0
 
     if args.finish:
-        piped_draft = specdraft.Draft.from_dict(_read_json_stdin())
-        if not piped_draft.criteria:
+        piped_draft = specdraft.draft_from_dict(_read_json_stdin())
+        if not piped_draft["criteria"]:
             raise ClaimcheckError("the draft has no criteria")
         _out(
             specdraft.finish(
@@ -169,29 +170,29 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
         return 0
 
     # interactive conversation in the terminal
-    term = tui.Term()
+    term = tui.make_term()
     tui.enable_windows_vt()
     draft = specdraft.load_draft(repo) if args.resume else None
-    goal = args.goal or (draft.goal if draft else "")
+    goal = args.goal or (draft["goal"] if draft else "")
     if not goal:
         if not _interactive():
             raise ClaimcheckError("pass --goal, or run this in a terminal to be asked")
-        goal = term.ask(f"{term.c('?', 'cyan', 'bold')} What do you want built? A sentence or two> ").strip()
-    provider = onboard._SpinningProvider(providers.load(provider_name), term, "Claude is thinking")
+        goal = tui.ask(term, f"{tui.format_styled(term, '?', 'cyan', 'bold')} What do you want built? A sentence or two> ").strip()
+    provider = onboard.with_spinner(providers.load(provider_name), term=term, label="Claude is thinking")
     draft, status = specdraft.run_interview(
-        provider, repo, goal, say=term.p, ask=term.ask, max_rounds=args.max_rounds, draft=draft
+        provider, repo, goal, say=functools.partial(tui.write_line, term), ask=functools.partial(tui.ask, term), max_rounds=args.max_rounds, draft=draft
     )
     if status == "quit":
-        term.p(term.c("Left without writing. `claimcheck spec draft --resume` picks up here.", "grey"))
+        tui.write_line(term, tui.format_styled(term, "Left without writing. `claimcheck spec draft --resume` picks up here.", "grey"))
         return 0
-    freeze = not args.no_freeze and (args.yes or (_interactive() and term.yes_no("Freeze these and commit them on a new branch?", default=True)))
+    freeze = not args.no_freeze and (args.yes or (_interactive() and tui.ask_yes_no(term, "Freeze these and commit them on a new branch?", default=True)))
     out = specdraft.finish(repo, cfg, draft, freeze=freeze, branch=args.branch, new_branch=not args.no_branch)
     if out["frozen"]:
-        term.decode("criteria locked", out["lock_sha256"])
+        tui.show_decode(term, "criteria locked", out["lock_sha256"])
         if out["commit"]:
-            term.p(f"Committed {out['commit'][:8]} on {out['branch']}.")
+            tui.write_line(term, f"Committed {out['commit'][:8]} on {out['branch']}.")
     else:
-        term.p(term.c("Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", "grey"))
+        tui.write_line(term, tui.format_styled(term, "Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", "grey"))
     return 0
 
 
@@ -222,7 +223,7 @@ def cmd_claims_validate(args: argparse.Namespace) -> int:
         # No lock: any cited criterion is a violation.
         lock_ids = None
     cf = CL.load_file(path, lock_ids)
-    _err(f"claims validate: {len(cf.claims)} claims ok")
+    _err(f"claims validate: {len(cf['claims'])} claims ok")
     return 0
 
 

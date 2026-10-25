@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from .. import redact
+from .shapes import Provider, Request, make_provider
 
 try:
     import anthropic
@@ -20,19 +21,22 @@ DEFAULT_MODEL = "claude-opus-5-5"
 API_TIMEOUT_S = 300
 
 
-class ClaudeProvider:
-    def __init__(self, model: str | None = None):
-        self.model = model or DEFAULT_MODEL
-        self.client = anthropic.Anthropic(timeout=API_TIMEOUT_S)
+def make_claude_provider(*, model: str | None = None) -> Provider:
+    """A provider that asks Claude through the API, with the key in ANTHROPIC_API_KEY."""
+    chosen = model or DEFAULT_MODEL
+    client = anthropic.Anthropic(timeout=API_TIMEOUT_S)
 
-    def complete(self, system: str, user: str, *, schema: dict) -> str:
+    def complete(request: Request) -> str:
+        """One structured-output request; returns the reply's text."""
         # Last line of defence: whatever built these strings, nothing secret-looking leaves the process.
-        system, user = redact.redact_text(system)[0], redact.redact_text(user)[0]
-        response = self.client.messages.create(
-            model=self.model,
+        system, user = redact.redact_text(request["system"])[0], redact.redact_text(request["user"])[0]
+        response = client.messages.create(
+            model=chosen,
             max_tokens=16000,
             system=system,
             messages=[{"role": "user", "content": user}],
-            output_config={"format": {"type": "json_schema", "schema": schema}},
+            output_config={"format": {"type": "json_schema", "schema": request["schema"]}},
         )
         return next(b.text for b in response.content if b.type == "text")
+
+    return make_provider("claude", complete=complete, model=chosen)

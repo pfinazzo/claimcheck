@@ -9,9 +9,9 @@ import fnmatch
 import hashlib
 import os
 import tomllib
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypedDict
 
 from . import ClaimcheckError, gitio
 
@@ -84,17 +84,47 @@ claims: []
 """
 
 
-@dataclass
-class Config:
-    base: str = "main"
-    test_cmd: str = "python -m pytest -q"
-    ignore: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE))
-    require_full_coverage: bool = True
-    checker_provider: str = "claude"
-    checker_model: str = "claude-opus-5-5"
-    mutate_max_mutants: int = 50
-    mutate_timeout_s: int = 600
-    mutate_min_catch_rate: float = 0.0
+# The settings from config.toml, flattened: [checker] and [mutate] keys carry their table's prefix.
+Config = TypedDict(
+    "Config",
+    {
+        "base": str,
+        "test_cmd": str,
+        "ignore": list[str],
+        "require_full_coverage": bool,
+        "checker_provider": str,
+        "checker_model": str,
+        "mutate_max_mutants": int,
+        "mutate_timeout_s": int,
+        "mutate_min_catch_rate": float,
+    },
+)
+
+
+def make_config(
+    *,
+    base: str = "main",
+    test_cmd: str = "python -m pytest -q",
+    ignore: list[str] | None = None,
+    require_full_coverage: bool = True,
+    checker_provider: str = "claude",
+    checker_model: str = "claude-opus-5-5",
+    mutate_max_mutants: int = 50,
+    mutate_timeout_s: int = 600,
+    mutate_min_catch_rate: float = 0.0,
+) -> Config:
+    """A Config, with the defaults a repo gets when config.toml leaves a key out."""
+    return {
+        "base": base,
+        "test_cmd": test_cmd,
+        "ignore": list(DEFAULT_IGNORE) if ignore is None else ignore,
+        "require_full_coverage": require_full_coverage,
+        "checker_provider": checker_provider,
+        "checker_model": checker_model,
+        "mutate_max_mutants": mutate_max_mutants,
+        "mutate_timeout_s": mutate_timeout_s,
+        "mutate_min_catch_rate": mutate_min_catch_rate,
+    }
 
 
 def find_repo_root(start: Path | None = None) -> Path:
@@ -128,30 +158,30 @@ def _want(table: dict, key: str, kind, where: str, default):
 def load(repo: Path) -> Config:
     """Load `.claimcheck/config.toml`; missing file or keys fall back to defaults."""
     path = cc_dir(repo) / CONFIG_FILE
-    cfg = Config()
+    cfg = make_config()
     if not path.exists():
         return cfg
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     except tomllib.TOMLDecodeError as e:
         raise ClaimcheckError(f"invalid config.toml: {e}") from e
-    cfg.base = _want(data, "base", str, "", cfg.base)
-    cfg.test_cmd = _want(data, "test_cmd", str, "", cfg.test_cmd)
-    ignore = _want(data, "ignore", list, "", cfg.ignore)
+    cfg["base"] = _want(data, "base", str, "", cfg["base"])
+    cfg["test_cmd"] = _want(data, "test_cmd", str, "", cfg["test_cmd"])
+    ignore = _want(data, "ignore", list, "", cfg["ignore"])
     if not all(isinstance(g, str) for g in ignore):
         raise ClaimcheckError("invalid config.toml: ignore must be a list of strings")
-    cfg.ignore = list(ignore)
-    cfg.require_full_coverage = _want(data, "require_full_coverage", bool, "", cfg.require_full_coverage)
+    cfg["ignore"] = list(ignore)
+    cfg["require_full_coverage"] = _want(data, "require_full_coverage", bool, "", cfg["require_full_coverage"])
     for name in ("checker", "mutate"):
         if name in data and not isinstance(data[name], dict):
             raise ClaimcheckError(f"invalid config.toml: [{name}] must be a table (got {data[name]!r})")
     checker = data.get("checker", {})
-    cfg.checker_provider = _want(checker, "provider", str, "checker.", cfg.checker_provider)
-    cfg.checker_model = _want(checker, "model", str, "checker.", cfg.checker_model)
+    cfg["checker_provider"] = _want(checker, "provider", str, "checker.", cfg["checker_provider"])
+    cfg["checker_model"] = _want(checker, "model", str, "checker.", cfg["checker_model"])
     mutate = data.get("mutate", {})
-    cfg.mutate_max_mutants = _want(mutate, "max_mutants", int, "mutate.", cfg.mutate_max_mutants)
-    cfg.mutate_timeout_s = _want(mutate, "timeout_s", int, "mutate.", cfg.mutate_timeout_s)
-    cfg.mutate_min_catch_rate = float(_want(mutate, "min_catch_rate", float, "mutate.", cfg.mutate_min_catch_rate))
+    cfg["mutate_max_mutants"] = _want(mutate, "max_mutants", int, "mutate.", cfg["mutate_max_mutants"])
+    cfg["mutate_timeout_s"] = _want(mutate, "timeout_s", int, "mutate.", cfg["mutate_timeout_s"])
+    cfg["mutate_min_catch_rate"] = float(_want(mutate, "min_catch_rate", float, "mutate.", cfg["mutate_min_catch_rate"]))
     return cfg
 
 

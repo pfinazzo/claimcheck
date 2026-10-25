@@ -20,7 +20,7 @@ from __future__ import annotations
 import fnmatch
 import math
 import re
-from dataclasses import dataclass, field
+from typing import TypedDict
 
 # ---- layer 1: paths ---------------------------------------------------------
 
@@ -116,30 +116,30 @@ def _looks_like_secret_value(value: str, quoted: bool) -> bool:
     return len(v) >= 16 and has_digit and has_alpha
 
 
-@dataclass
-class Redaction:
-    count: int = 0
-    kinds: dict[str, int] = field(default_factory=dict)
+# What redact_text replaced: how many values in all, and how many of each kind.
+Redaction = TypedDict("Redaction", {"count": int, "kinds": dict[str, int]})
 
-    def add(self, kind: str) -> None:
-        self.count += 1
-        self.kinds[kind] = self.kinds.get(kind, 0) + 1
 
-    def merge(self, other: Redaction) -> None:
-        self.count += other.count
-        for k, v in other.kinds.items():
-            self.kinds[k] = self.kinds.get(k, 0) + v
+def make_redaction() -> Redaction:
+    """An empty Redaction: nothing replaced yet."""
+    return {"count": 0, "kinds": {}}
+
+
+def count_redaction(rep: Redaction, *, kind: str) -> None:
+    """Record one more replaced value of `kind`."""
+    rep["count"] += 1
+    rep["kinds"][kind] = rep["kinds"].get(kind, 0) + 1
 
 
 def redact_text(text: str) -> tuple[str, Redaction]:
     """Replace secret-looking values with [REDACTED:kind]. Returns (clean text, what was done)."""
-    rep = Redaction()
+    rep = make_redaction()
 
     def sub_kind(kind: str):
         """A re.sub replacement that redacts the whole match as `kind` and counts it."""
         def inner(m: re.Match[str]) -> str:
             """Count the match and replace it with its redaction marker."""
-            rep.add(kind)
+            count_redaction(rep, kind=kind)
             return f"[REDACTED:{kind}]"
         return inner
 
@@ -150,7 +150,7 @@ def redact_text(text: str) -> tuple[str, Redaction]:
         """Redact the password in a URL, unless it is a placeholder or a code reference."""
         if _PLACEHOLDER.match(m.group(2)) or _CODE_REF.match(m.group(2)):
             return m.group(0)
-        rep.add("url-credentials")
+        count_redaction(rep, kind="url-credentials")
         return f"{m.group(1)}[REDACTED:url-credentials]{m.group(3)}"
 
     text = _URL_CREDS.sub(creds, text)
@@ -160,7 +160,7 @@ def redact_text(text: str) -> tuple[str, Redaction]:
         head, open_q, value, close_q = m.group(1), m.group(2), m.group(3), m.group(4)
         if not _looks_like_secret_value(value, quoted=bool(open_q)):
             return m.group(0)
-        rep.add("assigned-secret")
+        count_redaction(rep, kind="assigned-secret")
         return f"{head}{open_q}[REDACTED:assigned-secret]{close_q}"
 
     text = _ASSIGN.sub(assign, text)
@@ -171,7 +171,7 @@ def redact_text(text: str) -> tuple[str, Redaction]:
         # Hashes and ids are fine.
         if _entropy(s) < 4.0 or re.fullmatch(r"[0-9a-f]{32,}", s):
             return m.group(0)
-        rep.add("random-string")
+        count_redaction(rep, kind="random-string")
         return f"{m.group(1)}[REDACTED:random-string]{m.group(1)}"
 
     text = _QUOTED_BLOB.sub(blob, text)
@@ -185,21 +185,18 @@ TOTAL_CHARS = 250_000
 _HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 
-@dataclass
-class Sent:
-    """What was held back, for the person to see. Never contains the withheld content itself."""
-    files_omitted: list[str] = field(default_factory=list)
-    redactions: int = 0
-    kinds: dict[str, int] = field(default_factory=dict)
-    truncated: bool = False
+# What was held back, for the person to see. Never contains the withheld content itself.
+Sent = TypedDict("Sent", {"files_omitted": list[str], "redactions": int, "kinds": dict[str, int], "truncated": bool})
 
-    def as_dict(self) -> dict:
-        return {"files_omitted": self.files_omitted, "redactions": self.redactions, "kinds": self.kinds, "truncated": self.truncated}
+
+def make_sent() -> Sent:
+    """An empty Sent: nothing withheld yet."""
+    return {"files_omitted": [], "redactions": 0, "kinds": {}, "truncated": False}
 
 
 def filter_diff(diff: str) -> tuple[str, Sent]:
     """Make a unified diff safe to send: drop secret files, redact values, cap the size."""
-    sent = Sent()
+    sent = make_sent()
     sections: list[tuple[str | None, list[str]]] = []
     for line in diff.split("\n"):
         m = _HEADER.match(line)
@@ -213,19 +210,19 @@ def filter_diff(diff: str) -> tuple[str, Sent]:
     total = 0
     for path, lines in sections:
         if path is not None and is_secret_path(path):
-            sent.files_omitted.append(path)
+            sent["files_omitted"].append(path)
             out.append(f"diff --git a/{path} b/{path}\n[withheld: {path} looks like a secret store, so its contents are not sent]")
             continue
         body, rep = redact_text("\n".join(lines))
-        sent.redactions += rep.count
-        for k, v in rep.kinds.items():
-            sent.kinds[k] = sent.kinds.get(k, 0) + v
+        sent["redactions"] += rep["count"]
+        for k, v in rep["kinds"].items():
+            sent["kinds"][k] = sent["kinds"].get(k, 0) + v
         if len(body) > PER_FILE_CHARS:
             body = body[:PER_FILE_CHARS] + f"\n[truncated: this file's diff is longer than {PER_FILE_CHARS} characters]"
-            sent.truncated = True
+            sent["truncated"] = True
         if total + len(body) > TOTAL_CHARS:
             out.append(f"[truncated: the rest of the diff is longer than {TOTAL_CHARS} characters in total]")
-            sent.truncated = True
+            sent["truncated"] = True
             break
         total += len(body)
         out.append(body)
