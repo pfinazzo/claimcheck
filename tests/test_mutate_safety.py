@@ -82,7 +82,7 @@ def test_restore_puts_the_original_mtime_back(calc_repo):
 
 def test_each_mutant_gets_its_own_mtime_second(calc_repo, monkeypatch):
     p = calc_repo.path / "src/calc.py"
-    seen = []
+    seen: list = []
     real = mutate._run_tests
 
     def spy(r, cmd, timeout):
@@ -121,7 +121,7 @@ def test_file_deleted_after_commit_is_a_clear_error(calc_repo):
 def test_non_utf8_file_does_not_crash_and_stays_byte_identical(calc_repo, monkeypatch):
     raw = b"x = 1 + 2  # caf\xe9\ny = 3 + 4\n"
     p = _write_bytes(calc_repo, "src/lat.py", raw)
-    seen = []
+    seen: list = []
     _spy(monkeypatch, calc_repo, "src/lat.py", seen)
     result, _ = _run(calc_repo)
     lat = [m for m in result["mutants"] if m["file"] == "src/lat.py"]
@@ -155,7 +155,7 @@ def test_added_lines_splits_on_newline_only():
 def test_one_crlf_line_in_an_lf_file_keeps_every_line_ending(calc_repo, monkeypatch):
     raw = b"A = 1\nB = 2 + 3\r\nC = 4 + 5\nD = 6 + 7"
     p = _write_bytes(calc_repo, "src/mix.py", raw)
-    seen = []
+    seen: list = []
     _spy(monkeypatch, calc_repo, "src/mix.py", seen)
     result, _ = _run(calc_repo)
     mix = [m for m in result["mutants"] if m["file"] == "src/mix.py"]
@@ -170,7 +170,7 @@ def test_one_crlf_line_in_an_lf_file_keeps_every_line_ending(calc_repo, monkeypa
 def test_crlf_file_mutants_keep_crlf(calc_repo, monkeypatch):
     raw = b"A = 1 + 2\r\nB = 3\r\n"
     p = _write_bytes(calc_repo, "src/crlf.py", raw)
-    seen = []
+    seen: list = []
     _spy(monkeypatch, calc_repo, "src/crlf.py", seen)
     _run(calc_repo)
     for data in seen[1:]:
@@ -180,7 +180,7 @@ def test_crlf_file_mutants_keep_crlf(calc_repo, monkeypatch):
 
 @pytest.mark.parametrize("exc", [KeyboardInterrupt(), RuntimeError("boom")])
 def test_interrupt_or_crash_restores_and_removes_the_lock(calc_repo, monkeypatch, exc):
-    seen = []
+    seen: list = []
     real = mutate._run_tests
     _spy(monkeypatch, calc_repo, "src/calc.py", seen, fail_on=3, exc=exc)
     with pytest.raises(type(exc)):
@@ -331,7 +331,7 @@ def test_bom_is_stripped_from_line_one_before_generating_mutants():
 def test_bom_file_is_mutated_without_equivalent_swap_and_keeps_its_bom(calc_repo, monkeypatch):
     raw = b"\xef\xbb\xbfdef g(x, y):\n    return x - y\n"
     p = _write_bytes(calc_repo, "src/bom.py", raw)
-    seen = []
+    seen: list = []
     _spy(monkeypatch, calc_repo, "src/bom.py", seen)
     result, _ = _run(calc_repo)
     bom = [m for m in result["mutants"] if m["file"] == "src/bom.py"]

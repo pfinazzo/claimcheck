@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseToml, setTomlString } from '../src/lib/toml.ts';
+import { toText } from '../src/shared/text.ts';
 
 const BS = String.fromCharCode(92);
 const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
@@ -39,7 +40,7 @@ test('basic-string escapes are decoded, literal strings are not', () => {
 
 test('numbers: underscores, signs, exponents, hex, inf', () => {
   const t = parseToml('a = 1e3\nb = 1_000\nc = +5\nd = 0.5\ne = inf\nf = 0xff\ng = -7\n');
-  assert.deepEqual(plain({ ...t, e: String(t.e) }), { a: 1000, b: 1000, c: 5, d: 0.5, e: 'Infinity', f: 255, g: -7 });
+  assert.deepEqual(plain({ ...t, e: toText({ value: t.e }) }), { a: 1000, b: 1000, c: 5, d: 0.5, e: 'Infinity', f: 255, g: -7 });
 });
 
 test('triple-quoted strings', () => {

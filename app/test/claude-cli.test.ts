@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { BASE_ARGS, SIGN_IN_ERRORS, describeEvent, parseStreamLine, resolveSpawn, runClaude, testConnection, type SpawnFn } from '../src/lib/claude-cli.ts';
+import { toText } from '../src/shared/text.ts';
 
 test('resolveSpawn follows an npm .cmd shim to the real executable, or node for a script', () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'desk-shim-'));
@@ -49,7 +50,7 @@ const fakeSpawn = ({ lines, code = 0, stderr = '' }: { lines: string[]; code?: n
     const child = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
-      stdin: { on() {}, write: (d: unknown) => { call.stdin += String(d); }, end: (d?: unknown) => { if (d) call.stdin += String(d); } },
+      stdin: { on() {}, write: (d: unknown) => { call.stdin += toText({ value: d }); }, end: (d?: unknown) => { if (d) call.stdin += toText({ value: d }); } },
     });
     setTimeout(() => {
       child.stdout.emit('data', Buffer.from(lines.slice(0, -1).join('\n') + '\n'));

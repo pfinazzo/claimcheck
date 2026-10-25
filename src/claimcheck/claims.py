@@ -8,6 +8,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -41,6 +42,16 @@ def claims_path(repo: Path) -> Path:
     return C.cc_dir(repo) / C.CLAIMS_FILE
 
 
+def _read_text_field(raw: dict, key: str, tag: str) -> tuple[str, str | None]:
+    """A text field of one raw claim, and the problem with it when it is not text."""
+    value = raw.get(key)
+    if value is None:
+        return "", None
+    if not isinstance(value, str):
+        return "", f"{tag}: {key} must be text (got {value!r})"
+    return value, None
+
+
 def load_text(text: str) -> tuple[ClaimsFile | None, list[str]]:
     """Parse YAML into a ClaimsFile. Returns (file_or_None, violations)."""
     try:
@@ -65,15 +76,6 @@ def load_text(text: str) -> tuple[ClaimsFile | None, list[str]]:
             continue
         tag = f"claims[{i}]"
 
-        def text(key: str) -> str:
-            v = rc.get(key)
-            if v is None:
-                return ""
-            if not isinstance(v, str):
-                violations.append(f"{tag}: {key} must be text (got {v!r})")
-                return ""
-            return v
-
         criteria_raw = rc.get("criteria") or []
         if not isinstance(criteria_raw, list):
             violations.append(f"{tag}: criteria must be a list of numbers (got {criteria_raw!r})")
@@ -82,15 +84,20 @@ def load_text(text: str) -> tuple[ClaimsFile | None, list[str]]:
         if not isinstance(files_raw, list) or any(not isinstance(f, str) for f in files_raw):
             violations.append(f"{tag}: files must be a list of paths (got {files_raw!r})")
             files_raw = []
+        text_fields = {key: _read_text_field(rc, key, tag) for key in ("id", "claim", "kill_condition")}
+        violations.extend(problem for _, problem in text_fields.values() if problem)
+        # validate() checks these two later; parse() keeps whatever the YAML held so it can report it.
+        raw_confidence: Any = rc.get("confidence")
+        raw_verified_by: Any = rc.get("verified_by")
         claims.append(
             Claim(
-                id=text("id"),
-                claim=text("claim"),
-                confidence=rc.get("confidence"),  # validated later
+                id=text_fields["id"][0],
+                claim=text_fields["claim"][0],
+                confidence=raw_confidence,
                 criteria=list(criteria_raw),
                 files=[f.replace("\\", "/") for f in files_raw],
-                kill_condition=text("kill_condition"),
-                verified_by=rc.get("verified_by"),  # validated later
+                kill_condition=text_fields["kill_condition"][0],
+                verified_by=raw_verified_by,
             )
         )
     cf = ClaimsFile(

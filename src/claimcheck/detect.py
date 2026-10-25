@@ -171,7 +171,7 @@ def ensure_gitignore(repo: Path) -> list[str]:
     path = repo / ".gitignore"
     existing = path.read_text(encoding="utf-8") if path.is_file() else ""
     have = {line.strip() for line in existing.splitlines()}
-    missing = [l for l in GITIGNORE_LINES if l not in have]
+    missing = [line_text for line_text in GITIGNORE_LINES if line_text not in have]
     if not missing:
         return []
     sep = "" if not existing or existing.endswith("\n") else "\n"
@@ -198,9 +198,9 @@ def ensure_secrets_ignored(repo: Path) -> dict:
     existed = path.is_file()
     text = path.read_text(encoding="utf-8-sig") if existed else ""
     have = {line.strip() for line in text.splitlines()}
-    missing = [l for l in SECRET_IGNORE_LINES if l not in have]
+    missing = [line_text for line_text in SECRET_IGNORE_LINES if line_text not in have]
     if gitio.is_ignored(repo, ".env"):  # already covered, perhaps by a pattern like .env* or a global rule
-        missing = [l for l in missing if l not in _ENV_LINES]
+        missing = [line_text for line_text in missing if line_text not in _ENV_LINES]
     added: list[str] = []
     if missing or not existed:
         sep = "" if not text else ("\n" if text.endswith("\n") else "\n\n")

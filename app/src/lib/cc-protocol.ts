@@ -7,6 +7,7 @@
  * @author Patrick Finazzo
  */
 
+import { toText } from '../shared/text.ts';
 import type { CcFinish, CcInit, CcStatus, CcStep, DraftCriterion, DraftInput, LintNote, Stack } from '../shared/types.ts';
 
 export const MAX_TEXT = 4000;
@@ -15,7 +16,7 @@ export const MAX_ITEMS = 60;
 type Rec = Record<string, unknown>;
 
 const isRecord = (v: unknown): v is Rec => v !== null && typeof v === 'object' && !Array.isArray(v);
-export const text = (v: unknown, max = MAX_TEXT): string => (typeof v === 'string' ? v : v === null || v === undefined ? '' : String(v)).slice(0, max);
+export const text = (v: unknown, max = MAX_TEXT): string => toText({ value: v }).slice(0, max);
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v.slice(0, MAX_ITEMS) : []);
 const textList = (v: unknown): string[] => list(v).map((x) => text(x)).filter((x) => x.trim());
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T): T => (typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : fallback);

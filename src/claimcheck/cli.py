@@ -13,8 +13,21 @@ import json
 import sys
 from pathlib import Path
 
-from . import ClaimcheckError, __version__
-from . import checker, gitio, hook, initflow, ledger, mutate, onboard, providers, run, specdraft, tui
+from . import (
+    ClaimcheckError,
+    __version__,
+    checker,
+    gitio,
+    hook,
+    initflow,
+    ledger,
+    mutate,
+    onboard,
+    providers,
+    run,
+    specdraft,
+    tui,
+)
 from . import claims as CL
 from . import config as C
 from . import spec as S
@@ -109,7 +122,7 @@ def _read_json_stdin() -> dict:
     try:
         data = json.loads(sys.stdin.read())
     except json.JSONDecodeError as e:
-        raise ClaimcheckError(f"stdin is not valid JSON: {e}")
+        raise ClaimcheckError(f"stdin is not valid JSON: {e}") from e
     if not isinstance(data, dict):
         raise ClaimcheckError("stdin must be a JSON object")
     return data
@@ -121,11 +134,11 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
     provider_name = args.provider or "auto"
 
     if args.step:  # one round, stateless: the caller keeps the conversation
-        draft = specdraft.Draft.from_dict(_read_json_stdin())
-        if not draft.goal.strip():
+        round_draft = specdraft.Draft.from_dict(_read_json_stdin())
+        if not round_draft.goal.strip():
             raise ClaimcheckError("a goal is needed")
         provider = providers.load(provider_name, model=None)
-        reply = specdraft.next_round(provider, draft, specdraft.repo_files(repo), len(draft.rounds) + 1, args.max_rounds)
+        reply = specdraft.next_round(provider, round_draft, specdraft.repo_files(repo), len(round_draft.rounds) + 1, args.max_rounds)
         _out(
             {
                 "questions": [vars(q) for q in reply.questions],
@@ -139,12 +152,12 @@ def cmd_spec_draft(args: argparse.Namespace) -> int:
         return 0
 
     if args.finish:
-        draft = specdraft.Draft.from_dict(_read_json_stdin())
-        if not draft.criteria:
+        piped_draft = specdraft.Draft.from_dict(_read_json_stdin())
+        if not piped_draft.criteria:
             raise ClaimcheckError("the draft has no criteria")
         _out(
             specdraft.finish(
-                repo, cfg, draft, freeze=not args.no_freeze, branch=args.branch, new_branch=not args.no_branch
+                repo, cfg, piped_draft, freeze=not args.no_freeze, branch=args.branch, new_branch=not args.no_branch
             )
         )
         return 0

@@ -21,7 +21,8 @@ Node 24 or newer (the tests run TypeScript directly). The first install download
 | `npm start` | Build, then open Desk |
 | `npm run build` | Bundle the main process, the preload bridge and the page into `dist/` |
 | `npm run typecheck` | Strict type check of everything, with zero errors required |
-| `npm test` | Typecheck, build, then run every test |
+| `npm run lint` | ESLint over `src/` and `test/`, with zero errors or warnings required |
+| `npm test` | Typecheck, lint, build, then run every test |
 | `npm run screenshot -- <repo> out.png` | Render the board headless. Add `--theme light\|dark`, `--size 1440x900`, `--view wizard:STEP[:BEAT]` |
 
 ## The board

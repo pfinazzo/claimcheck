@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { filterDiff, isSecretPath, redactText, PER_FILE_CHARS } from '../src/lib/redact.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const CASES = JSON.parse(readFileSync(path.join(HERE, '..', '..', 'tests', 'fixtures', 'secret_cases.json'), 'utf8'));
+type SecretCases = { secret_paths: string[]; fine_paths: string[]; must_redact: string[]; must_stay: string[] };
+const CASES = JSON.parse(readFileSync(path.join(HERE, '..', '..', 'tests', 'fixtures', 'secret_cases.json'), 'utf8')) as SecretCases;
 const RAND = 'aB3dE5gH7jK9mN1pQ3sT5vW7yZ9bC1';
 const fill = (s: string): string => s.replaceAll('{rand}', RAND);
 

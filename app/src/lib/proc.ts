@@ -21,8 +21,8 @@ export const killTree = (child: Pick<ChildProcess, 'pid' | 'kill'> | null | unde
   try {
     if (platform === 'win32' && child?.pid) {
       const killer = spawnFn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
-      killer?.on?.('error', () => {});
-      killer?.unref?.();
+      killer.on('error', () => {});
+      killer.unref();
       return;
     }
     // On POSIX a child started with { detached: true } leads its own process group.
@@ -30,10 +30,10 @@ export const killTree = (child: Pick<ChildProcess, 'pid' | 'kill'> | null | unde
       process.kill(-child.pid, 'SIGKILL');
       return;
     }
-    child?.kill?.('SIGKILL');
+    child?.kill('SIGKILL');
   } catch {
     try {
-      child?.kill?.();
+      child?.kill();
     } catch {
       /* already gone */
     }

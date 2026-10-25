@@ -9,10 +9,9 @@ import re
 import sys
 from pathlib import Path
 
-from . import ClaimcheckError, ClaimsError, SpecError
+from . import ClaimcheckError, ClaimsError, SpecError, gitio
 from . import claims as CL
 from . import config as C
-from . import gitio
 from . import spec as S
 
 HOOK_MARKER = "claimcheck"

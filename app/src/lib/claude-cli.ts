@@ -13,6 +13,7 @@ import { promisify } from 'node:util';
 
 import { redactText } from './redact.ts';
 import { createLineSplitter, createTextCollector, killTree } from './proc.ts';
+import { toText } from '../shared/text.ts';
 
 const execFileP = promisify(execFile);
 
@@ -133,7 +134,7 @@ export const parseStreamLine = (line: string): StreamEvent[] => {
       const block = rec(raw);
       if (!block) continue;
       if (block.type === 'text' && typeof block.text === 'string' && block.text) events.push({ type: 'text', text: block.text });
-      else if (block.type === 'tool_use') events.push({ type: 'tool', name: String(block.name ?? ''), input: rec(block.input) ?? {} });
+      else if (block.type === 'tool_use') events.push({ type: 'tool', name: toText({ value: block.name }), input: rec(block.input) ?? {} });
     }
     return events;
   }
@@ -156,7 +157,7 @@ export const describeEvent = (event: StreamEvent): string => {
   if (event.type === 'tool') {
     const i = event.input;
     const target = i.file_path ?? i.pattern ?? i.command ?? i.path ?? '';
-    return `${event.name} ${String(target).slice(0, 120)}`.trim();
+    return `${event.name} ${toText({ value: target }).slice(0, 120)}`.trim();
   }
   if (event.type === 'text') return event.text.slice(0, 200);
   return '';
@@ -171,7 +172,7 @@ export const DEFAULT_RUN_TIMEOUT_MS = 30 * 60 * 1000;
  * `timeoutMs` is killed, tree and all, and reported as an error so the app
  * never stays busy forever.
  */
-export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent = () => {}, bin, model, spawnFn = nodeSpawn as SpawnFn, timeoutMs = DEFAULT_RUN_TIMEOUT_MS }: RunOptions): Promise<RunResult> =>
+export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent = () => {}, bin, model, spawnFn = nodeSpawn, timeoutMs = DEFAULT_RUN_TIMEOUT_MS }: RunOptions): Promise<RunResult> =>
   new Promise((resolve) => {
     const { command, prefix } = resolveSpawn(bin ?? 'claude');
     const fullArgs = [...prefix, '-p', ...BASE_ARGS, ...(model ? ['--model', model] : []), ...args];
@@ -207,8 +208,8 @@ export const runClaude = ({ prompt, args = [], cwd, env = process.env, onEvent =
       }, timeoutMs);
     }
     child.on('error', (error) => finish(failed(`Claude Code could not be started: ${error.message}`)));
-    child.stdin?.on?.('error', () => {});
-    child.stdin?.end?.(redactText(String(prompt ?? '')).text, 'utf8'); // last line of defence: nothing secret-looking leaves
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(redactText(prompt).text, 'utf8'); // last line of defence: nothing secret-looking leaves
     child.stdout?.on('data', (chunk: Buffer | string) => lines.push(chunk));
     child.stderr?.on('data', (chunk: Buffer | string) => stderr.push(chunk));
     child.on('close', (code) => {
@@ -261,14 +262,14 @@ export const windowsSignInLaunch = (exe: string): { command: string; args: strin
 };
 
 /** Opens a terminal window running `claude auth login --claudeai` for the person to complete. */
-export const signIn = ({ bin, spawnFn = nodeSpawn as SpawnFn }: { bin?: string; spawnFn?: SpawnFn } = {}): void => {
+export const signIn = ({ bin, spawnFn = nodeSpawn }: { bin?: string; spawnFn?: SpawnFn } = {}): void => {
   const exe = bin ?? 'claude';
   if (process.platform === 'win32') {
     const { command, args, options } = windowsSignInLaunch(exe);
-    spawnFn(command, args, options).unref?.();
+    spawnFn(command, args, options).unref();
   } else if (process.platform === 'darwin') {
-    spawnFn('osascript', ['-e', `tell application "Terminal" to do script "${exe} auth login --claudeai"`], { detached: true, stdio: 'ignore' }).unref?.();
+    spawnFn('osascript', ['-e', `tell application "Terminal" to do script "${exe} auth login --claudeai"`], { detached: true, stdio: 'ignore' }).unref();
   } else {
-    spawnFn('x-terminal-emulator', ['-e', `${exe} auth login --claudeai`], { detached: true, stdio: 'ignore' }).unref?.();
+    spawnFn('x-terminal-emulator', ['-e', `${exe} auth login --claudeai`], { detached: true, stdio: 'ignore' }).unref();
   }
 };

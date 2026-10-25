@@ -13,6 +13,7 @@
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import type { Resolved } from './runner.ts';
 import { createTextCollector, killTree } from './proc.ts';
+import { toText } from '../shared/text.ts';
 
 export type CcErrorKind = 'missing' | 'failed' | 'timeout' | 'cancelled' | 'unreadable';
 
@@ -34,7 +35,7 @@ export const MISSING_MESSAGE = 'claimcheck was not found. Install it, or tell th
 
 /** The JSON document in the output: the whole text, else the last line that starts with a brace. */
 export const extractJson = (text: unknown): unknown => {
-  const body = String(text ?? '').trim();
+  const body = toText({ value: text }).trim();
   if (!body) return undefined;
   try {
     return JSON.parse(body);
@@ -52,7 +53,7 @@ export const extractJson = (text: unknown): unknown => {
   return undefined;
 };
 
-const lastLines = (text: unknown, n = 3): string => String(text ?? '').trim().split(/\r?\n/).filter(Boolean).slice(-n).join(' ');
+const lastLines = (text: unknown, n = 3): string => toText({ value: text }).trim().split(/\r?\n/).filter(Boolean).slice(-n).join(' ');
 
 type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
 
@@ -75,7 +76,7 @@ export type CcRun = {
  * Starts one claimcheck command. Returns `{ promise, cancel }`; the promise
  * resolves with the parsed JSON value or rejects with a CcError.
  */
-export const startCc = ({ resolved, args, input, cwd, env = {}, timeoutMs = 120000, spawnFn = nodeSpawn as SpawnFn }: StartOptions): CcRun => {
+export const startCc = ({ resolved, args, input, cwd, env = {}, timeoutMs = 120000, spawnFn = nodeSpawn }: StartOptions): CcRun => {
   let cancelled = false;
   let child: ChildProcess | null = null;
   let cancelNow = (): void => {
@@ -98,7 +99,7 @@ export const startCc = ({ resolved, args, input, cwd, env = {}, timeoutMs = 1200
     };
     let spawned: ChildProcess;
     try {
-      spawned = spawnFn(resolved.command, [...(resolved.prefix ?? []), ...args], {
+      spawned = spawnFn(resolved.command, [...resolved.prefix, ...args], {
         cwd,
         env: { ...process.env, ...(resolved.env ?? {}), ...env },
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -124,8 +125,8 @@ export const startCc = ({ resolved, args, input, cwd, env = {}, timeoutMs = 1200
     spawned.on('error', (e: NodeJS.ErrnoException) =>
       done(reject, new CcError(e.code === 'ENOENT' ? MISSING_MESSAGE : `claimcheck could not be started: ${e.message}`, { kind: 'missing' })),
     );
-    spawned.stdin?.on?.('error', () => {});
-    spawned.stdin?.end?.(input === undefined ? '' : JSON.stringify(input), 'utf8');
+    spawned.stdin?.on('error', () => {});
+    spawned.stdin?.end(input === undefined ? '' : JSON.stringify(input), 'utf8');
     spawned.stdout?.on('data', (c: Buffer | string) => out.push(c));
     spawned.stderr?.on('data', (c: Buffer | string) => err.push(c));
     spawned.on('close', (code) => {

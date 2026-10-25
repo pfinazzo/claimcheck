@@ -3,7 +3,6 @@
 @author Patrick Finazzo
 """
 
-import os
 import subprocess
 import sys
 from pathlib import Path

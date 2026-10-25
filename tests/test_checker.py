@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import ProviderError, checker, providers
+from claimcheck import checker, providers
 from claimcheck import claims as CL
 from claimcheck.spec import Criterion
 
@@ -31,6 +31,7 @@ def test_ac14_prompt_is_pure_and_redacted(tmp_path):
     )
     diff = "diff --git a/src/calc.py b/src/calc.py\n+def sub(a, b):\n+    return a - b\n"
     # The un-redacted claims object goes straight in: build_prompt must redact itself.
+    assert cf is not None
     assert cf.claims[0].confidence == 0.123456 and "ZZ_SENTINEL_VERIFIED" in cf.claims[0].verified_by
     system, user = checker.build_prompt(criteria, diff, cf)
     blob = system + user
@@ -82,7 +83,7 @@ def _fake_anthropic(monkeypatch, reply_text: str):
             self.messages = _Messages()
 
     fake = types.ModuleType("anthropic")
-    fake.Anthropic = Anthropic
+    fake.__dict__["Anthropic"] = Anthropic
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     sys.modules.pop("claimcheck.providers.claude", None)
     return calls
@@ -100,7 +101,7 @@ def test_ac16_claude_provider_request_shape(monkeypatch):
     assert kw["messages"] == [{"role": "user", "content": "USER"}]
     assert kw["output_config"] == {"format": {"type": "json_schema", "schema": checker.VERDICT_SCHEMA}}
     assert "thinking" not in kw
-    assert providers.load("claude", model="claude-sonnet-5-5").model == "claude-sonnet-5-5"
+    assert vars(providers.load("claude", model="claude-sonnet-5-5"))["model"] == "claude-sonnet-5-5"
     sys.modules.pop("claimcheck.providers.claude", None)
 
 
@@ -215,16 +216,16 @@ def test_ac19_exit_5_on_provider_error(calc_repo, capsys):
 
 
 def test_ac19_exit_5_when_sdk_raises(calc_repo, monkeypatch, capsys):
-    class Boom(Exception):
+    class BoomError(Exception):
         pass
 
     class _P:
         def complete(self, *a, **k):
-            raise Boom("kaboom")
+            raise BoomError("kaboom")
 
     monkeypatch.setattr(providers, "load", lambda name, model=None: _P())
     assert calc_repo.cli("check", "--provider", "claude") == 5
-    assert "Boom: kaboom" in capsys.readouterr().err
+    assert "BoomError: kaboom" in capsys.readouterr().err
 
 
 def test_ac20_full_offline_refuted(calc_repo, monkeypatch, capsys):

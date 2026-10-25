@@ -51,7 +51,7 @@ def chained(cc_repo):
 
 def test_each_line_carries_the_hash_of_the_line_before(chained):
     lines = _read(chained)
-    objs = [json.loads(l) for l in lines]
+    objs = [json.loads(line_text) for line_text in lines]
     assert objs[0]["prev"] == "0" * 64  # nothing before it
     for i in range(1, 4):
         assert objs[i]["prev"] == ledger.line_hash(lines[i - 1])

@@ -10,7 +10,7 @@ import hashlib
 import os
 import tomllib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from . import ClaimcheckError, gitio
@@ -111,7 +111,7 @@ def load(repo: Path) -> Config:
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
     except tomllib.TOMLDecodeError as e:
-        raise ClaimcheckError(f"invalid config.toml: {e}")
+        raise ClaimcheckError(f"invalid config.toml: {e}") from e
     cfg.base = _want(data, "base", str, "", cfg.base)
     cfg.test_cmd = _want(data, "test_cmd", str, "", cfg.test_cmd)
     ignore = _want(data, "ignore", list, "", cfg.ignore)
@@ -156,11 +156,11 @@ def is_ignored(path: str, globs: list[str]) -> bool:
 
 
 def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def new_run_id() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{os.urandom(2).hex()}"
 
 

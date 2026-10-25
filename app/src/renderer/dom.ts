@@ -39,7 +39,7 @@ export const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
     if (v !== null && v !== undefined) el.dataset[k] = String(v);
   }
   for (const [name, handler] of Object.entries(props.on ?? {})) {
-    if (handler) el.addEventListener(name, handler);
+    el.addEventListener(name, handler);
   }
   append(el, children);
   return el;

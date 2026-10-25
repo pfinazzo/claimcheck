@@ -17,6 +17,7 @@ import { readBoard } from '../src/lib/store.ts';
 import type { Proposal } from '../src/shared/types.ts';
 import { buildFixtureRepo } from './fixture-repo.ts';
 import { must } from './helpers.ts';
+import { toText } from '../src/shared/text.ts';
 
 type Cli = NonNullable<FixerOptions['cliModule']>;
 type Api = NonNullable<FixerOptions['apiModule']>;
@@ -85,8 +86,8 @@ test('AC 19: propose (CLI) spawns with the read-only flags and json schema', asy
   const call = must(cli.calls[0]);
   assert.equal(call.cwd, board.repo.path);
   assert.deepEqual(call.args, PROPOSE_ARGS);
-  assert.ok(call.args?.includes('--json-schema'));
-  assert.deepEqual(call.args?.slice(0, 2), ['--tools', 'Read,Grep,Glob']);
+  assert.ok(call.args.includes('--json-schema'));
+  assert.deepEqual(call.args.slice(0, 2), ['--tools', 'Read,Grep,Glob']);
   assert.ok(call.prompt?.startsWith('Repository: '));
 });
 
@@ -164,7 +165,7 @@ test('AC 20–22: implement creates a worktree, spawns with the allowlists, veri
   const impl = must(cli.calls[1]);
   assert.equal(impl.cwd, worktree);
   assert.deepEqual(impl.args, IMPLEMENT_ARGS);
-  assert.deepEqual(impl.args?.slice(0, 2), ['--permission-mode', 'acceptEdits']);
+  assert.deepEqual(impl.args.slice(0, 2), ['--permission-mode', 'acceptEdits']);
   const blocked = (impl.args ?? []).slice((impl.args ?? []).indexOf('--disallowedTools') + 1);
   for (const t of ['Bash(git push *)', 'Bash(gh *)', 'WebFetch', 'WebSearch', 'Bash(pip install *)', 'Bash(npm install *)']) assert.ok(blocked.includes(t), t);
 
@@ -200,7 +201,7 @@ test('AC 21: failing tests leave the run failed and the state at failed', async 
   assert.match(run.error ?? '', /project tests fail/);
   const stateAfter = must(readAppState(repo).claims.c2);
   assert.equal(stateAfter.status, 'fixing', 'a failed build keeps the claim at fixing');
-  assert.match(String(stateAfter.fix?.error ?? ''), /project tests fail/);
+  assert.match(toText({ value: stateAfter.fix?.error }), /project tests fail/);
   assert.equal((stateAfter.fix?.tests as { ok?: boolean } | undefined)?.ok, false);
   assert.ok(existsSync(must(run.worktree)), 'worktree is kept for inspection');
   const after = await readBoard(repo);

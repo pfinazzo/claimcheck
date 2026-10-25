@@ -22,9 +22,9 @@ export type TrustedCommand = {
 /** Every command the app itself would run for this board, with where it came from. */
 export const commandsFor = (board: Pick<Board, 'config' | 'claims'>): TrustedCommand[] => {
   const out: TrustedCommand[] = [{ label: 'Test command', command: String(board.config.test_cmd) }];
-  if (board.config.app?.python) out.push({ label: 'Python used to run claimcheck', command: String(board.config.app.python) });
+  if (board.config.app.python) out.push({ label: 'Python used to run claimcheck', command: String(board.config.app.python) });
   for (const claim of board.claims) {
-    const kc = String(claim.killCondition ?? '');
+    const kc = claim.killCondition;
     if (/^cmd:/.test(kc)) out.push({ label: `Kill condition for ${claim.id}`, command: kc.replace(/^cmd:\s*/, '') });
     else if (/^test:/.test(kc)) out.push({ label: `Test id for ${claim.id}`, command: `${board.config.test_cmd} ${kc.replace(/^test:\s*/, '')}` });
   }

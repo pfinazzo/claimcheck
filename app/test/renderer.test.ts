@@ -17,7 +17,7 @@ import { factsLine, groupClaims, specWord, summaryLine } from '../src/renderer/f
 import { renderWizard, type WizardCtx } from '../src/renderer/wizard.ts';
 
 const { document } = parseHTML('<!doctype html><html><body><div id="app"></div></body></html>');
-setDocument(document as unknown as Document);
+setDocument(document);
 const app = document.getElementById('app') as unknown as HTMLElement;
 
 // The wizard schedules its animation with window timers; a plain stand-in is enough here.
@@ -72,7 +72,7 @@ const ui = (board: Board | null, selectedId: string | null = null, runs: Map<str
 
 const draw = (u: BoardUi, a = actions()): string => {
   mount(app, ...renderBoard(u, a));
-  return app.textContent ?? '';
+  return app.textContent;
 };
 
 // ---- pure formatting ------------------------------------------------------------
@@ -85,7 +85,7 @@ const withBugs = (id: string, run: string, specs: { line: number; outcome: strin
   const mutants = specs.map((s) => bug(s.line, s.outcome, run));
   const killed = mutants.filter((m) => m.outcome === 'killed').length;
   const survived = mutants.filter((m) => m.outcome === 'survived').length;
-  return claim({ id, mutation: { total: mutants.length, killed, survived, timeout: 0, catchRate: killed / mutants.length, ts: '2026-01-01T00:00:00Z', runId: run, mutants: mutants.map(({ runId: _r, ...m }) => m) } });
+  return claim({ id, mutation: { total: mutants.length, killed, survived, timeout: 0, catchRate: killed / mutants.length, ts: '2026-01-01T00:00:00Z', runId: run, mutants: mutants.map(({ runId: _runId, ...m }) => m) } });
 };
 
 test('two claims sharing the same planted bugs from one run count each bug once', () => {
@@ -215,7 +215,7 @@ test('each wizard step draws its title and a way forward', () => {
   for (const [step, beat, title] of expect) {
     const { ctx } = ctxFor(demoWizard(step, beat));
     renderWizard(ctx, app);
-    const text = app.textContent ?? '';
+    const text = app.textContent;
     assert.ok(text.includes(title), `${step}.${beat} should say "${title}"`);
     assert.ok(text.includes(`Step ${step} of 6`));
   }
@@ -226,7 +226,7 @@ test('the planted-bug demo ends on its final state when motion is reduced', () =
   renderWizard(ctx, app);
   const demo = document.querySelector('.demo') as unknown as HTMLElement;
   assert.equal(demo.dataset.stage, '3');
-  assert.ok((app.textContent ?? '').includes('The same bug is now caught.'));
+  assert.ok(app.textContent.includes('The same bug is now caught.'));
 });
 
 test('setup lists what was done, warns about a committed secret, and shows the detected test command', () => {
@@ -235,7 +235,7 @@ test('setup lists what was done, warns about a committed secret, and shows the d
   assert.ok(init);
   const { ctx } = ctxFor({ ...s, setup: { ...s.setup, init: { ...init, secrets: { ...init.secrets, tracked: ['.env'] } } } });
   renderWizard(ctx, app);
-  const text = app.textContent ?? '';
+  const text = app.textContent;
   for (const must of ['Secrets', 'Commit hook', 'Agent instructions', 'CLAUDE.md (added)', 'detected node', '.env is already committed']) assert.ok(text.includes(must), must);
   assert.equal((document.querySelector('input[aria-label="Test command"]') as unknown as HTMLInputElement).value, 'npm test');
 });
@@ -245,7 +245,7 @@ test('the spec step shows the questions beside editable criteria, and local warn
   const withVague = { ...s, draft: { ...s.draft, criteria: [{ text: 'The checkout is fast.', check: '', lint: [] }, ...s.draft.criteria] } };
   const { ctx } = ctxFor(withVague);
   renderWizard(ctx, app);
-  const text = app.textContent ?? '';
+  const text = app.textContent;
   assert.ok(text.includes('What should an order of exactly $50 pay for shipping?'));
   assert.ok(text.includes('Why: It decides which side'));
   assert.ok(text.includes('"fast" is vague'));

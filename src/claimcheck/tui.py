@@ -18,8 +18,8 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Callable, Iterator
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 CSI = "\x1b["
@@ -63,7 +63,7 @@ def enable_windows_vt() -> None:
         pass
 
 
-def detect(stream=None, env: dict | None = None) -> dict:
+def detect(stream=None, env: Mapping[str, str] | None = None) -> dict:
     """Which features this terminal gets: {"tty", "color", "animate", "unicode"}."""
     stream = stream if stream is not None else sys.stdout
     env = env if env is not None else os.environ
@@ -226,7 +226,7 @@ class Term:
 
     # -- spinner ---------------------------------------------------------
     @contextmanager
-    def spinner(self, label: str, *, keep: bool = True) -> Iterator["_Spin"]:
+    def spinner(self, label: str, *, keep: bool = True) -> Iterator[_Spin]:
         """A line that spins while work happens. `keep=False` erases it afterwards (waiting, not a result)."""
         spin = _Spin(self, label, keep=keep)
         spin.start()
@@ -258,14 +258,14 @@ class Term:
 
     # -- layout ----------------------------------------------------------
     def box(self, lines: list[str], *, title: str = "", style: str = "cyan", indent: str = "  ") -> None:
-        inner = max([len(strip_ansi(l)) for l in lines] + [len(title) + 2, 20])
+        inner = max([len(strip_ansi(line_text)) for line_text in lines] + [len(title) + 2, 20])
         g = self.g
         # the rule between the corners is inner + 2 wide; the title takes " title " out of it
         top = g["tl"] + g["h"] + (f" {title} " if title else g["h"]) + g["h"] * (inner + 2 - 1 - (len(title) + 2 if title else 1)) + g["tr"]
         self.p(indent + self.c(top, style))
-        for l in lines:
-            pad = " " * (inner - len(strip_ansi(l)))
-            self.p(indent + self.c(g["v"], style) + " " + l + pad + " " + self.c(g["v"], style))
+        for line_text in lines:
+            pad = " " * (inner - len(strip_ansi(line_text)))
+            self.p(indent + self.c(g["v"], style) + " " + line_text + pad + " " + self.c(g["v"], style))
         self.p(indent + self.c(g["bl"] + g["h"] * (inner + 2) + g["br"], style))
 
     def rule(self, label: str = "") -> None:
@@ -326,7 +326,8 @@ class _Spin:
     """One line that spins while work happens, then settles to a check or a cross."""
 
     def __init__(self, term: Term, label: str, keep: bool = True):
-        self.t, self.label, self.result, self.keep = term, label, None, keep
+        self.t, self.label, self.keep = term, label, keep
+        self.result: bool | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.Lock()

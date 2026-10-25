@@ -8,12 +8,11 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import ClaimcheckError, SpecError
+from . import ClaimcheckError, SpecError, gitio
 from . import config as C
-from . import gitio
 
 CRITERION_RE = re.compile(r"^- \[[ xX]\] (\d+)\. (.+)$")
 
@@ -82,7 +81,7 @@ def parse_lock(text: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise SpecError(f"invalid spec.lock: {e}")
+        raise SpecError(f"invalid spec.lock: {e}") from e
     for key in ("version", "frozen_at", "git_head", "spec_sha256", "criteria"):
         if key not in data:
             raise SpecError(f"invalid spec.lock: missing {key}")
@@ -177,7 +176,7 @@ def enforce_open_diff_rules(repo: Path, cfg: C.Config, base: str | None = None) 
         lock = read_lock(repo)
         frozen_at = datetime.fromisoformat(lock["frozen_at"].replace("Z", "+00:00"))
         first = gitio.earliest_author_date(repo, base)
-        if first is not None and frozen_at > first.astimezone(timezone.utc):
+        if first is not None and frozen_at > first.astimezone(UTC):
             base_sha = gitio.merge_base(repo, base)
             old_text = gitio.show_file_at(repo, base_sha, rel_lock)
             old_hashes = set()

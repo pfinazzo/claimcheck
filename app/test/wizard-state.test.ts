@@ -16,6 +16,7 @@ import {
 } from '../src/shared/wizard-state.ts';
 import { demoWizard } from '../src/renderer/demo.ts';
 import { must } from './helpers.ts';
+import { toText } from '../src/shared/text.ts';
 
 test('the welcome has three beats, then setup, connect, spec, freeze and done in order', () => {
   let s = initialWizard();
@@ -73,7 +74,7 @@ test('editing the draft: change, delete, add, and a limit', () => {
   const n = s.draft.criteria.length;
   s = updateCriterion(s, 0, { text: 'New wording.' });
   assert.equal(s.draft.criteria[0]?.text, 'New wording.');
-  assert.deepEqual(s.draft.criteria[0]?.lint, [], 'an edited criterion drops its stale warnings');
+  assert.deepEqual(s.draft.criteria[0].lint, [], 'an edited criterion drops its stale warnings');
   s = removeCriterion(s, 1);
   assert.equal(s.draft.criteria.length, n - 1);
   s = addCriterion(s);
@@ -107,7 +108,7 @@ test('saved state from disk is untrusted: junk becomes a fresh wizard and fields
   assert.equal(s.repo, 'C:/r');
   assert.equal(s.draft.criteria[0]?.lint[0]?.level, 'warning');
   assert.equal(s.freeze.result?.lock_sha256, null);
-  assert.equal(s.freeze.result?.commit, null);
+  assert.equal(s.freeze.result.commit, null);
   assert.equal(isInFlight(s), true);
   assert.equal(isInFlight({ ...s, step: 'done' }), false);
 });
@@ -143,7 +144,7 @@ const fakeCc = ({ stdout = '', code = 0, stderr = '', delay = 5 }: { stdout?: st
       pid: 0,
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
-      stdin: { on() {}, end: (d?: unknown) => { stdin = String(d ?? ''); } },
+      stdin: { on() {}, end: (d?: unknown) => { stdin = toText({ value: d }); } },
       kill: () => true,
     });
     setTimeout(() => {

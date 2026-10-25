@@ -15,6 +15,8 @@
  * @author Patrick Finazzo
  */
 
+import { toText } from '../shared/text.ts';
+
 export type TomlValue = string | number | boolean | TomlValue[] | TomlTable;
 export type TomlTable = {
   [key: string]: TomlValue;
@@ -281,7 +283,7 @@ const enter = (root: TomlTable, parts: string[], { array }: { array: boolean }):
 };
 
 export const parseToml = (input: unknown): TomlTable => {
-  const text = String(input ?? '').replace(/^﻿/, '');
+  const text = toText({ value: input }).replace(/^\uFEFF/, '');
   const s = makeScanner(text);
   const root: TomlTable = {};
   let current: TomlTable = root;

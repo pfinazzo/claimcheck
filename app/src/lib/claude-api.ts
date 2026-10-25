@@ -51,7 +51,7 @@ export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageL
   const readMeta = (): { last4?: string } => {
     try {
       const data: unknown = JSON.parse(readFileSync(metaFile, 'utf8'));
-      return data && typeof data === 'object' ? (data as { last4?: string }) : {};
+      return data && typeof data === 'object' ? (data) : {};
     } catch {
       return {};
     }
@@ -88,7 +88,7 @@ export const testConnection = async ({ store, clientFactory = sdkClient }: { sto
   try {
     const client = await clientFactory(key);
     const page = await client.models.list({ limit: 5 });
-    const ids = (page?.data ?? []).map((m) => m.id);
+    const ids = (page.data ?? []).map((m) => m.id);
     return { ok: true, models: ids, last4: store.last4() };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

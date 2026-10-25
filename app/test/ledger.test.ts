@@ -55,7 +55,7 @@ test('app-state merges per claim', () => {
 // ---- the hash chain (criterion 6 of the hash-chained-ledger task) ----------------------------
 
 test('chain heads match the hashes the Python code pins in the shared fixture', () => {
-  const cases = JSON.parse(readFileSync(path.join(HERE, '..', '..', 'tests', 'fixtures', 'ledger_chain.json'), 'utf8')).cases as { name: string; lines: string[]; head: string }[];
+  const { cases } = JSON.parse(readFileSync(path.join(HERE, '..', '..', 'tests', 'fixtures', 'ledger_chain.json'), 'utf8')) as { cases: { name: string; lines: string[]; head: string }[] };
   assert.ok(cases.length >= 3);
   for (const c of cases) assert.equal(chainHead(c.lines), c.head, c.name);
 });
@@ -66,9 +66,9 @@ test('an outcome line continues the chain: prev is the hash the next line must c
   const older = ledgerLines(readFileSync(file, 'utf8'));
   const expected = chainHead(older);
   const first = appendOutcome(repo, outcomeRecord({ runId: 'r1', claimId: 'c1', outcome: 'held', source: 'human' }));
-  assert.equal(JSON.parse(first).prev, expected);
+  assert.equal((JSON.parse(first) as { prev: string }).prev, expected);
   const second = appendOutcome(repo, outcomeRecord({ runId: 'r1', claimId: 'c2', outcome: 'broken', source: 'fix_commit' }));
-  assert.equal(JSON.parse(second).prev, lineHash(first.trimEnd()));
+  assert.equal((JSON.parse(second) as { prev: string }).prev, lineHash(first.trimEnd()));
 });
 
 test('an empty ledger starts the chain at 64 zeros, and CRLF line ends hash the same', () => {

@@ -74,7 +74,7 @@ test('testConnection and proposeWithStore go through the store and a client fact
     return {
       models: { list: async () => ({ data: [{ id: 'claude-opus-5-5' }] }) },
       messages: { create: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"ok":1}' }] }) },
-    } as unknown as ApiClient;
+    };
   };
   const res = await testConnection({ store, clientFactory });
   assert.deepEqual(res, { ok: true, models: ['claude-opus-5-5'], last4: '1234' });

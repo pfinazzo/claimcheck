@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from claimcheck import checker, mutate, providers
+from claimcheck import mutate, providers
 from conftest import PY
 
 TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"

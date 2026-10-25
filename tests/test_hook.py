@@ -6,12 +6,11 @@
 import sys
 from pathlib import Path
 
-from claimcheck import ClaimsError
-from claimcheck import config as C
-from claimcheck import hook
-from conftest import CLAIMS_FOR_CALC
-
 import pytest
+
+from claimcheck import ClaimsError, hook
+from claimcheck import config as C
+from conftest import CLAIMS_FOR_CALC
 
 
 def _hook_path(repo) -> Path:

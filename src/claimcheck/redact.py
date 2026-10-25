@@ -124,7 +124,7 @@ class Redaction:
         self.count += 1
         self.kinds[kind] = self.kinds.get(kind, 0) + 1
 
-    def merge(self, other: "Redaction") -> None:
+    def merge(self, other: Redaction) -> None:
         self.count += other.count
         for k, v in other.kinds.items():
             self.kinds[k] = self.kinds.get(k, 0) + v

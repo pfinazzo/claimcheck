@@ -27,8 +27,8 @@ test('openPullRequest runs gh pr create from the worktree and returns the URL', 
   const url = await openPullRequest({ cwd: '/wt', base: 'main', head: 'claimcheck/fix-c2-abc', title: 'claimcheck: c2 — Pin', body: 'b', execFn });
   assert.equal(url, 'https://github.com/x/y/pull/7');
   assert.equal(calls[0]?.cmd, 'gh');
-  assert.deepEqual(calls[0]?.args, ['pr', 'create', '--base', 'main', '--head', 'claimcheck/fix-c2-abc', '--title', 'claimcheck: c2 — Pin', '--body', 'b']);
-  assert.equal(calls[0]?.opts.cwd, '/wt');
+  assert.deepEqual(calls[0].args, ['pr', 'create', '--base', 'main', '--head', 'claimcheck/fix-c2-abc', '--title', 'claimcheck: c2 — Pin', '--body', 'b']);
+  assert.equal(calls[0].opts.cwd, '/wt');
   const body = prBody({ claim: { id: 'c2', claim: 'x', flags: ['refuted'] }, proposal: { title: 'Pin', summary: 's' }, run: { tests: { ok: true }, killCondition: { ok: 'manual' } } });
   assert.match(body, /Tests: pass\. Kill condition: manual check\./);
 });

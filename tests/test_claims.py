@@ -88,7 +88,9 @@ def test_ac9_no_lock_means_no_frozen_ids(repo, capsys):
     assert repo.cli("claims", "validate") == 4
     err = capsys.readouterr().err
     assert "criteria ids not in the frozen lock: [9]" in err and "no spec.lock" in err
-    assert CL.validate(CL.load_text(_doc(GOOD))[0], None)[0].endswith("(no spec.lock; run claimcheck spec freeze)")
+    good_file = CL.load_text(_doc(GOOD))[0]
+    assert good_file is not None
+    assert CL.validate(good_file, None)[0].endswith("(no spec.lock; run claimcheck spec freeze)")
     # empty criteria are fine without a lock
     repo.write(".claimcheck/claims.yaml", _doc(GOOD.replace("criteria: [1]", "criteria: []")))
     assert repo.cli("claims", "validate") == 0
@@ -96,6 +98,7 @@ def test_ac9_no_lock_means_no_frozen_ids(repo, capsys):
 
 def test_redact_strips_confidence_and_verified_by():
     cf, _ = CL.load_text(CLAIMS_FOR_CALC)
+    assert cf is not None
     red = CL.redact(cf)
     assert len(red) == 2
     for r in red:

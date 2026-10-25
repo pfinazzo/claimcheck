@@ -11,8 +11,9 @@ import sys
 
 import pytest
 
-from claimcheck import ClaimcheckError, checker, claims as CL, config as C, gitio, hook, ledger
-
+from claimcheck import ClaimcheckError, checker, gitio, hook, ledger
+from claimcheck import claims as CL
+from claimcheck import config as C
 
 # ---- config -----------------------------------------------------------------
 
@@ -174,7 +175,7 @@ def test_append_never_fuses_onto_an_unterminated_last_line(cc_repo):
     path.write_bytes(path.read_bytes().rstrip(b"\n"))  # a crash or an editor ate the newline
     ledger.append_atomic(cc_repo.path, [rec("c2")])
     lines = path.read_text(encoding="utf-8").splitlines()
-    assert [json.loads(l)["claim_id"] for l in lines] == ["c1", "c2"]
+    assert [json.loads(line_text)["claim_id"] for line_text in lines] == ["c1", "c2"]
 
 
 # ---- git plumbing -----------------------------------------------------------

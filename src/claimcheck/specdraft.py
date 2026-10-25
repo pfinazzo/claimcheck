@@ -13,13 +13,12 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable
 
-from . import ClaimcheckError, ProviderError
+from . import ClaimcheckError, ProviderError, gitio, redact
 from . import config as C
-from . import gitio, redact
 
 DRAFT_FILE = "spec-draft.json"
 MAX_QUESTIONS = 5
@@ -108,7 +107,7 @@ class Draft:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False) + "\n"
 
     @staticmethod
-    def from_dict(d: dict) -> "Draft":
+    def from_dict(d: dict) -> Draft:
         return Draft(
             goal=str(d.get("goal", "")),
             rounds=[
@@ -164,7 +163,7 @@ def build_prompt(draft: Draft, files: list[str], round_no: int, max_rounds: int)
         lines = ["## Interview so far"]
         for i, r in enumerate(draft.rounds, 1):
             lines.append(f"### Round {i}")
-            for q, a in zip(r.questions, r.answers):
+            for q, a in zip(r.questions, r.answers, strict=False):
                 lines.append(f"Q ({q.id}): {q.text}")
                 lines.append(f"A: {_answer_tag(a) if a.strip() else '(no answer; use your judgment and say what you assumed in concerns)'}")
         parts.append("\n".join(lines) + "\n")
@@ -199,7 +198,7 @@ def parse_reply(raw: str) -> Reply:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
-        raise ClaimcheckError(f"reply is not JSON: {e}")
+        raise ClaimcheckError(f"reply is not JSON: {e}") from e
     if not isinstance(data, dict):
         raise ClaimcheckError("reply must be a JSON object")
     missing = [k for k in REPLY_SCHEMA["required"] if k not in data]
@@ -215,7 +214,8 @@ def parse_reply(raw: str) -> Reply:
             criteria.append(Criterion(" ".join(_as_text(c["text"]).split()), _as_text(c.get("check"))))
     if not criteria:
         raise ClaimcheckError("reply has no usable criteria")
-    strs = lambda v: [_as_text(x) for x in v if _as_text(x)] if isinstance(v, list) else []
+    def strs(v):
+        return [_as_text(x) for x in v if _as_text(x)] if isinstance(v, list) else []
     return Reply(questions[:MAX_QUESTIONS], criteria, strs(data["out_of_scope"]), strs(data["concerns"]), data["ready"] is True)
 
 
@@ -223,7 +223,7 @@ def next_round(provider, draft: Draft, files: list[str], round_no: int, max_roun
     """Ask the provider once, and once more with the problem named if the reply is unusable."""
     system, user = build_prompt(draft, files, round_no, max_rounds)
     problem = ""
-    for attempt in range(2):
+    for _attempt in range(2):
         prompt = user if not problem else user + f"\n\nYour previous reply was rejected: {problem}. Reply with valid JSON only."
         try:
             raw = provider.complete(system, prompt, schema=REPLY_SCHEMA)
@@ -232,7 +232,7 @@ def next_round(provider, draft: Draft, files: list[str], round_no: int, max_roun
         except ClaimcheckError:
             raise
         except Exception as e:  # network, SDK, subprocess
-            raise ProviderError(f"provider failed: {e}")
+            raise ProviderError(f"provider failed: {e}") from e
         try:
             return parse_reply(raw)
         except ClaimcheckError as e:
@@ -442,7 +442,7 @@ def run_interview(
                 if q.why:
                     say(f"     (why: {q.why})")
         _show(draft, reply, say)
-        for n, q in enumerate(reply.questions, 1):
+        for n in range(1, len(reply.questions) + 1):
             answers.append(ask(f"\nYour answer to {n} (blank = you decide)> ").strip())
         draft.rounds.append(Round(reply.questions, answers))
         save_draft(repo, draft)

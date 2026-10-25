@@ -27,11 +27,11 @@ test('AC 4: readBoard returns the full model from the fixture', async () => {
   assert.equal(c2.confidence, 0.6);
   assert.deepEqual(c2.criteria, [{ id: 2, text: 'is_adult(age) is True at and above 18 and False below.' }]);
   assert.equal(c2.verdict?.verdict, 'REFUTED');
-  assert.equal(c2.verdict?.provider, 'stub');
+  assert.equal(c2.verdict.provider, 'stub');
   assert.equal(c2.mutation?.total, 3);
-  assert.equal(c2.mutation?.survived, 2);
-  assert.equal(c2.mutation?.catchRate, 0.3333);
-  assert.equal(c2.mutation?.mutants.length, 3);
+  assert.equal(c2.mutation.survived, 2);
+  assert.equal(c2.mutation.catchRate, 0.3333);
+  assert.equal(c2.mutation.mutants.length, 3);
   assert.equal(c2.status, 'open');
   assert.equal(c2.history.length, 1);
   assert.ok(c2.flags.includes('refuted') && c2.flags.includes('low-confidence') && c2.flags.includes('weak-tests'));
@@ -83,11 +83,11 @@ test('AC 7: the newest check run wins per claim', async () => {
   const c2 = board.claims.find((c) => c.id === 'c2');
   assert.ok(c2);
   assert.equal(c2.verdict?.verdict, 'SUPPORTED');
-  assert.equal(c2.verdict?.model, 'claude-opus-5-5');
+  assert.equal(c2.verdict.model, 'claude-opus-5-5');
   const c1 = board.claims.find((c) => c.id === 'c1');
   assert.ok(c1);
   assert.equal(c1.verdict?.verdict, 'SUPPORTED');
-  assert.equal(c1.verdict?.runId, '20261015T180512Z-7f3a');
+  assert.equal(c1.verdict.runId, '20261015T180512Z-7f3a');
 });
 
 test('AC 8: app-state overrides status; stale ids keep ledger history', async () => {
@@ -113,5 +113,5 @@ test('a repo without .claimcheck reads as empty, not an error', async () => {
   assert.equal(board.claims.length, 2);
   assert.equal(board.runs.check, null);
   assert.equal(board.claims[0]?.verdict, null);
-  assert.ok(board.claims[0]?.flags.includes('unverified'));
+  assert.ok(board.claims[0].flags.includes('unverified'));
 });

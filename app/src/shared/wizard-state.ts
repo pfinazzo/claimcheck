@@ -83,53 +83,41 @@ export const isInFlight = (state: WizardState | null | undefined): boolean => Bo
 
 // ---- moving between steps ---------------------------------------------------
 
-export const canContinue = (state: WizardState, ctx: { busy?: boolean; connected?: boolean } = {}): boolean => {
-  switch (state.step) {
-    case 'welcome':
-      return true;
-    case 'setup':
-      return Boolean(state.setup.init) && state.setup.testCmd.trim().length > 0 && !ctx.busy;
-    case 'connect':
-      return Boolean(ctx.connected) || state.connectSkipped;
-    default:
-      return false;
-  }
+type ContinueContext = { busy?: boolean; connected?: boolean };
+
+const CAN_CONTINUE_BY_STEP: Record<WizardStep, (state: WizardState, ctx: ContinueContext) => boolean> = {
+  welcome: () => true,
+  setup: (state, ctx) => Boolean(state.setup.init) && state.setup.testCmd.trim().length > 0 && !ctx.busy,
+  connect: (state, ctx) => Boolean(ctx.connected) || state.connectSkipped,
+  spec: () => false,
+  freeze: () => false,
+  done: () => false,
 };
 
-export const goNext = (state: WizardState): WizardState => {
-  switch (state.step) {
-    case 'welcome':
-      return state.beat < BEATS - 1 ? { ...state, beat: state.beat + 1 } : { ...state, step: 'setup' };
-    case 'setup':
-      return { ...state, step: 'connect' };
-    case 'connect':
-      return { ...state, step: 'spec' };
-    case 'spec':
-      return { ...state, step: 'freeze' };
-    case 'freeze':
-      return { ...state, step: 'done' };
-    default:
-      return state;
-  }
+export const canContinue = (state: WizardState, ctx: ContinueContext = {}): boolean => CAN_CONTINUE_BY_STEP[state.step](state, ctx);
+
+const NEXT_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState> = {
+  welcome: (state) => (state.beat < BEATS - 1 ? { ...state, beat: state.beat + 1 } : { ...state, step: 'setup' }),
+  setup: (state) => ({ ...state, step: 'connect' }),
+  connect: (state) => ({ ...state, step: 'spec' }),
+  spec: (state) => ({ ...state, step: 'freeze' }),
+  freeze: (state) => ({ ...state, step: 'done' }),
+  done: (state) => state,
+};
+
+export const goNext = (state: WizardState): WizardState => NEXT_BY_STEP[state.step](state);
+
+const BACK_BY_STEP: Record<WizardStep, (state: WizardState) => WizardState | null> = {
+  welcome: (state) => (state.beat > 0 ? { ...state, beat: state.beat - 1 } : state),
+  setup: (state) => ({ ...state, step: 'welcome', beat: BEATS - 1 }),
+  connect: (state) => ({ ...state, step: 'setup' }),
+  spec: (state) => (state.entry === 'board' ? null : { ...state, step: 'connect' }),
+  freeze: (state) => ({ ...state, step: 'spec' }),
+  done: (state) => state,
 };
 
 /** Returns the previous state, or null when Back means "leave the wizard" (back to the board). */
-export const goBack = (state: WizardState): WizardState | null => {
-  switch (state.step) {
-    case 'welcome':
-      return state.beat > 0 ? { ...state, beat: state.beat - 1 } : state;
-    case 'setup':
-      return { ...state, step: 'welcome', beat: BEATS - 1 };
-    case 'connect':
-      return { ...state, step: 'setup' };
-    case 'spec':
-      return state.entry === 'board' ? null : { ...state, step: 'connect' };
-    case 'freeze':
-      return { ...state, step: 'spec' };
-    default:
-      return state;
-  }
-};
+export const goBack = (state: WizardState): WizardState | null => BACK_BY_STEP[state.step](state);
 
 export const skipIntro = (state: WizardState): WizardState => ({ ...state, step: 'setup', beat: BEATS - 1 });
 

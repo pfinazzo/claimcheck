@@ -27,6 +27,7 @@ import { watch } from './watcher.ts';
 import { createFixer, type PublicRun } from './fixer.ts';
 import type { KeyStore } from './claude-api.ts';
 import { initialWizard, isInFlight, normalizeWizardState, type WizardState } from '../shared/wizard-state.ts';
+import { toText } from '../shared/text.ts';
 
 const execFileP = promisify(execFile);
 
@@ -149,7 +150,7 @@ export const createDeskApi = ({
     ccCall: null,
   };
   const saveSettings = (): void => writeFileSync(settingsFile, `${JSON.stringify(state.settings, null, 2)}\n`, 'utf8');
-  const exec = (execFn ?? (execFileP as unknown as ExecFn)) as ExecFn;
+  const exec = (execFn ?? (execFileP));
 
   const fixer = createFixer({
     cliModule,
@@ -166,8 +167,8 @@ export const createDeskApi = ({
     model: state.settings.model,
     cliPath: state.settings.cliPath ?? null,
     cliOk: state.settings.cliOk ?? null,
-    apiSaved: keyStore?.hasKey?.() ?? false,
-    apiLast4: keyStore?.last4?.() ?? null,
+    apiSaved: keyStore?.hasKey() ?? false,
+    apiLast4: keyStore?.last4() ?? null,
     apiOk: state.settings.apiOk ?? null,
     claimcheckBin: state.settings.claimcheckBin ?? null,
     useAuto: state.settings.useAuto === true,
@@ -404,7 +405,7 @@ export const createDeskApi = ({
   };
 
   const claimcheckBin = (board: Board | null): runnerDefault.ResolveOptions => ({
-    python: board?.config?.app?.python ?? null,
+    python: board?.config.app.python ?? null,
     bin: state.settings.claimcheckBin ?? null,
     ...(execFn ? { execFn } : {}),
   });
@@ -459,7 +460,7 @@ export const createDeskApi = ({
    * paths, and never a file, which the operating system would run.
    */
   const openTarget = async ({ target }: { target: unknown }): Promise<true> => {
-    const value = String(target ?? '');
+    const value = toText({ value: target });
     if (/^https?:\/\//i.test(value)) {
       let url: URL;
       try {
@@ -494,7 +495,7 @@ export const createDeskApi = ({
   const providerFor = (): { provider: string; env: Record<string, string> } => {
     if (state.settings.useAuto) return { provider: 'auto', env: {} };
     if (state.settings.mode === 'api') {
-      const key = keyStore?.hasKey?.() ? keyStore.loadKey() : null;
+      const key = keyStore?.hasKey() ? keyStore.loadKey() : null;
       if (!key) throw new Error('No API key saved. Connect Claude first.');
       // Decrypted at the moment of the call and handed to the child process only.
       return { provider: 'claude', env: { ANTHROPIC_API_KEY: key } };
@@ -528,7 +529,7 @@ export const createDeskApi = ({
 
   const wizardSaveTestCmd = async ({ testCmd }: { testCmd: unknown }): Promise<{ testCmd: string; changed: boolean }> => {
     const repoPath = requireRepo();
-    const value = String(testCmd ?? '').trim();
+    const value = toText({ value: testCmd }).trim();
     if (!value) throw new Error('Write the command that runs your tests, for example npm test.');
     if (/[\r\n]/.test(value) || value.length > 1000) throw new Error('The test command must be one line.');
     const file = path.join(repoPath, '.claimcheck', 'config.toml');
@@ -551,7 +552,7 @@ export const createDeskApi = ({
   };
 
   const wizardFinish = async ({ request, freeze = true, makeBranch = true, branch = '' }: { request?: Partial<DraftInput>; freeze?: boolean; makeBranch?: boolean; branch?: string } = {}): Promise<CcFinish> => {
-    const name = String(branch ?? '').trim();
+    const name = branch.trim();
     if (makeBranch && name && !SAFE_BRANCH.test(name)) throw new Error('That branch name has characters git would not accept. Use letters, numbers, dashes, dots and slashes.');
     const { provider, env } = providerFor();
     const args = ['spec', 'draft', '--finish', ...(freeze ? [] : ['--no-freeze']), ...(makeBranch ? (name ? ['--branch', name] : []) : ['--no-branch']), '--provider', provider];
