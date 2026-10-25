@@ -38,16 +38,17 @@ test('AC 15: saved key is encrypted on disk, last4 only in meta, clear removes b
 
 test('AC 15: propose calls messages.create with structured output and returns the text block', async () => {
   const calls: Array<Record<string, unknown>> = [];
-  const client = {
+  const client: ApiClient = {
     messages: {
-      create: async (req: Record<string, unknown>) => {
+      create: (req) => {
         calls.push(req);
-        return { stop_reason: 'end_turn', content: [{ type: 'text', text: '{"proposals":[]}' }] };
+        return Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"proposals":[]}' }] });
       },
     },
+    models: { list: () => Promise.resolve({ data: [] }) },
   };
   const schema = { type: 'object' };
-  const text = await propose({ system: 'SYS', user: 'USER', schema, client: client as unknown as ApiClient });
+  const text = await propose({ system: 'SYS', user: 'USER', schema, client });
   assert.equal(text, '{"proposals":[]}');
   const req = calls[0] ?? {};
   assert.equal(req.model, DEFAULT_MODEL);
@@ -59,8 +60,11 @@ test('AC 15: propose calls messages.create with structured output and returns th
 });
 
 test('propose surfaces a refusal as an error', async () => {
-  const client = { messages: { create: async () => ({ stop_reason: 'refusal', stop_details: { explanation: 'nope' }, content: [] }) } };
-  await assert.rejects(propose({ system: 's', user: 'u', schema: {}, client: client as unknown as ApiClient }), /declined: nope/);
+  const client: ApiClient = {
+    messages: { create: () => Promise.resolve({ stop_reason: 'refusal', stop_details: { explanation: 'nope' }, content: [] }) },
+    models: { list: () => Promise.resolve({ data: [] }) },
+  };
+  await assert.rejects(propose({ system: 's', user: 'u', schema: {}, client }), /declined: nope/);
 });
 
 test('testConnection and proposeWithStore go through the store and a client factory', async () => {

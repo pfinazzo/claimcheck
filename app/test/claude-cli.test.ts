@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChildProcess } from 'node:child_process';
+import { ChildProcess } from 'node:child_process';
 import { BASE_ARGS, SIGN_IN_ERRORS, describeEvent, parseStreamLine, resolveSpawn, runClaude, testConnection, type SpawnFn } from '../src/lib/claude-cli.ts';
 import { toText } from '../src/shared/text.ts';
 
@@ -47,7 +47,7 @@ const fakeSpawn = ({ lines, code = 0, stderr = '' }: { lines: string[]; code?: n
   const spawnFn: SpawnFn = (command, args, opts) => {
     const call: Call = { command, args, opts, stdin: '' };
     calls.push(call);
-    const child = Object.assign(new EventEmitter(), {
+    const child = Object.assign(new ChildProcess(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
       stdin: { on() {}, write: (d: unknown) => { call.stdin += toText({ value: d }); }, end: (d?: unknown) => { if (d) call.stdin += toText({ value: d }); } },
@@ -58,7 +58,7 @@ const fakeSpawn = ({ lines, code = 0, stderr = '' }: { lines: string[]; code?: n
       if (stderr) child.stderr.emit('data', Buffer.from(stderr));
       child.emit('close', code);
     }, 5);
-    return child as unknown as ChildProcess;
+    return child;
   };
   return { spawnFn, calls };
 };

@@ -14,6 +14,7 @@ import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:c
 import type { Resolved } from './runner.ts';
 import { createTextCollector, killTree } from './proc.ts';
 import { toText } from '../shared/text.ts';
+import { parseJsonOrUndefined } from '../shared/json.ts';
 
 export type CcErrorKind = 'missing' | 'failed' | 'timeout' | 'cancelled' | 'unreadable';
 
@@ -37,20 +38,10 @@ export const MISSING_MESSAGE = 'claimcheck was not found. Install it, or tell th
 export const extractJson = (text: unknown): unknown => {
   const body = toText({ value: text }).trim();
   if (!body) return undefined;
-  try {
-    return JSON.parse(body);
-  } catch {
-    /* fall through to the last JSON-looking line */
-  }
+  const whole = parseJsonOrUndefined({ text: body });
+  if (whole !== undefined) return whole;
   const lines = body.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith('{'));
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    try {
-      return JSON.parse(lines[i] ?? '');
-    } catch {
-      /* keep looking */
-    }
-  }
-  return undefined;
+  return lines.toReversed().map((line) => parseJsonOrUndefined({ text: line })).find((parsed) => parsed !== undefined);
 };
 
 const lastLines = (text: unknown, n = 3): string => toText({ value: text }).trim().split(/\r?\n/).filter(Boolean).slice(-n).join(' ');

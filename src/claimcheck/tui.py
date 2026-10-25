@@ -59,8 +59,10 @@ def enable_windows_vt() -> None:
             mode = ctypes.c_uint32()
             if k.GetConsoleMode(h, ctypes.byref(mode)):
                 k.SetConsoleMode(h, mode.value | 0x0004)
-    except Exception:
-        pass
+    except (AttributeError, OSError):
+        # An old console without these calls keeps its default mode. The text still prints;
+        # only the colors show up as escape codes.
+        return
 
 
 def detect(stream=None, env: Mapping[str, str] | None = None) -> dict:
@@ -135,12 +137,14 @@ class Term:
             self._cursor_hidden = True
 
     def restore(self) -> None:
-        if self._cursor_hidden:
-            try:
-                self.w(SHOW_CURSOR)
-            except Exception:
-                pass
-            self._cursor_hidden = False
+        if not self._cursor_hidden:
+            return
+        self._cursor_hidden = False
+        try:
+            self.w(SHOW_CURSOR)
+        except (OSError, ValueError):
+            # The terminal is already gone (a closed pipe or stream), so there is no cursor to show.
+            return
 
     def nap(self, seconds: float) -> None:
         if self.animate:

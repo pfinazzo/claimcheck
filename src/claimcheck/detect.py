@@ -91,23 +91,21 @@ def _python(repo: Path) -> Stack | None:
     )
 
 
+def _read_test_text(path: Path) -> str:
+    """A test file's text. An unreadable file counts as empty, because it cannot name a framework."""
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return ""
+
+
 def _has_unittest_only(repo: Path) -> bool:
     """True only when the tests import unittest and nothing mentions pytest."""
-    seen_unittest = False
-    for d in ("tests", "test"):
-        folder = repo / d
-        if not folder.is_dir():
-            continue
-        for p in list(folder.rglob("*.py"))[:50]:
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if "pytest" in text:
-                return False
-            if "unittest" in text:
-                seen_unittest = True
-    return seen_unittest
+    folders = [repo / name for name in ("tests", "test") if (repo / name).is_dir()]
+    texts = [_read_test_text(path) for folder in folders for path in list(folder.rglob("*.py"))[:50]]
+    if any("pytest" in text for text in texts):
+        return False
+    return any("unittest" in text for text in texts)
 
 
 def _go(repo: Path) -> Stack | None:

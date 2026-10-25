@@ -6,7 +6,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, statSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import type { AppState, AppStateClaim, OutcomeRecord } from '../shared/types.ts';
 
@@ -25,13 +25,33 @@ export type OutcomeInput = {
   ts?: string;
 };
 
+const isOneOf = <T extends string>(allowed: readonly T[], value: unknown): value is T => (allowed as readonly unknown[]).includes(value);
+
+const readTextField = (rec: Record<string, unknown>, key: string): string => {
+  const value = rec[key];
+  if (typeof value !== 'string') throw new Error(`${key} must be text`);
+  return value;
+};
+
 /** Throws a plain message when a record would not be a valid outcome line. */
 export const validateOutcome = (rec: Record<string, unknown>): OutcomeRecord => {
   for (const k of OUTCOME_KEYS) if (!(k in rec)) throw new Error(`outcome line missing ${k}`);
   if (rec.type !== 'outcome') throw new Error('type must be outcome');
-  if (!(OUTCOMES as readonly unknown[]).includes(rec.outcome)) throw new Error(`outcome must be one of ${OUTCOMES.join(',')}`);
-  if (!(SOURCES as readonly unknown[]).includes(rec.outcome_source)) throw new Error(`outcome_source must be one of ${SOURCES.join(',')}`);
-  return rec as unknown as OutcomeRecord;
+  if (rec.v !== 1) throw new Error('v must be 1');
+  const { outcome, outcome_source: source } = rec;
+  if (!isOneOf(OUTCOMES, outcome)) throw new Error(`outcome must be one of ${OUTCOMES.join(',')}`);
+  if (!isOneOf(SOURCES, source)) throw new Error(`outcome_source must be one of ${SOURCES.join(',')}`);
+  return {
+    ...rec,
+    v: 1,
+    type: 'outcome',
+    ts: readTextField(rec, 'ts'),
+    run_id: readTextField(rec, 'run_id'),
+    claim_id: readTextField(rec, 'claim_id'),
+    outcome,
+    outcome_source: source,
+    evidence: typeof rec.evidence === 'string' ? rec.evidence : '',
+  };
 };
 
 export const outcomeRecord = ({ runId, claimId, outcome, source, evidence, ts = utcNow() }: OutcomeInput): OutcomeRecord =>
@@ -102,11 +122,7 @@ export const appendOutcome = (repoPath: string, rec: OutcomeRecord): string => {
       closeSync(fd);
     }
   } finally {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* already gone */
-    }
+    rmSync(tmp, { force: true });
   }
   return line;
 };

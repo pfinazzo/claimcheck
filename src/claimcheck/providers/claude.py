@@ -13,12 +13,15 @@ except ImportError as e:  # pragma: no cover - exercised only without the extra 
     ) from e
 
 DEFAULT_MODEL = "claude-opus-5-5"
+# The same budget the Claude Code CLI provider gets. Without it the SDK waits up to ten minutes
+# per attempt, and a stalled connection freezes the run.
+API_TIMEOUT_S = 300
 
 
 class ClaudeProvider:
     def __init__(self, model: str | None = None):
         self.model = model or DEFAULT_MODEL
-        self.client = anthropic.Anthropic()
+        self.client = anthropic.Anthropic(timeout=API_TIMEOUT_S)
 
     def complete(self, system: str, user: str, *, schema: dict) -> str:
         from .. import redact

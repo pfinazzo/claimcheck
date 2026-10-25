@@ -14,6 +14,8 @@ import pytest
 from claimcheck import cli
 
 PY = f'"{Path(sys.executable).as_posix()}"'
+# A test's git or CLI call finishes in seconds. This stops a hung one from stalling the whole suite.
+SUBPROCESS_TIMEOUT_S = 120
 
 TWO_CRITERIA_SPEC = """\
 # Acceptance criteria
@@ -75,7 +77,7 @@ class Repo:
         if env:
             full_env.update(env)
         proc = subprocess.run(
-            ["git", *args], cwd=self.path, capture_output=True, text=True, env=full_env
+            ["git", *args], cwd=self.path, capture_output=True, text=True, env=full_env, timeout=SUBPROCESS_TIMEOUT_S
         )
         if check and proc.returncode != 0:
             raise AssertionError(f"git {' '.join(args)} failed:\n{proc.stdout}\n{proc.stderr}")
@@ -102,7 +104,7 @@ class Repo:
     def try_commit(self, msg: str) -> subprocess.CompletedProcess:
         self.git("add", "-A")
         return subprocess.run(
-            ["git", "commit", "-q", "-m", msg], cwd=self.path, capture_output=True, text=True
+            ["git", "commit", "-q", "-m", msg], cwd=self.path, capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S
         )
 
     def sha(self, ref: str = "HEAD") -> str:

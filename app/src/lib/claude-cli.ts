@@ -12,7 +12,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { redactText } from './redact.ts';
-import { createLineSplitter, createTextCollector, killTree } from './proc.ts';
+import { createLineSplitter, createTextCollector, findOnPath, killTree } from './proc.ts';
 import { toText } from '../shared/text.ts';
 
 const execFileP = promisify(execFile);
@@ -67,16 +67,9 @@ const nvmCandidates = (): string[] => {
 /** The `claude` executable, or null. CLAUDE_BIN wins, then PATH, then nvm. */
 export const findClaude = async ({ env = process.env }: { env?: NodeJS.ProcessEnv } = {}): Promise<string | null> => {
   if (env.CLAUDE_BIN && existsSync(env.CLAUDE_BIN)) return env.CLAUDE_BIN;
-  const finder = process.platform === 'win32' ? 'where' : 'which';
-  try {
-    const { stdout } = await execFileP(finder, ['claude'], { env, windowsHide: true });
-    const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    const preferred = lines.find((l) => /\.cmd$/i.test(l)) ?? lines[0];
-    if (preferred) return preferred;
-  } catch {
-    /* not on PATH */
-  }
-  return nvmCandidates()[0] ?? null;
+  const lines = await findOnPath({ name: 'claude', execFn: execFileP, env });
+  const preferred = lines.find((l) => /\.cmd$/i.test(l)) ?? lines[0];
+  return preferred ?? nvmCandidates()[0] ?? null;
 };
 
 /**

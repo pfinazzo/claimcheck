@@ -14,6 +14,7 @@ import pytest
 from claimcheck import ClaimcheckError, checker, gitio, hook, ledger
 from claimcheck import claims as CL
 from claimcheck import config as C
+from conftest import SUBPROCESS_TIMEOUT_S
 
 # ---- config -----------------------------------------------------------------
 
@@ -214,6 +215,6 @@ def test_repo_root_with_non_ascii_directory(tmp_path, monkeypatch):
 
     d = tmp_path / "café-proj"
     d.mkdir()
-    subprocess.run(["git", "init", "-q"], cwd=d, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=d, check=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert C.find_repo_root(d) == d.resolve()
     assert sys.getdefaultencoding()  # the point is that nothing above raised or returned mojibake

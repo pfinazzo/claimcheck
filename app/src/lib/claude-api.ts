@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from '
 import path from 'node:path';
 
 import { redactText } from './redact.ts';
+import { API_TIMEOUT_MS } from './timeouts.ts';
 
 export const DEFAULT_MODEL = 'claude-opus-5-5';
 
@@ -36,8 +37,8 @@ export type ApiClient = {
       max_tokens: number;
       system: string;
       messages: { role: 'user'; content: string }[];
-      output_config: { format: { type: 'json_schema'; schema: unknown } };
-    }) => Promise<{ stop_reason?: string | null; stop_details?: { explanation?: string } | null; content?: { type: string; text?: string }[] }>;
+      output_config: { format: { type: 'json_schema'; schema: Record<string, unknown> } };
+    }) => Promise<{ stop_reason?: string | null; stop_details?: { explanation?: string | null } | null; content?: { type: string; text?: string }[] }>;
   };
   models: { list: (params: { limit: number }) => Promise<{ data?: { id: string }[] }> };
 };
@@ -77,7 +78,11 @@ export const createKeyStore = ({ safeStorage, dir }: { safeStorage: SafeStorageL
 
 const sdkClient: ClientFactory = async (apiKey) => {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  return new Anthropic({ apiKey }) as unknown as ApiClient;
+  const client = new Anthropic({ apiKey, timeout: API_TIMEOUT_MS });
+  return {
+    messages: { create: (params) => client.messages.create({ ...params, stream: false }) },
+    models: { list: (query) => client.models.list(query) },
+  };
 };
 
 export type ConnectionTest = { ok: true; models: string[]; last4: string | null } | { ok: false; error: string };
@@ -98,7 +103,7 @@ export const testConnection = async ({ store, clientFactory = sdkClient }: { sto
 export type ProposeInput = {
   system: string;
   user: string;
-  schema: unknown;
+  schema: Record<string, unknown>;
   model?: string | undefined;
   client: ApiClient;
 };
@@ -129,7 +134,7 @@ export const proposeWithStore = async ({
   store: KeyStore;
   system: string;
   user: string;
-  schema: unknown;
+  schema: Record<string, unknown>;
   model?: string | undefined;
   clientFactory?: ClientFactory;
 }): Promise<string> => {

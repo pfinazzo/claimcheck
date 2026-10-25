@@ -28,6 +28,7 @@ import { createFixer, type PublicRun } from './fixer.ts';
 import type { KeyStore } from './claude-api.ts';
 import { initialWizard, isInFlight, normalizeWizardState, type WizardState } from '../shared/wizard-state.ts';
 import { toText } from '../shared/text.ts';
+import { GIT_TIMEOUT_MS } from './timeouts.ts';
 
 const execFileP = promisify(execFile);
 
@@ -260,7 +261,7 @@ export const createDeskApi = ({
 
   const gitTop = async (dir: string): Promise<string | null> => {
     try {
-      const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], { cwd: dir, windowsHide: true });
+      const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], { cwd: dir, windowsHide: true, timeout: GIT_TIMEOUT_MS });
       return path.resolve(String(stdout).trim());
     } catch {
       return null;

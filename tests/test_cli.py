@@ -10,16 +10,17 @@ from pathlib import Path
 import pytest
 
 from claimcheck import cli
+from conftest import SUBPROCESS_TIMEOUT_S
 
 
 def test_ac1_version_via_module_and_script():
-    out = subprocess.run([sys.executable, "-m", "claimcheck", "--version"], capture_output=True, text=True)
+    out = subprocess.run([sys.executable, "-m", "claimcheck", "--version"], capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert out.returncode == 0
     assert out.stdout.strip() == "claimcheck 0.1.0"
     scripts = Path(sys.executable).parent
     script = next((scripts / n for n in ("claimcheck.exe", "claimcheck") if (scripts / n).exists()), None)
     assert script is not None, "console script not installed; run pip install -e ."
-    out2 = subprocess.run([str(script), "--version"], capture_output=True, text=True)
+    out2 = subprocess.run([str(script), "--version"], capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert out2.stdout.strip() == "claimcheck 0.1.0"
 
 
@@ -31,7 +32,7 @@ def test_ac1_version_in_process(capsys):
 
 
 def _help(*argv) -> str:
-    proc = subprocess.run([sys.executable, "-m", "claimcheck", *argv, "--help"], capture_output=True, text=True)
+    proc = subprocess.run([sys.executable, "-m", "claimcheck", *argv, "--help"], capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert proc.returncode == 0
     return proc.stdout
 

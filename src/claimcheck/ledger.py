@@ -119,10 +119,7 @@ def append_atomic(repo: Path, records: list[dict]) -> int:
             out.flush()
             os.fsync(out.fileno())
     finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        Path(tmp).unlink(missing_ok=True)
     return len(records)
 
 

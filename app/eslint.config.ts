@@ -14,6 +14,8 @@ import tseslint from 'typescript-eslint';
 const RESTRICTED_SYNTAX = [
   { selector: 'TSEnumDeclaration', message: 'Use a union of string literals or a lookup table, not an enum.' },
   { selector: 'TSInterfaceDeclaration', message: 'Use a `type` alias, not an interface.' },
+  { selector: 'TSAsExpression > TSAsExpression', message: 'Never double-cast through unknown; narrow the value instead.' },
+  { selector: 'CatchClause > BlockStatement[body.length=0]', message: 'Never swallow an error. Recover with a named fallback, or rethrow with context.' },
 ];
 
 // ESLint only loads a config file's default export, so this file is the one default export.

@@ -18,10 +18,10 @@ import { renderWizard, type WizardCtx } from '../src/renderer/wizard.ts';
 
 const { document } = parseHTML('<!doctype html><html><body><div id="app"></div></body></html>');
 setDocument(document);
-const app = document.getElementById('app') as unknown as HTMLElement;
+const app = document.getElementById('app') as HTMLElement;
 
 // The wizard schedules its animation with window timers; a plain stand-in is enough here.
-(globalThis as unknown as { window: unknown }).window = { setTimeout: (fn: () => void) => { void fn; return 0; }, clearTimeout: () => {} };
+Object.assign(globalThis, { window: { setTimeout: (fn: () => void) => { void fn; return 0; }, clearTimeout: () => {} } });
 
 const claim = (over: Partial<Claim> = {}): Claim => ({
   id: 'c1',
@@ -146,8 +146,8 @@ test('clicking a row selects it, and Fix this calls the action', () => {
   const calls: string[] = [];
   const b = boardOf([claim()], ['c1']);
   draw(ui(b, 'c1'), actions(calls));
-  (document.querySelector('.claim-row') as unknown as HTMLElement).click();
-  const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as unknown as HTMLElement;
+  (document.querySelector('.claim-row') as HTMLElement).click();
+  const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as HTMLElement;
   fix.click();
   assert.deepEqual(calls, ['select:c1', 'fix:c1']);
 });
@@ -178,7 +178,7 @@ test('a running fix shows its activity and offers no second Fix press', () => {
   const text = draw(ui(boardOf([claim()], ['c1']), 'c1', new Map([['c1', run]])));
   assert.ok(text.includes('Claude is reading the code'));
   assert.ok(text.includes('Read src/a.py'));
-  const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as unknown as HTMLButtonElement;
+  const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as HTMLButtonElement;
   assert.equal(fix.disabled, true);
 });
 
@@ -224,7 +224,7 @@ test('each wizard step draws its title and a way forward', () => {
 test('the planted-bug demo ends on its final state when motion is reduced', () => {
   const { ctx } = ctxFor(demoWizard(1, 2));
   renderWizard(ctx, app);
-  const demo = document.querySelector('.demo') as unknown as HTMLElement;
+  const demo = document.querySelector('.demo') as HTMLElement;
   assert.equal(demo.dataset.stage, '3');
   assert.ok(app.textContent.includes('The same bug is now caught.'));
 });
@@ -237,7 +237,7 @@ test('setup lists what was done, warns about a committed secret, and shows the d
   renderWizard(ctx, app);
   const text = app.textContent;
   for (const must of ['Secrets', 'Commit hook', 'Agent instructions', 'CLAUDE.md (added)', 'detected node', '.env is already committed']) assert.ok(text.includes(must), must);
-  assert.equal((document.querySelector('input[aria-label="Test command"]') as unknown as HTMLInputElement).value, 'npm test');
+  assert.equal((document.querySelector('input[aria-label="Test command"]') as HTMLInputElement).value, 'npm test');
 });
 
 test('the spec step shows the questions beside editable criteria, and local warnings', () => {
@@ -257,7 +257,7 @@ test('Back from the first spec step of a board-started wizard leaves the wizard'
   const { ctx } = ctxFor({ ...demoWizard(4), entry: 'board' });
   ctx.exit = () => calls.push('exit');
   renderWizard(ctx, app);
-  const back = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Back') as unknown as HTMLElement;
+  const back = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Back') as HTMLElement;
   back.click();
   assert.deepEqual(calls, ['exit']);
 });

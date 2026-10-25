@@ -80,6 +80,7 @@ def _fake_anthropic(monkeypatch, reply_text: str):
 
     class Anthropic:
         def __init__(self, *a, **k):
+            calls.append({"client": k})
             self.messages = _Messages()
 
     fake = types.ModuleType("anthropic")
@@ -94,7 +95,8 @@ def test_ac16_claude_provider_request_shape(monkeypatch):
     prov = providers.load("claude")
     out = prov.complete("SYS", "USER", schema=checker.VERDICT_SCHEMA)
     assert out == '{"verdicts": []}'
-    kw = calls[0]
+    assert calls[0] == {"client": {"timeout": 300}}
+    kw = calls[1]
     assert kw["model"] == "claude-opus-5-5"
     assert kw["max_tokens"] == 16000
     assert kw["system"] == "SYS"
