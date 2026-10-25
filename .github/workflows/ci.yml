@@ -20,7 +20,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Install
-        run: pip install -e ".[dev]"
+        # The claude extra puts the anthropic SDK on the path so mypy can check the Claude provider.
+        run: pip install -e ".[dev,claude]"
       - name: Lint
         run: ruff check
       - name: Typecheck
