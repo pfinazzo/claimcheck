@@ -40,4 +40,8 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
       - name: Test
-        run: cd app && npm ci && npm test
+        # One test launches a real Electron window to take a screenshot, so it needs a virtual
+        # display, and the runner has no setuid sandbox helper for Chromium to use.
+        run: cd app && npm ci && xvfb-run -a npm test
+        env:
+          ELECTRON_DISABLE_SANDBOX: "1"
