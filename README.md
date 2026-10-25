@@ -1,6 +1,8 @@
 # claimcheck
 
-Created by [Patrick Finazzo](https://github.com/pfinazzo). First released October 2026.
+[![CI](https://github.com/pfinazzo/claimcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/pfinazzo/claimcheck/actions/workflows/ci.yml)
+
+@author Patrick Finazzo ([pfinazzo](https://github.com/pfinazzo)). Developed privately starting Oct 15, 2026; published Oct 24, 2026.
 
 **A verification ledger for AI-written code.** An AI agent says its change works. claimcheck checks that claim three independent ways, writes the result to an append-only ledger, and shows you which claims are backed and which are only confident.
 
