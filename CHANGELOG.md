@@ -22,6 +22,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 - Open repo takes a pasted folder path as well as the folder picker, and shows each recent repo as its name over its path.
 
 ### Fixed
+- Run claimcheck in Desk said "claimcheck was not found" when `claimcheck` was not on PATH, which is the normal case for a copy installed with pip into a virtualenv, or when Desk is started from the Start menu. Desk now also tries the Python named by `[app].python`, a virtualenv inside the repo (only after you agree to run the repo's commands), and any Python on PATH that has claimcheck installed. The message now says how to install it.
 - Open pull request was offered whenever `gh` was signed in, even for a repo with no remote, and then failed with Node's raw error: the whole command line and pull request body. The button is now disabled with the reason beside it until it can work, the server checks again when it is pressed, `gh`'s refusals become plain sentences, and every failure shown in Desk is cut down to what the program said.
 - Desk showed "This repo can run commands on your computer" as an error toast instead of the dialog that lists the commands with a Run them button. The context bridge dropped the error's code and details on the way to the page; the bridge now carries them as plain data.
 - Desk no longer flashes the whole panel on every run update. The panel's entrance animation plays only when the view or the selected claim changes.

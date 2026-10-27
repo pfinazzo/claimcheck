@@ -264,3 +264,43 @@ test('the spec wizard can start with a goal taken from an issue, and an empty go
   assert.equal((await desk.wizardStart({ entry: 'board', goal: '   ' })).goal, '');
   assert.equal((await desk.wizardStart({ entry: 'board', goal: 42 })).goal, '', 'only text is taken');
 });
+
+test('the repo\'s own virtualenv Python is not started until the commands dialog has been agreed to', async () => {
+  const scene = buildScene({ baseHasConfig: true });
+  const venvPython = path.join(scene.repo, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin', process.platform === 'win32' ? 'python.exe' : 'python');
+  mkdirSync(path.dirname(venvPython), { recursive: true });
+  writeFileSync(venvPython, '', 'utf8');
+  const userDir = path.join(scene.userDir, 'desk');
+  mkdirSync(userDir, { recursive: true });
+  const asked = createRecorder<string>();
+  const spawned = createRecorder<Spawned>();
+  const execFn = async (...call: [string, string[], Record<string, unknown>?]) => {
+    const [file, argList, options] = call;
+    asked.record(file);
+    if (file === 'where' || file === 'which') throw new Error('no claimcheck on PATH');
+    if (argList.join(' ') === '-m claimcheck --version') {
+      if (file === venvPython) return { stdout: 'claimcheck 0.1.0\n' };
+      throw new Error('no claimcheck here');
+    }
+    return runExecFile(file, argList, options);
+  };
+  const spawnFn = ((command: string, argList: readonly string[], options: { cwd?: unknown }) => {
+    spawned.record({ command, argList, cwd: options.cwd });
+    const fake = { stdout: { on: () => fake.stdout }, stderr: { on: () => fake.stderr }, on: (event: string, handler: (code: number) => void) => { if (event === 'close') setImmediate(() => handler(0)); return fake; } };
+    return fake;
+  }) as never;
+  const savedBin = process.env.CLAIMCHECK_BIN;
+  delete process.env.CLAIMCHECK_BIN;
+  try {
+    const desk = createDeskApi({ userDir, keyStore: createKeyStore({ safeStorage: null, dir: userDir }), clipboard: { writeText: () => undefined }, execFn, spawnFn });
+    openDesks.record(desk);
+    assert.equal((await desk.openRepo({ given: scene.repo })).ok, true);
+    await assert.rejects(() => desk.runClaimcheck({}), (error: Error & { code?: string }) => error.code === 'needs-trust');
+    assert.ok(!asked.list().includes(venvPython), 'the repo\'s Python was not asked anything before the person agreed');
+    await desk.runClaimcheck({ trust: true });
+    assert.ok(asked.list().includes(venvPython), 'after agreeing, the repo\'s own virtualenv is tried');
+    assert.equal(spawned.list()[0]?.command, venvPython, 'and it is the one that runs claimcheck');
+  } finally {
+    if (savedBin !== undefined) process.env.CLAIMCHECK_BIN = savedBin;
+  }
+});
