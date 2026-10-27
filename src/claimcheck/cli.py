@@ -328,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft_parser = spec_commands.add_parser("draft", help="write the spec as a conversation with Claude")
     draft_parser.add_argument("--goal", default=None, help="what you want built")
     draft_parser.add_argument("--resume", action="store_true", help="continue the saved conversation")
-    draft_parser.add_argument("--provider", default=None, help="auto | claude | claude-cli | stub (default auto)")
+    draft_parser.add_argument("--provider", default=None, help="auto | claude | claude-cli | openai | stub (default auto)")
     draft_parser.add_argument("--max-rounds", dest="max_rounds", type=int, default=6)
     draft_parser.add_argument("--yes", "-y", action="store_true", help="freeze and commit without asking")
     draft_parser.add_argument("--no-freeze", dest="no_freeze", action="store_true", help="write spec.md only")
@@ -347,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     command_parser = sub.add_parser("check", help="independent model verdict per claim")
     _add_diff_args(command_parser)
-    command_parser.add_argument("--provider", default=None, help="claude | stub")
+    command_parser.add_argument("--provider", default=None, help="auto | claude | claude-cli | openai | stub (default: the config's)")
     command_parser.add_argument("--model", default=None)
     command_parser.set_defaults(func=handle_check)
 
@@ -361,7 +361,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     command_parser = sub.add_parser("run", help="verify, validate, check, mutate, then append to the ledger")
     _add_diff_args(command_parser)
-    command_parser.add_argument("--provider", default=None)
+    command_parser.add_argument("--provider", default=None, help="auto | claude | claude-cli | openai | stub (default: the config's)")
     command_parser.add_argument("--model", default=None)
     command_parser.add_argument("--test-cmd", dest="test_cmd", default=None)
     command_parser.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)

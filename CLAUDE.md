@@ -38,6 +38,7 @@ CI runs the Desk tests under `xvfb-run -a` with `ELECTRON_DISABLE_SANDBOX=1`, be
 - `claimcheck run` mutates only the Python side: `app/**` is in the config's `ignore`, and pytest doesn't run the Desk suite.
 - Never run `claimcheck init` or a mutation run on a dirty tree you care about. A mutation run edits files while it works and restores them after.
 - `.claimcheck/ledger.jsonl` is append-only and hash-chained. Never edit or remove a line; CI checks that it only grew.
+- `AGENTS.md` is a word-for-word copy of this file for agents that read it instead, such as OpenAI's Codex. Change both together; `tests/test_agents_md.py` fails when they differ.
 
 <!-- claimcheck:begin (managed by `claimcheck init`; edits inside this block are overwritten) -->
 ## claimcheck
