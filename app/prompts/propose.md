@@ -4,6 +4,10 @@ The flagged claim:
 
 {{claim}}
 
+What the person is trying to do:
+
+{{goal}}
+
 Before proposing anything, read:
 
 1. The project's own rules, if it has them: `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, or a style guide the README points to. A fix that breaks them is not a fix.
@@ -20,6 +24,8 @@ Before proposing anything, read:
 - `effort`: `small`, `medium` or `large`.
 - `touches`: the files it would change or add, including tests.
 
-Write in plain English for an engineer new to this codebase. Be honest about the costs. If one approach is clearly the best fit, its pros should make that plain, but do not leave out its cons.
+Write in plain English for an engineer new to this codebase. Be honest about the costs.
+
+Then recommend exactly one approach. Set `recommended` to true on the single approach you would pick and to false on all the others. Choose it by weighing each approach's pros and cons against what the person is trying to do (their goal above and the frozen criteria), the project's own rules, and how much risk and effort it adds. In `why_recommended`, write two or three plain sentences: why this one fits what the person wants, what it gives up, and why each of the others loses to it. Do not pick the largest or the cleverest approach by default, and do not hedge. Pick one.
 
 Answer only with the JSON the schema asks for.

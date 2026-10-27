@@ -85,13 +85,15 @@ export const PROPOSALS_SCHEMA = {
           cons: { type: 'array', items: { type: 'string' } },
           effort: { type: 'string', enum: ['small', 'medium', 'large'] },
           touches: { type: 'array', items: { type: 'string' } },
+          recommended: { type: 'boolean' },
         },
-        required: ['title', 'summary', 'pros', 'cons', 'effort', 'touches'],
+        required: ['title', 'summary', 'pros', 'cons', 'effort', 'touches', 'recommended'],
         additionalProperties: false,
       },
     },
+    why_recommended: { type: 'string' },
   },
-  required: ['proposals'],
+  required: ['proposals', 'why_recommended'],
   additionalProperties: false,
 };
 
@@ -136,9 +138,14 @@ const header = (ctx: PromptContext): string =>
     `On this computer it is at: ${ctx.repo.path} (branch ${ctx.repo.branch} at ${String(ctx.repo.head ?? '').slice(0, 7)}). Work in that folder. Every path below is relative to it.`,
   ].join('\n');
 
+const NO_GOAL_RECORDED = 'No goal was recorded for this change. Infer it from the frozen acceptance criteria in .claimcheck/spec.md and from the claim itself.';
+
+/** The person's own words about what they want built, or a line telling Claude to infer it. */
+const describeGoal = (ctx: PromptContext): string => ctx.goal?.trim() || NO_GOAL_RECORDED;
+
 /** AC 17. */
 export const proposePrompt = (ctx: PromptContext): string =>
-  redactText(`${header(ctx)}\n\n${fill(readTemplate('propose.md'), { claim: describeClaim(ctx), test_cmd: ctx.config.test_cmd })}\n\n${CLOSING_SENTENCE}`).text;
+  redactText(`${header(ctx)}\n\n${fill(readTemplate('propose.md'), { claim: describeClaim(ctx), goal: describeGoal(ctx), test_cmd: ctx.config.test_cmd })}\n\n${CLOSING_SENTENCE}`).text;
 
 /** The build prompt for a chosen approach. */
 export const implementPrompt = (ctx: PromptContext, proposal: Proposal, rejected: Proposal[] = []): string =>

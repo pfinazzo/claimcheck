@@ -43,26 +43,48 @@ export const cleanProposal = (p: unknown): Proposal | null => {
   const touches = textList(p.touches);
   const effort = EFFORTS.find((e) => e === p.effort);
   if (!title || !summary || !pros || !cons || !touches || !effort) return null;
-  return { title, summary, pros, cons, effort, touches };
+  return { title, summary, pros, cons, effort, touches, recommended: p.recommended === true };
+};
+
+/**
+ * Exactly one approach is recommended, and it comes first. If Claude marked none, nothing is
+ * recommended and the page says nothing. If it marked several, only the first mark stands.
+ */
+const withOneRecommendedFirst = (proposals: Proposal[]): Proposal[] => {
+  const chosen = proposals.find((p) => p.recommended);
+  if (!chosen) return proposals;
+  return [{ ...chosen, recommended: true }, ...proposals.filter((p) => p !== chosen).map((p) => ({ ...p, recommended: false }))];
+};
+
+export type ProposalSet = {
+  proposals: Proposal[];
+  /** Claude's reason for the recommendation, empty when nothing is recommended. */
+  why: string;
+};
+
+const toProposalSet = (list: unknown, why: unknown): ProposalSet => {
+  const proposals = withOneRecommendedFirst(validProposals(list));
+  const reason = typeof why === 'string' ? why.trim() : '';
+  return { proposals, why: proposals.some((p) => p.recommended) ? reason : '' };
 };
 
 const validProposals = (list: unknown): Proposal[] =>
   Array.isArray(list) ? list.map(cleanProposal).filter((p): p is Proposal => p !== null).slice(0, 6) : [];
 
-/** Proposals from a CLI result (structured output) or JSON inside text, each checked against the schema. */
-export const parseProposals = (result: unknown): Proposal[] => {
+/** Proposals and the recommendation from a CLI result (structured output) or JSON inside text, each checked against the schema. */
+export const parseProposalSet = (result: unknown): ProposalSet => {
   const r: Rec = isRecord(result) ? result : {};
   const structured = r.structured ?? r.structured_output;
-  const fromStructured = validProposals(isRecord(structured) ? structured.proposals : undefined);
-  if (fromStructured.length) return fromStructured;
+  const fromStructured = isRecord(structured) ? toProposalSet(structured.proposals, structured.why_recommended) : null;
+  if (fromStructured?.proposals.length) return fromStructured;
   const text = typeof result === 'string' ? result : String(r.result ?? '');
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start >= 0 && end > start) {
     try {
       const parsed: unknown = JSON.parse(text.slice(start, end + 1));
-      const fromText = validProposals(isRecord(parsed) ? parsed.proposals : undefined);
-      if (fromText.length) return fromText;
+      const fromText = isRecord(parsed) ? toProposalSet(parsed.proposals, parsed.why_recommended) : null;
+      if (fromText?.proposals.length) return fromText;
     } catch {
       /* fall through */
     }
@@ -178,6 +200,8 @@ export type PublicRun = {
   mode: 'cli' | 'api';
   activity: string[];
   proposals: Proposal[] | null;
+  /** Why Claude recommends the first proposal, or null when it recommended none. */
+  recommendationWhy: string | null;
   proposal: Proposal | null;
   error: string | null;
   needsSignIn: boolean;
@@ -191,9 +215,10 @@ export type PublicRun = {
   prUrl: string | null;
 };
 
-type FixRun = Omit<PublicRun, 'proposals' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> & {
+type FixRun = Omit<PublicRun, 'proposals' | 'recommendationWhy' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> & {
   mode?: 'cli' | 'api';
   proposals?: Proposal[] | null;
+  recommendationWhy?: string;
   proposal?: Proposal;
   proposeRunId?: string;
   repoPath: string;
@@ -215,9 +240,11 @@ export type FixerOptions = {
   execFn?: ExecFn;
   claudeBin?: string | null;
   onUpdate?: (run: PublicRun) => void;
+  /** What the person said they wanted built in this repo, for Claude to weigh the approaches against. */
+  goalFor?: (repoPath: string) => string;
 };
 
-export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn as SpawnFn, execFn = execFileP as unknown as ExecFn, claudeBin = null, onUpdate = () => {} }: FixerOptions = {}) => {
+export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn as SpawnFn, execFn = execFileP as unknown as ExecFn, claudeBin = null, onUpdate = () => {}, goalFor = () => '' }: FixerOptions = {}) => {
   const runs = new Map<string, FixRun>();
   const publish = (run: FixRun): void => onUpdate(toPublic(run));
   const isBusy = (): boolean => [...runs.values()].some((r) => r.status === 'running');
@@ -239,7 +266,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
   const contextFor = (board: Board, claimId: string): PromptContext & { config: Board['config'] } => {
     const claim = board.claims.find((c) => c.id === claimId);
     if (!claim) throw new Error(`No claim ${claimId} on the board.`);
-    return { repo: board.repo, config: board.config, claim };
+    return { repo: board.repo, config: board.config, claim, goal: goalFor(board.repo.path) };
   };
 
   /** What API mode gets instead of a repo: the diff of the claim's files and the test files it names. */
@@ -276,7 +303,9 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
           if (!keyStore?.hasKey()) throw new Error('No API key saved. Connect Claude first.');
           addActivity(run, 'Sending the claim, its diff and tests to the API…');
           const text = await apiModule.proposeWithStore({ store: keyStore, system: prompt, user: await inlineContext(ctx), schema: PROPOSALS_SCHEMA, model });
-          run.proposals = parseProposals(text);
+          const set = parseProposalSet(text);
+          run.proposals = set.proposals;
+          run.recommendationWhy = set.why;
         } else {
           const bin = claudeBin ?? (await cliModule.findClaude());
           if (!bin) throw new Error('Claude Code is not installed on this computer (or set CLAUDE_BIN).');
@@ -286,7 +315,9 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
             run.needsSignIn = out.needsSignIn;
             throw new Error(out.error);
           }
-          run.proposals = parseProposals(out);
+          const set = parseProposalSet(out);
+          run.proposals = set.proposals;
+          run.recommendationWhy = set.why;
         }
         run.status = 'done';
       } catch (error) {
@@ -402,7 +433,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
 
   const toPublic = (run: FixRun): PublicRun => ({
     id: run.id, kind: run.kind, claimId: run.claimId, status: run.status, startedAt: run.startedAt, mode: run.mode ?? 'cli',
-    activity: run.activity, proposals: run.proposals ?? null, proposal: run.proposal ?? null, error: run.error, needsSignIn: run.needsSignIn,
+    activity: run.activity, proposals: run.proposals ?? null, recommendationWhy: run.recommendationWhy || null, proposal: run.proposal ?? null, error: run.error, needsSignIn: run.needsSignIn,
     branch: run.branch ?? null, worktree: run.worktree ?? null, tests: run.tests ?? null, killCondition: run.killCondition ?? null, commits: run.commits ?? [],
     summary: run.summary ?? null, prompt: run.prompt ?? null, prUrl: run.prUrl ?? null,
   });

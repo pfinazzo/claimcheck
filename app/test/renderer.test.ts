@@ -174,7 +174,7 @@ test('markup in a claim, a verdict, a path or a mutation is shown as text, never
 });
 
 test('a running fix shows its activity and offers no second Fix press', () => {
-  const run = { id: 'run1', kind: 'propose', claimId: 'c1', status: 'running', startedAt: 0, mode: 'cli', activity: ['Read src/a.py'], proposals: null, proposal: null, error: null, needsSignIn: false, branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null } satisfies PublicRun;
+  const run = { id: 'run1', kind: 'propose', claimId: 'c1', status: 'running', startedAt: 0, mode: 'cli', activity: ['Read src/a.py'], proposals: null, recommendationWhy: null, proposal: null, error: null, needsSignIn: false, branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null } satisfies PublicRun;
   const text = draw(ui(boardOf([claim()], ['c1']), 'c1', new Map([['c1', run]])));
   assert.ok(text.includes('Claude is reading the code'));
   assert.ok(text.includes('Read src/a.py'));

@@ -5,23 +5,29 @@
  * lib/desk-api.ts, pushes board and view updates to the renderer, and runs
  * the headless `--screenshot <repo> <out.png>` mode used for verification:
  *
- *   npm run screenshot -- <repo> out.png [--theme light|dark] [--size 1440x900] [--view board|wizard:N]
+ *   npm run screenshot -- <repo> out.png [--theme light|dark] [--size 1440x900] [--view board|board:trust|board:github|board:code|wizard:N]
  *
  * @author Patrick Finazzo
  */
 
 import { BrowserWindow, app, clipboard, dialog, ipcMain, nativeTheme, safeStorage, shell } from 'electron';
-import { writeFileSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createKeyStore } from './lib/claude-api.ts';
 import { createDeskApi } from './lib/desk-api.ts';
 import { appRoot } from './lib/paths.ts';
+import { toPlainMessage } from './lib/plain-error.ts';
 import { parseScreenshotArgs } from './lib/screenshot-args.ts';
 import type { InvokeChannel, Reply } from './shared/ipc.ts';
 
 const argv = process.argv.slice(1);
 const screenshot = parseScreenshotArgs(argv);
+
+// Screenshot runs open throwaway repos, so they get a data folder of their own. Sharing the real one
+// filled the person's recent repos with temp folders, and the app then opened one of them at launch.
+if (screenshot) app.setPath('userData', mkdtempSync(path.join(os.tmpdir(), 'claimcheck-desk-shot-')));
 
 let win: BrowserWindow | null = null;
 let api: ReturnType<typeof createDeskApi> | null = null;
@@ -38,7 +44,7 @@ const createWindow = (): BrowserWindow => {
     minWidth: 720,
     minHeight: 520,
     title: 'claimcheck Desk',
-    backgroundColor: '#ffffff',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#070912' : '#f3f5fb',
     show: !screenshot,
     autoHideMenuBar: true,
     useContentSize: true,
@@ -52,7 +58,7 @@ const createWindow = (): BrowserWindow => {
     },
   });
   const url = pathToFileURL(path.join(root, 'renderer', 'index.html'));
-  if (screenshot && screenshot.view.startsWith('wizard:')) url.searchParams.set('demo', screenshot.view);
+  if (screenshot && screenshot.view !== 'board') url.searchParams.set('demo', screenshot.view);
   void created.loadURL(url.href);
   created.on('closed', () => {
     win = null;
@@ -63,7 +69,7 @@ const createWindow = (): BrowserWindow => {
 const errorFields = (error: unknown): { message: string; code: string | null; details: unknown } => {
   const e = error as { message?: unknown; code?: unknown; details?: unknown } | null;
   return {
-    message: typeof e?.message === 'string' ? e.message : String(error),
+    message: toPlainMessage(error),
     code: typeof e?.code === 'string' ? e.code : null,
     details: e?.details ?? null,
   };
@@ -77,7 +83,10 @@ const wire = (): ReturnType<typeof createDeskApi> => {
     keyStore,
     clipboard,
     pickFolder: async () => {
-      const res = win ? await dialog.showOpenDialog(win, { properties: ['openDirectory'] }) : await dialog.showOpenDialog({ properties: ['openDirectory'] });
+      // Start beside the last project that was opened, else in Documents, never in a scratch folder.
+      const lastRepo = api?.lastRepo();
+      const options = { title: 'Open a repository', defaultPath: lastRepo ? path.dirname(lastRepo) : app.getPath('documents'), properties: ['openDirectory' as const] };
+      const res = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
       return res.canceled ? null : (res.filePaths[0] ?? null);
     },
     openExternal: (url) => shell.openExternal(url),
@@ -108,6 +117,9 @@ const wire = (): ReturnType<typeof createDeskApi> => {
   handle('copyPrompt', (p: Parameters<typeof desk.copyPrompt>[0]) => desk.copyPrompt(p));
   handle('runClaimcheck', (p: Parameters<typeof desk.runClaimcheck>[0]) => desk.runClaimcheck(p));
   handle('openPullRequest', (p: Parameters<typeof desk.openPullRequest>[0]) => desk.openPullRequest(p));
+  handle('githubStatus', () => desk.githubStatus());
+  handle('githubSignIn', () => desk.githubSignIn());
+  handle('inspectFix', (p: Parameters<typeof desk.inspectFix>[0]) => desk.inspectFix(p));
   handle('openPath', (p: Parameters<typeof desk.openPath>[0]) => desk.openPath(p));
   handle('trustRepo', () => desk.trustRepo());
   handle('getRun', (p: Parameters<typeof desk.getRun>[0]) => desk.getRun(p));
@@ -137,7 +149,9 @@ const captureAndExit = async (): Promise<void> => {
     // Offscreen windows still get clamped to the screen's work area; force the content size.
     win.setContentSize(screenshot.width, screenshot.height);
     // let the animations settle: the planted-bug demo needs about five seconds to reach its last frame
-    await new Promise((r) => setTimeout(r, screenshot.view === 'wizard:1:2' ? 5600 : 1800));
+    // the planted-bug demo needs about five seconds, and the GitHub dialog waits on gh
+    const settleMs: Record<string, number> = { 'wizard:1:2': 5600, 'board:github': 6000 };
+    await new Promise((r) => setTimeout(r, settleMs[screenshot.view] ?? 1800));
     const image = await win.webContents.capturePage();
     writeFileSync(screenshot.out, image.toPNG());
     process.stdout.write(`screenshot written: ${screenshot.out} (${image.getSize().width}x${image.getSize().height})\n`);

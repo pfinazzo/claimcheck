@@ -56,7 +56,7 @@ const assertClean = (text: unknown, where: string): void => {
 test('the proposal and build prompts carry no secret from the claim, the evidence, the survivors or the remote url', () => {
   const c = ctx();
   assertClean(proposePrompt(c), 'the proposal prompt');
-  const proposal = { title: 't', summary: `use ${KEY}`, pros: [], cons: [], effort: 'small' as const, touches: ['src/a.py'] };
+  const proposal = { title: 't', summary: `use ${KEY}`, pros: [], cons: [], effort: 'small' as const, touches: ['src/a.py'], recommended: false };
   assertClean(implementPrompt(c, proposal, []), 'the build prompt');
   assert.match(proposePrompt(c), /\[REDACTED:/);
 });
