@@ -31,6 +31,8 @@ export type GithubUi = {
   /** Keyed `pull:12` or `issue:7`. */
   details: Map<string, GithubDetailLoad>;
   ghOk: boolean;
+  /** The pull request being fetched for a check right now, so a second press does nothing. */
+  checkingPull: number | null;
 };
 
 export type GithubActions = {
@@ -40,6 +42,8 @@ export type GithubActions = {
   setGithubFilter: (options: { filter: GithubFilter }) => void;
   openPath: (target: string) => void;
   connectGithub: () => void;
+  /** Fetches the pull request into a folder of its own and grades its claims there. */
+  checkPull: (options: { number: number }) => void;
 };
 
 type Tone = 'good' | 'bad' | 'warn' | 'quiet';
@@ -259,6 +263,23 @@ const toBodyText = ({ body }: { body: string }): string => (body.length > BODY_L
 /** The description as GitHub would show it: formatted, with links that open in the browser. */
 const renderBody = ({ body, actions }: { body: string; actions: GithubActions }): HTMLElement => (body.trim() ? makeElement({ tag: 'div', props: { class: 'gh-body' }, children: [renderMarkdown({ text: toBodyText({ body }), onOpenLink: actions.openPath })] }) : renderMuted({ text: 'No description.' }));
 
+/**
+ * What claimcheck can do with this pull request. A branch that carries claims can be graded; one that
+ * does not has nothing to grade, and the words say whose move that is.
+ */
+const renderClaimcheckSection = ({ pull, ui, actions }: { pull: PullRequestDetail; ui: GithubUi; actions: GithubActions }): HTMLElement => {
+  const isBusy = ui.checkingPull === pull.number;
+  const offer = makeElement({
+    tag: 'div',
+    props: { class: 'pr-offer' },
+    children: [
+      renderMuted({ text: 'Desk fetches the branch into its own folder, so your checkout is not touched. It asks before running anything, shows you the commands first, and grades the claims there.' }),
+      makeElement({ tag: 'div', props: { class: 'row' }, children: [makeElement({ tag: 'button', props: { class: 'btn primary', attrs: { type: 'button', disabled: isBusy }, on: { click: () => actions.checkPull({ number: pull.number }) } }, children: [isBusy ? 'Fetching\u2026' : 'Check this pull request'] })] }),
+    ],
+  });
+  return renderSection({ title: 'Claimcheck', children: [pull.carriesClaims ? offer : renderMuted({ text: 'This branch has no .claimcheck/claims.yaml, so there is nothing for claimcheck to grade. Ask its author, or their coding agent, to add claims.' })] });
+};
+
 const renderLinks = ({ pull, actions }: { pull: PullRequestDetail; actions: GithubActions }): HTMLElement =>
   pull.linkedIssues.length
     ? makeElement({ tag: 'ul', props: { class: 'plain' }, children: pull.linkedIssues.map((issue) => makeElement({ tag: 'li', props: {}, children: [renderButton({ label: `#${issue.number} ${issue.title}`, onClick: () => actions.openPath(issue.url), cls: 'ghost' })] })) })
@@ -271,7 +292,7 @@ const renderFiles = ({ pull }: { pull: PullRequestDetail }): HTMLElement =>
     children: pull.files.map((file) => makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'span', props: { class: 'mono' }, children: [file.path] }), makeElement({ tag: 'span', props: { class: 'muted' }, children: [`+${file.additions} −${file.deletions}`] })] })),
   });
 
-const renderPullDetail = ({ pull, actions, nowMs }: { pull: PullRequestDetail; actions: GithubActions; nowMs: number }): HTMLElement => {
+const renderPullDetail = ({ pull, ui, actions, nowMs }: { pull: PullRequestDetail; ui: GithubUi; actions: GithubActions; nowMs: number }): HTMLElement => {
   const merge = MERGE_WORDS.get(pull.merge) ?? { value: '', note: '', tone: '' };
   const review = REVIEW_WORDS.get(pull.review);
   return makeElement({
@@ -297,7 +318,7 @@ const renderPullDetail = ({ pull, actions, nowMs }: { pull: PullRequestDetail; a
           }),
         ],
       }),
-      pull.carriesClaims ? renderSection({ title: 'Claimcheck', children: [renderMuted({ text: 'This branch carries its own claims file (.claimcheck/claims.yaml), so claimcheck can grade the claims its author wrote.' })] }) : null,
+      renderClaimcheckSection({ pull, ui, actions }),
       renderSection({ title: 'Linked issues', children: [renderLinks({ pull, actions })] }),
       pull.labels.length ? renderSection({ title: 'Labels', children: [makeElement({ tag: 'p', props: { class: 'gh-pills' }, children: pull.labels.map((label) => renderPill({ text: label, tone: 'quiet' })) })] }) : null,
       renderSection({ title: `Files changed (${pull.files.length})`, children: [renderFiles({ pull })] }),
@@ -334,7 +355,7 @@ const renderDetailFor = ({ key, emptyText, ui, actions, nowMs }: { key: string |
   const views = new Map<GithubDetailLoad['state'], () => HTMLElement>([
     ['loading', () => renderDetailMessage({ children: [renderMuted({ text: 'Loading…' })] })],
     ['failed', () => renderDetailMessage({ children: [makeElement({ tag: 'p', props: { class: 'error', attrs: { role: 'alert' } }, children: [load.state === 'failed' ? load.message : ''] })] })],
-    ['pull', () => (load.state === 'pull' ? renderPullDetail({ pull: load.value, actions, nowMs }) : renderDetailMessage({ children: [] }))],
+    ['pull', () => (load.state === 'pull' ? renderPullDetail({ pull: load.value, ui, actions, nowMs }) : renderDetailMessage({ children: [] }))],
     ['issue', () => (load.state === 'issue' ? renderIssueDetail({ issue: load.value, actions, nowMs }) : renderDetailMessage({ children: [] }))],
   ]);
   return (views.get(load.state) ?? (() => renderDetailMessage({ children: [] })))();

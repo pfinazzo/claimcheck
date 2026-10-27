@@ -45,10 +45,10 @@ const makeBackedClaim = ({ id, claim }: { id: string; claim: string }): Claim =>
 });
 
 test('the description lists every claim with its three figures and says backed is not a review', () => {
-  const body = buildBranchPrBody({ claims: [makeBackedClaim({ id: 'c1', claim: 'fees | taxes\nadd up' }), { ...makeBackedClaim({ id: 'c2', claim: 'no run' }), mutation: null, confidence: null, verdict: null, flags: ['unverified'] }] });
-  assert.match(body, /2 claims about this change: 1 backed, and 1 settled by hand but still flagged\. Read those first\./);
+  const body = buildBranchPrBody({ claims: [makeBackedClaim({ id: 'c1', claim: 'fees | taxes\nadd up' }), { ...makeBackedClaim({ id: 'c2', claim: 'no run' }), mutation: null, confidence: null, verdict: null, flags: ['unverified'], status: 'accepted' }] });
+  assert.match(body, /2 claims about this change: 1 backed, 1 settled by hand but still flagged\. Read the flagged ones first\./);
   assert.match(body, /\| c1: fees \/ taxes add up \| 0\.95 \| supported \| 90% \| backed \|/, 'a pipe or newline in a claim cannot break the table');
-  assert.match(body, /\| c2: no run \| none \| not run \| not run \| settled by hand, still flagged: unverified \|/);
+  assert.match(body, /\| c2: no run \| none \| not run \| not run \| accepted as a risk, still flagged: unverified \|/);
   assert.match(buildBranchPrBody({ claims: [makeBackedClaim({ id: 'c1', claim: 'x' })] }), /Every claim about this change is backed \(1\)\./);
   assert.match(body, /does not replace a review/);
 });

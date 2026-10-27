@@ -17,6 +17,7 @@ import { connectDialog, openDialog, showTrustDialog, type DialogHost } from './d
 import { DEMO_FIX, buildDemoClearBoard, buildDemoGraphBoard, buildDemoProposeRun, runDemoWizard } from './demo.ts';
 import { makeElement, mount, type Child } from './dom.ts';
 import { showGithubDialog } from './github-dialog.ts';
+import { showSummaryDialog } from './summary-dialog.ts';
 import { toDetailKey, type GithubDetailLoad, type GithubKind } from './github-view.ts';
 import { refreshConfidenceMapTheme, drawConfidenceMap } from './graph-view.ts';
 import { createScene } from './scene.ts';
@@ -38,7 +39,7 @@ darkScheme.addEventListener('change', (event) => {
   refreshConfidenceMapTheme();
 });
 
-const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, branchPr: null, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), running: false, drawer: { open: false, status: '', lines: [] } };
+const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, branchPr: null, pullRequestCheck: null, checkingPull: null, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), running: false, drawer: { open: false, status: '', lines: [] } };
 // What the page is showing right now, and its pending timers.
 const page: { view: ViewName; wizard: WizardState | null; connection: ConnectionSummary | null; wasSignalled: boolean; toastTimer: number; saveTimer: number; shownBefore: string; didDemoAction: boolean; clearRepo: string | null; needsBefore: number; celebratedAtMs: number } = {
   view: 'empty',
@@ -212,6 +213,39 @@ const boardActions: BoardActions = {
     renderAll();
     loadShownGithubList({ isForced: false });
   },
+  checkPull: ({ number }) => runGuarded({ callback: async () => {
+    if (ui.checkingPull !== null) return;
+    ui.checkingPull = number;
+    renderAll();
+    try {
+      await desk.checkPullRequest({ number });
+      ui.mode = 'list';
+      applyView({ value: await desk.getView() });
+    } finally {
+      ui.checkingPull = null;
+      renderAll();
+    }
+    boardActions.runClaimcheck();
+  } }),
+  leavePullCheck: () => runGuarded({ callback: async () => {
+    await desk.leavePullRequestCheck();
+    ui.mode = 'pulls';
+    applyView({ value: await desk.getView() });
+    loadShownGithubList({ isForced: false });
+  } }),
+  previewPullSummary: () => runGuarded({ callback: async () => {
+    const preview = await desk.previewPullRequestSummary();
+    showSummaryDialog({
+      host,
+      preview,
+      onOpenLink: (url) => runGuarded({ callback: async () => { await desk.openPath({ target: url }); } }),
+      onPost: () => runGuarded({ callback: async () => {
+        const { url } = await desk.postPullRequestSummary({ body: preview.body });
+        host.close();
+        toast({ text: `Posted on the pull request: ${url}` });
+      } }),
+    });
+  } }),
   refreshGithub: () => {
     ui.details.clear();
     loadShownGithubList({ isForced: true });
@@ -423,6 +457,7 @@ const applyView = ({ value }: { value: Awaited<ReturnType<typeof desk.getView>> 
   page.view = value.view;
   page.wizard = value.wizard;
   page.connection = value.connection;
+  ui.pullRequestCheck = value.pullRequestCheck;
   if (value.board) applyBoard({ board: value.board });
   renderAll();
 };

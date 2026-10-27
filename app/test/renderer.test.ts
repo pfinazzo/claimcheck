@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
 import type { PublicRun } from '../src/lib/fixer.ts';
-import type { PullRequestDetail, PullRequestSummary } from '../src/shared/github.ts';
+import type { PullRequestCheck, PullRequestDetail, PullRequestSummary } from '../src/shared/github.ts';
+import { showSummaryDialog } from '../src/renderer/summary-dialog.ts';
+import type { Child } from '../src/renderer/dom.ts';
 import type { GithubDetailLoad } from '../src/renderer/github-view.ts';
 import type { Board, Claim } from '../src/shared/types.ts';
 import { renderBoard, type BoardActions, type BoardUi } from '../src/renderer/board.ts';
@@ -68,6 +70,9 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   setMode: ({ mode }) => calls.record(`mode:${mode}`),
   setTheme: ({ choice }) => calls.record(`theme:${choice}`),
   openBranchPr: () => calls.record('branch-pr'),
+  leavePullCheck: () => calls.record('leave'),
+  previewPullSummary: () => calls.record('preview'),
+  checkPull: ({ number }) => calls.record(`check:${number}`),
   refreshGithub: () => calls.record('refresh'),
   selectPull: ({ number }) => calls.record(`pull:${number}`),
   selectIssue: ({ number }) => calls.record(`issue:${number}`),
@@ -81,7 +86,7 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
 });
 
 const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system', branchPr = null, github = {} }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme']; branchPr?: BoardUi['branchPr']; github?: Partial<BoardUi> }): BoardUi => ({
-  board, mode, selectedId, runs, ghOk, theme, branchPr, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), ...github, running: false, drawer: { open: false, status: '', lines: [] },
+  board, mode, selectedId, runs, ghOk, theme, branchPr, pullRequestCheck: null, checkingPull: null, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), ...github, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = ({ ui, actions = makeActions() }: { ui: BoardUi; actions?: BoardActions }): string => {
@@ -552,7 +557,7 @@ test('an opened pull request shows its checks, review, files, linked issues and 
   const hostile = '<img src=x onerror=alert(1)>';
   const detail = buildPullDetail({ number: 5, over: { body: `**Moves** the fee rules ${hostile}`, review: 'approved', linkedIssues: [{ number: 7, title: 'Slow checkout', url: 'https://github.com/a/b/issues/7' }], carriesClaims: true, labels: ['bug'] } });
   const text = drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 5 })] }), selectedPull: 5, details: new Map([['pull:5', { state: 'pull', value: detail }]]) } });
-  for (const must of ['Checks', 'passing', 'Approved', 'lee approved', 'Can merge', '#7 Slow checkout', 'src/fees.py', 'Files changed (1)', 'carries its own claims file', 'bug']) {
+  for (const must of ['Checks', 'passing', 'Approved', 'lee approved', 'Can merge', '#7 Slow checkout', 'src/fees.py', 'Files changed (1)', 'Check this pull request', 'bug']) {
     assert.ok(text.includes(must), must);
   }
   assert.ok(text.includes('[image]'), 'a picture tag is named, not built');
@@ -576,4 +581,74 @@ test('the issues tab lists issues, and opened ones show their labels and who is 
     assert.ok(text.includes(must), must);
   }
   assert.ok(!text.includes('Needs my review'), 'issues have no review filter');
+});
+
+// ---- grading a pull request -------------------------------------------------------------------------------------------------
+
+const buildCheck = ({ over = {} }: { over?: Partial<PullRequestCheck> } = {}): PullRequestCheck => ({
+  number: 7, title: 'Add fee rules', url: 'https://github.com/a/b/pull/7', headSha: 'abcdef0123456789abcdef0123456789abcdef01', baseRef: 'origin/main', originPath: 'C:/shop', configSource: 'base', ...over,
+});
+
+test('while a pull request is graded, a bar says which one, which commit and whose settings, and offers the way out', () => {
+  const calls = createRecorder<string>();
+  const board = readBoard({ claims: [makeClaim({ over: { flags: ['refuted'] } })], queue: ['c1'] });
+  const text = draw({ ui: makeUi({ board, github: { pullRequestCheck: buildCheck() } }), actions: makeActions({ calls }) });
+  for (const must of ['Checking pull request #7', 'Add fee rules', 'Commit abcdef0123 against origin/main', 'Using the settings on origin/main, so the pull request cannot loosen its own checks.']) {
+    assert.ok(text.includes(must), must);
+  }
+  const press = ({ label }: { label: string }): void => ([...document.querySelectorAll('.pr-check button')].find((button) => button.textContent === label) as HTMLElement).click();
+  press({ label: 'Post results' });
+  press({ label: 'Back' });
+  assert.deepEqual(calls.list(), ['preview', 'leave']);
+  assert.deepEqual([...document.querySelectorAll('.mode-tabs .tab')].map((tab) => tab.textContent), ['Claims', 'Confidence map'], 'the repo\'s own pull request tabs step aside');
+});
+
+test('a pull request that brings its own settings says the checker is still yours', () => {
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: [] }), github: { pullRequestCheck: buildCheck({ over: { configSource: 'pull-request' } }) } }) });
+  assert.ok(text.includes('brings its own claimcheck settings'));
+  assert.ok(text.includes('The checker is still yours.'));
+});
+
+test('when every claim of a graded pull request is settled, the way forward is to post the results, not to open a pull request', () => {
+  const calls = createRecorder<string>();
+  const text = draw({ ui: makeUi({ board: readClearBoard(), ghOk: true, github: { pullRequestCheck: buildCheck() } }), actions: makeActions({ calls }) });
+  assert.ok(text.includes('Post results to the pull request'));
+  assert.ok(text.includes('You see the exact comment first.'));
+  assert.ok(![...document.querySelectorAll('.all-clear button')].some((button) => button.textContent === 'Open pull request'));
+  ([...document.querySelectorAll('.all-clear button')].find((button) => button.textContent === 'Post results to the pull request') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['preview']);
+});
+
+test('a pull request with claims offers Check this pull request, and says what it will and will not do', () => {
+  const calls = createRecorder<string>();
+  const detail = buildPullDetail({ number: 5, over: { carriesClaims: true } });
+  const text = drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 5 })] }), selectedPull: 5, details: new Map([['pull:5', { state: 'pull', value: detail }]]) }, actions: makeActions({ calls }) });
+  assert.ok(text.includes('your checkout is not touched'));
+  assert.ok(text.includes('shows you the commands first'));
+  ([...document.querySelectorAll('.detail button')].find((button) => button.textContent === 'Check this pull request') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['check:5']);
+});
+
+test('while a pull request is being fetched its button is disabled, and one without claims says whose move it is', () => {
+  const detail = buildPullDetail({ number: 5, over: { carriesClaims: true } });
+  drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 5 })] }), selectedPull: 5, checkingPull: 5, details: new Map([['pull:5', { state: 'pull', value: detail }]]) } });
+  const busy = [...document.querySelectorAll('.detail button')].find((button) => button.textContent === 'Fetching\u2026');
+  assert.equal(busy?.hasAttribute('disabled'), true);
+  const without = drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 6 })] }), selectedPull: 6, details: new Map([['pull:6', { state: 'pull', value: buildPullDetail({ number: 6 }) }]]) } });
+  assert.ok(without.includes('nothing for claimcheck to grade'));
+  assert.ok(without.includes('Ask its author'));
+  assert.ok(![...document.querySelectorAll('.detail button')].some((button) => button.textContent === 'Check this pull request'));
+});
+
+test('the post dialog shows the exact comment formatted, and posts only when Post comment is pressed', () => {
+  const calls = createRecorder<string>();
+  const host = { show: () => undefined, close: () => calls.record('closed'), isOpen: () => true, toast: () => undefined, showWide: (title: string, ...body: Child[]) => { calls.record(`title:${title}`); mount({ parent: app, children: body }); } };
+  showSummaryDialog({ host, preview: { number: 7, url: 'https://github.com/a/b/pull/7', body: '## claimcheck review\n\n| Claim | Status |\n| --- | --- |\n| c1 | **backed** |' }, onPost: () => calls.record('post'), onOpenLink: () => undefined });
+  assert.equal(document.querySelector('.summary-preview h4')?.textContent, 'claimcheck review');
+  assert.equal(document.querySelector('.summary-preview table strong')?.textContent, 'backed');
+  assert.deepEqual(calls.list(), ['title:Post on pull request #7'], 'nothing is posted by showing it');
+  ([...document.querySelectorAll('button')].find((button) => button.textContent === 'Cancel') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['title:Post on pull request #7', 'closed']);
+  ([...document.querySelectorAll('button')].find((button) => button.textContent === 'Post comment') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['title:Post on pull request #7', 'closed', 'post']);
 });
