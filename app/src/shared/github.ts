@@ -86,6 +86,20 @@ export type IssueDetail = IssueSummary & {
   body: string;
 };
 
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+
+/** The longest goal the spec wizard keeps. */
+const GOAL_LIMIT = 8000;
+
+/**
+ * What an issue becomes in the spec wizard's goal box: its title, then its description with the
+ * template comments taken out. The person reads and edits it before anything is sent to Claude.
+ */
+export const buildSpecGoal = ({ issue }: { issue: { number: number; title: string; body: string } }): string => {
+  const body = issue.body.replace(HTML_COMMENT, '').trim();
+  return `${issue.title.trim()} (issue #${issue.number})${body ? `\n\n${body}` : ''}`.slice(0, GOAL_LIMIT);
+};
+
 /** What the page knows about one GitHub list: not asked for, on its way, here, or failed with a sentence to show. */
 export type GithubLoad<T> =
   | { state: 'idle' }

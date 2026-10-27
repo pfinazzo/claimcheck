@@ -43,6 +43,8 @@ From a flagged claim, **Fix this** asks Claude (read-only) for three or four dif
 
 **Pull requests** and **Issues** list what is open on the repo's GitHub remote, read with `gh` and never written to. A pull request shows its checks, review, merge state, linked issues, changed files and description. The description is drawn as Markdown by `src/renderer/markdown.ts`, which builds known elements only, so nothing in it can add a script or load an image. Press **Refresh** or come back to the window to update. These tabs work on any repo with a GitHub remote.
 
+An opened issue offers **Write a spec from this issue**, which starts the spec wizard with the issue as the goal for you to read and edit.
+
 **Check this pull request** (in a pull request's detail, when its branch carries `.claimcheck/claims.yaml`) fetches it with `git fetch origin pull/N/head` into `pr-checks/` under Desk's data folder and opens it as the board. Your checkout, branch and uncommitted work are never touched, and nothing is pushed. Running the check goes through the same dialog that lists the commands first. If the base branch already has `.claimcheck/config.toml`, the check uses that copy, so the pull request cannot change its own test command or skip files. A pull request that introduces claimcheck keeps its own settings, and the checker is then always yours. **Post results** previews the comment and posts it only when you press Post comment.
 
 When no claim needs a decision, a banner says so and offers **Open pull request**. It opens a pull request from the branch you are on into the base branch, once GitHub already has that branch. Desk does not push. The description lists every claim with its figures, and says plainly that backed is not a review.

@@ -33,7 +33,7 @@ import { listCommandsFor, createTrustStore, computeDigest, type TrustedCommand }
 import { watch } from './watcher.ts';
 import { createFixer, type PublicRun } from './fixer.ts';
 import type { KeyStore } from './claude-api.ts';
-import { initialWizard, isInFlight, normalizeWizardState, type WizardState } from '../shared/wizard-state.ts';
+import { initialWizard, isInFlight, normalizeWizardState, setGoal, type WizardState } from '../shared/wizard-state.ts';
 import { toText } from '../shared/text.ts';
 import { toPromise } from '../shared/promise.ts';
 import { GIT_TIMEOUT_MS } from './timeouts.ts';
@@ -765,9 +765,10 @@ export const createDeskApi = ({
     return { text: text.slice(0, 100000) };
   } });
 
-  const wizardStart = ({ entry = 'board' }: { entry?: 'first-run' | 'board' } = {}): Promise<WizardState> => toPromise({ work: () => {
+  const wizardStart = ({ entry = 'board', goal }: { entry?: 'first-run' | 'board'; goal?: unknown } = {}): Promise<WizardState> => toPromise({ work: () => {
     const repoPath = requireRepo();
-    const wizard = initialWizard({ entry, repo: repoPath });
+    const started = initialWizard({ entry, repo: repoPath });
+    const wizard = typeof goal === 'string' && goal.trim() ? setGoal({ state: started, goal }) : started;
     state.wizard = wizard;
     storeWizard({ repoPath, wizard });
     setView({ view: 'wizard' });

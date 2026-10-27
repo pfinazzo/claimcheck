@@ -73,6 +73,7 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   leavePullCheck: () => calls.record('leave'),
   previewPullSummary: () => calls.record('preview'),
   checkPull: ({ number }) => calls.record(`check:${number}`),
+  specFromIssue: ({ number }) => calls.record(`spec:${number}`),
   refreshGithub: () => calls.record('refresh'),
   selectPull: ({ number }) => calls.record(`pull:${number}`),
   selectIssue: ({ number }) => calls.record(`issue:${number}`),
@@ -651,4 +652,13 @@ test('the post dialog shows the exact comment formatted, and posts only when Pos
   assert.deepEqual(calls.list(), ['title:Post on pull request #7', 'closed']);
   ([...document.querySelectorAll('button')].find((button) => button.textContent === 'Post comment') as HTMLElement).click();
   assert.deepEqual(calls.list(), ['title:Post on pull request #7', 'closed', 'post']);
+});
+
+test('an opened issue offers to start a spec from it, and pressing it names the issue', () => {
+  const calls = createRecorder<string>();
+  const issue = { number: 12, title: 'Checkout is slow', url: 'https://github.com/a/b/issues/12', author: 'lee', isOpen: true, labels: [], assignees: [], commentCount: 0, createdAtIso: '2026-10-01T00:00:00Z', updatedAtIso: '2026-10-26T00:00:00Z', isMine: false };
+  const details = new Map<string, GithubDetailLoad>([['issue:12', { state: 'issue', value: { ...issue, body: 'It takes ten seconds.' } }]]);
+  drawGithub({ mode: 'issues', github: { issues: { state: 'ready', items: [issue], viewer: 'dana' }, selectedIssue: 12, details }, actions: makeActions({ calls }) });
+  ([...document.querySelectorAll('.detail button')].find((button) => button.textContent === 'Write a spec from this issue') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['spec:12']);
 });

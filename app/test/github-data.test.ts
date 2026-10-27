@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fetchIssues, fetchPullRequest, fetchPullRequests, parseIssueDetail, parseIssues, parsePullRequestDetail, parsePullRequests, summarizeChecks, type GhExecFn } from '../src/lib/github-data.ts';
 import { formatAge } from '../src/renderer/format.ts';
+import { buildSpecGoal } from '../src/shared/github.ts';
 import { createRecorder } from './helpers.ts';
 import { expectDefined } from './helpers.ts';
 
@@ -180,4 +181,11 @@ test('how long ago reads as the shortest plain words', () => {
   assert.equal(readAge({ iso: '2024-10-27T12:00:00Z' }), '2y ago');
   assert.equal(readAge({ iso: '2026-10-28T12:00:00Z' }), 'just now', 'a time in the future is not negative');
   assert.equal(readAge({ iso: 'not a time' }), '');
+});
+
+test('an issue becomes the spec goal: its title and number, then its description without template comments', () => {
+  const goal = buildSpecGoal({ issue: { number: 12, title: '  Shipping is too expensive ', body: '<!-- describe the bug -->\nOrders of $50 or more should ship free.\n<!-- thanks -->' } });
+  assert.equal(goal, 'Shipping is too expensive (issue #12)\n\nOrders of $50 or more should ship free.');
+  assert.equal(buildSpecGoal({ issue: { number: 3, title: 'Only a title', body: '' } }), 'Only a title (issue #3)');
+  assert.ok(buildSpecGoal({ issue: { number: 3, title: 'Long', body: 'x'.repeat(20000) } }).length <= 8000, 'cut to what the wizard keeps');
 });

@@ -494,6 +494,12 @@ From a flagged claim, **Fix this** proposes three or four different ways to reso
 
 ![The same board in dark mode](docs/screenshots/desk-board-dark.png)
 
+### Pull requests and issues
+
+Desk reads the open pull requests and issues of the repo's GitHub remote through the GitHub CLI, so it works on any repo with a remote, whether or not that repo uses claimcheck yet. Each pull request shows its checks, review state, whether it can merge, the issues it closes, its files and its description, drawn as Markdown. Nothing is written to GitHub unless you press a button that says so.
+
+When a pull request's branch carries claims, **Check this pull request** fetches it into a folder of its own, so your checkout is never touched, and grades the claims there. It lists the commands first and runs nothing until you agree. It uses the base branch's claimcheck settings when it has them, so a pull request cannot loosen its own checks. **Post results** shows the exact comment first, and posts it only when you press Post comment. An issue offers **Write a spec from this issue**.
+
 ### Reading the confidence map
 
 Desk has a second tab next to the list, called **Confidence map**. It shows every claim at once, the ones that passed and the ones that did not. Each claim is one ball inside a see-through box. Where the ball sits tells you how far to trust that claim.

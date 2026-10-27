@@ -44,6 +44,8 @@ export type GithubActions = {
   connectGithub: () => void;
   /** Fetches the pull request into a folder of its own and grades its claims there. */
   checkPull: (options: { number: number }) => void;
+  /** Starts the spec wizard with this issue as the goal, for the person to read and edit. */
+  specFromIssue: (options: { number: number }) => void;
 };
 
 type Tone = 'good' | 'bad' | 'warn' | 'quiet';
@@ -339,7 +341,7 @@ const renderIssueDetail = ({ issue, actions, nowMs }: { issue: IssueDetail; acti
           makeElement({ tag: 'p', props: { class: 'id mono' }, children: [`#${issue.number}`, renderPill({ text: issue.isOpen ? 'Open' : 'Closed', tone: issue.isOpen ? 'good' : 'quiet' })] }),
           makeElement({ tag: 'h2', props: {}, children: [issue.title] }),
           renderMuted({ text: `${issue.author} opened this ${formatAge({ iso: issue.createdAtIso, nowMs })}. ${formatPlural({ count: issue.commentCount, one: 'comment' })}. ${issue.assignees.length ? `Assigned to ${issue.assignees.join(', ')}.` : 'Nobody is assigned.'}` }),
-          makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'View on GitHub', onClick: () => actions.openPath(issue.url) })] }),
+          makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'Write a spec from this issue', onClick: () => actions.specFromIssue({ number: issue.number }), cls: 'primary' }), renderButton({ label: 'View on GitHub', onClick: () => actions.openPath(issue.url) })] }),
         ],
       }),
       issue.labels.length ? renderSection({ title: 'Labels', children: [makeElement({ tag: 'p', props: { class: 'gh-pills' }, children: issue.labels.map((label) => renderPill({ text: label, tone: 'quiet' })) })] }) : null,
