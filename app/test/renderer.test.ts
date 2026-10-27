@@ -146,6 +146,12 @@ test('a backed claim does not offer Fix this', () => {
   const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim({ over: { flags: [] } })], queue: [] }), selectedId: 'c1' }) });
   assert.ok(!text.includes('Fix this'));
   assert.ok(text.includes('Nothing is flagged'));
+  assert.ok(text.includes('What to do next'), 'a backed claim says what the person does from here');
+});
+
+test('a flagged claim does not show the all-clear steps', () => {
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim({ over: { flags: ['refuted'] } })], queue: ['c1'] }), selectedId: 'c1' }) });
+  assert.ok(!text.includes('What to do next'));
 });
 
 test('clicking a row selects it, and Fix this calls the action', () => {
