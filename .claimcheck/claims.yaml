@@ -1,41 +1,113 @@
 # claimcheck claims file: one entry per thing the author asserts about this diff.
 version: 1
-author: "claude-code/claude-sonnet-5-5"
+author: "claude-code/claude-opus-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "While a pull request is being checked, the top left of Desk names the repo the person opened and shows 'pull request #N', not the name of the folder the pull request was fetched into or 'HEAD'. Outside a pull request check the repo name and branch are shown as before"
-    confidence: 0.92
-    criteria: []
-    files: ["app/src/renderer/board.ts"]
-    kill_condition: "test: app/test/renderer.test.ts, 'while a pull request is graded, the top left names the repo the person opened, not the folder it was fetched into'"
+    claim: "`openai` is a provider name that load() accepts, so `--provider openai` reaches it from spec draft, check and run, and `provider = \"openai\"` under [checker] reaches it from check and run"
+    confidence: 0.9
+    criteria: [1]
+    files: ["src/claimcheck/providers/__init__.py"]
+    kill_condition: "test: tests/test_openai_provider.py::test_check_runs_through_the_openai_provider and test_openai_is_a_provider_name_load_accepts"
     verified_by:
-      - "cmd: npm test, in app/"
-      - "obs: in a real Desk window against a sample repo, the header read checkout-service and pull request #7"
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
 
   - id: c2
-    claim: "The all-clear banner of a pull request being checked says 'Nothing on pull request #N needs a decision now' and tells the reviewer to post the results. It no longer says 'Nothing on HEAD' or tells them to open a pull request"
-    confidence: 0.92
-    criteria: []
-    files: ["app/src/renderer/board.ts"]
-    kill_condition: "test: app/test/renderer.test.ts, 'the all-clear banner of a graded pull request talks about that pull request and about posting, not about opening one'"
+    claim: "The provider POSTs once to <base URL>/chat/completions. A trailing slash on OPENAI_BASE_URL gives the same path, and with the variable unset the address is https://api.openai.com/v1/chat/completions"
+    confidence: 0.9
+    criteria: [2, 10]
+    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
+    kill_condition: "test: test_request_goes_to_chat_completions_with_or_without_a_trailing_slash, test_an_unset_base_url_means_openai_itself and test_an_error_status_is_tried_once_and_never_retried"
     verified_by:
-      - "cmd: npm test, in app/"
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
 
   - id: c3
-    claim: "The setup wizard, the spec step's questions panel and its criteria panel are drawn on frosted glass panels with a stronger blur, and the spacing inside them is even, with Add a criterion separated from the field above it"
-    confidence: 0.6
-    criteria: []
-    files: ["app/renderer/styles.css"]
-    kill_condition: "obs: this is style sheet only and no test measures spacing or blur. It was checked by eye in screenshots of every wizard step in a real window, and a wrong spacing would not fail npm test"
+    claim: "OPENAI_API_KEY, when set, is sent as 'Authorization: Bearer <key>'. When it is unset the request has no Authorization header"
+    confidence: 0.9
+    criteria: [3]
+    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
+    kill_condition: "test: test_the_key_is_sent_as_a_bearer_token and test_no_key_means_no_authorization_header"
     verified_by:
-      - "obs: eight wizard screenshots retaken after the change and read one by one"
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
 
   - id: c4
-    claim: "A task list item in a pull request description draws its box on the same line as its words, and a tight list has no extra gap between items"
-    confidence: 0.6
-    criteria: []
-    files: ["app/renderer/styles.css"]
-    kill_condition: "obs: style sheet only, so no test can fail on it. The box sat on its own line in the first screenshot, and beside the words after the change"
+    claim: "A passed model is sent as body.model and wins over OPENAI_MODEL. With no model passed, OPENAI_MODEL is used. With neither, a ProviderError naming --model, [checker] model and OPENAI_MODEL is raised before any request"
+    confidence: 0.88
+    criteria: [4, 5]
+    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
+    kill_condition: "test: test_a_passed_model_is_sent_and_wins_over_openai_model, test_openai_model_is_used_when_no_model_is_passed and test_no_model_anywhere_fails_before_any_request"
     verified_by:
-      - "obs: the pull request screenshot retaken after the change"
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c5
+    claim: "The request body holds the system message, the user message with the schema appended as text, and response_format json_schema with the request's schema and strict false. It has no stream flag"
+    confidence: 0.9
+    criteria: [6]
+    files: ["src/claimcheck/providers/openai_compatible.py"]
+    kill_condition: "test: test_the_body_asks_for_json_twice"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c6
+    claim: "The provider returns choices[0].message.content as text, with a ```json fence stripped. Unfenced text comes back unchanged"
+    confidence: 0.85
+    criteria: [7]
+    files: ["src/claimcheck/providers/openai_compatible.py"]
+    kill_condition: "test: test_a_fenced_reply_comes_back_as_bare_json and test_an_unfenced_reply_is_returned_as_it_came"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c7
+    claim: "The system and user text pass through redact.redact_text before the request is built, so no must_redact case from tests/fixtures/secret_cases.json reaches the server. A server's error message is redacted too, so a key it echoes never reaches the ProviderError"
+    confidence: 0.85
+    criteria: [8]
+    files: ["src/claimcheck/providers/openai_compatible.py"]
+    kill_condition: "test: test_no_secret_reaches_the_server and test_an_error_message_never_holds_the_key"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c8
+    claim: "Each failure raises a ProviderError with a hint: an unreachable server, a timeout, 401 or 403 (check OPENAI_API_KEY), 404 (check OPENAI_BASE_URL and the model name), 429 (rate limit or quota), any other status with the server's message cut to 300 characters, a body that is not JSON, and a reply with no message content"
+    confidence: 0.82
+    criteria: [9]
+    files: ["src/claimcheck/providers/openai_compatible.py"]
+    kill_condition: "test: the error tests in tests/test_openai_provider.py, one per case, including test_any_other_status_shows_the_server_message_cut_short and test_a_server_that_never_answers_times_out"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c9
+    claim: "The new provider imports only the standard library and claimcheck's own modules, and pyproject.toml is unchanged"
+    confidence: 0.97
+    criteria: [11]
+    files: ["src/claimcheck/providers/openai_compatible.py"]
+    kill_condition: "cmd: git diff main -- pyproject.toml is empty, and the module's imports are json, re, urllib.error, urllib.request and claimcheck modules"
+    verified_by:
+      - "obs: read the import lines of src/claimcheck/providers/openai_compatible.py"
+
+  - id: c10
+    claim: "`auto` still picks a Claude provider when OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL are all set"
+    confidence: 0.93
+    criteria: [12]
+    files: ["src/claimcheck/providers/__init__.py"]
+    kill_condition: "test: test_auto_still_picks_claude_when_openai_variables_are_set"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+
+  - id: c11
+    claim: "The config written by init, examples/config.toml, the --provider help of spec draft, check and run, and README all list `openai`. README explains OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL with an Ollama example"
+    confidence: 0.9
+    criteria: [13, 14]
+    files: ["src/claimcheck/detect.py", "src/claimcheck/cli.py"]
+    kill_condition: "test: test_the_config_init_writes_lists_openai and test_the_provider_help_lists_openai"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "obs: README has a 'Using a model other than Claude' section with the three variables and an Ollama example"
+
+  - id: c12
+    claim: "checker.py, ledger.py and mutate.py are unchanged, and pytest, ruff and mypy pass"
+    confidence: 0.95
+    criteria: [15]
+    files: ["src/claimcheck/config.py"]
+    kill_condition: "cmd: git diff main -- src/claimcheck/checker.py src/claimcheck/ledger.py src/claimcheck/mutate.py is empty; .venv/bin/python -m pytest -q, ruff check and mypy pass"
+    verified_by:
+      - "cmd: .venv/bin/python -m pytest -q (429 passed), .venv/bin/ruff check, .venv/bin/mypy"
