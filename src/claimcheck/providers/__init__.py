@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from .. import ProviderError, config
-from . import claude_cli, stub
+from . import claude_cli, openai_compatible, stub
 from .shapes import Provider, Request, make_provider, make_request
 
 __all__ = ["NAMES", "Provider", "Request", "ask_model", "load", "make_provider", "make_request"]
@@ -17,7 +17,7 @@ def ask_model(provider: Provider, *, system: str, user: str, schema: dict) -> st
     return provider["complete"](make_request(system=system, user=user, schema=schema))
 
 
-NAMES = ("auto", "claude", "claude-cli", "stub")
+NAMES = ("auto", "claude", "claude-cli", "openai", "stub")
 
 
 def _load_cli_or_explain(model: str | None) -> Provider:
@@ -32,7 +32,8 @@ def _load_cli_or_explain(model: str | None) -> Provider:
 
 def load(name: str, *, model: str | None = None) -> Provider:
     """`auto` picks the API when ANTHROPIC_API_KEY is set, otherwise the person's own Claude Code
-    sign-in through the `claude` CLI. Either can be named directly."""
+    sign-in through the `claude` CLI. Either can be named directly. `auto` never picks `openai`:
+    a server other than Claude is used only when it is named."""
     if name == "auto" and config.has_api_key():
         try:
             return load("claude", model=model)
@@ -49,6 +50,8 @@ def load(name: str, *, model: str | None = None) -> Provider:
         return make_claude_provider(model=model)
     if name == "claude-cli":
         return claude_cli.make_claude_cli_provider(model=model)
+    if name == "openai":
+        return openai_compatible.make_openai_provider(model=model)
     if name == "stub":
         return stub.make_stub_provider()
     raise ValueError(f"unknown provider: {name!r} (expected one of {', '.join(NAMES)})")

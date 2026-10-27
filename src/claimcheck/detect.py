@@ -158,7 +158,7 @@ ignore = [{ignore}]
 require_full_coverage = true
 
 [checker]
-provider = "auto"            # "auto" | "claude" | "claude-cli" | "stub"
+provider = "auto"            # "auto" | "claude" | "claude-cli" | "openai" | "stub"
 model = "claude-opus-5-5"
 
 [mutate]

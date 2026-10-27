@@ -28,6 +28,9 @@ MUTATE_SENTINEL = "mutate.lock"
 # Environment variables claimcheck reads. Every read goes through the functions below, so this is
 # the one place to see what the environment can change.
 API_KEY_ENV = "ANTHROPIC_API_KEY"
+OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
+OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+OPENAI_MODEL_ENV = "OPENAI_MODEL"
 STUB_FILE_ENV = "CLAIMCHECK_STUB_FILE"
 TEMP_ENV = "TEMP"
 
@@ -35,6 +38,21 @@ TEMP_ENV = "TEMP"
 def has_api_key() -> bool:
     """Whether an Anthropic API key is set, which makes the `auto` provider use the API."""
     return bool(os.environ.get(API_KEY_ENV))
+
+
+def read_openai_base_url() -> str | None:
+    """Where the `openai` provider connects, if set. The provider falls back to OpenAI's own address."""
+    return os.environ.get(OPENAI_BASE_URL_ENV) or None
+
+
+def read_openai_api_key() -> str | None:
+    """The key the `openai` provider sends, if set. Local servers such as Ollama need none."""
+    return os.environ.get(OPENAI_API_KEY_ENV) or None
+
+
+def read_openai_model() -> str | None:
+    """The model the `openai` provider asks when no --model or [checker] model reaches it."""
+    return os.environ.get(OPENAI_MODEL_ENV) or None
 
 
 def read_stub_reply_file() -> str | None:

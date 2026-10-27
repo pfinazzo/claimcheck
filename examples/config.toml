@@ -6,7 +6,7 @@ ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt"]
 require_full_coverage = true
 
 [checker]
-provider = "claude"          # "claude" | "stub"
+provider = "claude"          # "auto" | "claude" | "claude-cli" | "openai" | "stub"
 model = "claude-opus-5-5"
 
 [mutate]

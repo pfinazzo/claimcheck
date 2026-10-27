@@ -254,6 +254,8 @@ pip install -e "./claimcheck[claude]"
 
 You do not need an API key. If you have Claude Code installed and signed in, claimcheck uses that sign-in. An `ANTHROPIC_API_KEY` in your environment is used instead when it is set. Drop `[claude]` if you only want the sign-in route or the offline stub.
 
+Claude is not required. The `openai` provider works with any server that speaks OpenAI's chat completions API: OpenAI itself, or a model on your own machine through Ollama, LM Studio or vLLM. See [Using a model other than Claude](#using-a-model-other-than-claude).
+
 ## Setup: `claimcheck init`
 
 Run it from the root of the repository you want to protect. It is a short guided tour, one screen at a time. Press Enter to move on, `m` for more detail on a screen, `s` to skip the explanation. Nothing is committed until the last step, and you can stop with Ctrl+C at any point: whatever finished is kept, and running `init` again continues.
@@ -390,7 +392,7 @@ At the end claimcheck writes `.claimcheck/spec.md`, freezes it, switches to a ne
 | `--no-freeze` | Write `spec.md` only |
 | `--no-branch` / `--branch NAME` | Commit on the current branch, or on a branch with this name |
 | `--yes` | Freeze and commit without asking |
-| `--provider auto\|claude\|claude-cli\|stub` | Which model connection. `stub` is offline and gives placeholder questions |
+| `--provider auto\|claude\|claude-cli\|openai\|stub` | Which model connection. `stub` is offline and gives placeholder questions. `openai` takes its model from `OPENAI_MODEL` |
 
 The result is a plain file you can read and edit before it is frozen:
 
@@ -655,7 +657,7 @@ Options shared by `check`, `mutate` and `run`:
 | --- | --- |
 | `--base REF` | The git ref the diff is measured against. Defaults to `base` in config |
 | `--worktree` | Measure uncommitted changes, including new untracked files, instead of `base...HEAD` |
-| `--provider auto\|claude\|claude-cli\|stub` | Which model connection (`check` and `run`) |
+| `--provider auto\|claude\|claude-cli\|openai\|stub` | Which model connection (`check` and `run`) |
 | `--model NAME` | Checker model (`check` and `run`) |
 | `--test-cmd CMD` | Override the test command (`mutate` and `run`) |
 | `--max-mutants N` | Cap the number of planted bugs (`mutate` and `run`) |
@@ -671,7 +673,51 @@ Options shared by `check`, `mutate` and `run`:
 | `auto` (default) | `ANTHROPIC_API_KEY` if set, otherwise your Claude Code sign-in |
 | `claude` | The Anthropic API through the official SDK. Needs `claimcheck[claude]` and `ANTHROPIC_API_KEY` |
 | `claude-cli` | Your Claude Code sign-in through the `claude` command, with all tools off. No API key |
+| `openai` | Any OpenAI-compatible server: OpenAI, or a local one such as Ollama. Never picked by `auto`. See below |
 | `stub` | Offline and deterministic. Every claim comes back UNVERIFIABLE, and the spec conversation gives placeholder questions. Good for trying the planted-bug half |
+
+#### Using a model other than Claude
+
+The `openai` provider sends each request to an OpenAI-compatible chat completions endpoint. It needs no extra package. Three environment variables set it up:
+
+| Variable | Meaning |
+| --- | --- |
+| `OPENAI_BASE_URL` | Where the server is, up to and including `/v1`. Defaults to `https://api.openai.com/v1` |
+| `OPENAI_API_KEY` | The key the server wants, sent as a bearer token. Leave it unset for a local server that needs none |
+| `OPENAI_MODEL` | The model to ask when no other model is given. `spec draft` always uses it |
+
+For `check` and `run`, the model is `--model` if you pass it, otherwise `model` under `[checker]` in `.claimcheck/config.toml`. So switch both lines together:
+
+```toml
+[checker]
+provider = "openai"
+model = "qwen2.5:7b"
+```
+
+A model on your own machine with [Ollama](https://ollama.com):
+
+```bash
+ollama pull qwen2.5:7b
+export OPENAI_BASE_URL=http://localhost:11434/v1
+export OPENAI_MODEL=qwen2.5:7b
+claimcheck spec draft --provider openai
+claimcheck run --provider openai --model qwen2.5:7b
+```
+
+OpenAI itself: set `OPENAI_API_KEY`, leave `OPENAI_BASE_URL` unset, and name a model your account can use.
+
+How it asks:
+
+- The request carries the reply's JSON schema as `response_format`, and the user message repeats the schema as text. Some servers ignore `response_format`, so the text is the backup.
+- A reply wrapped in a Markdown code block is unwrapped.
+- Each call is one request with a 300 second limit. The checker already asks once more when a reply is unusable.
+- The same secret filter as the Claude providers runs on every request. See [What is sent to Claude](#what-is-sent-to-claude): it applies to this server too.
+
+If something is wrong, the error says what to check: the server is not running, the key was refused (401 or 403), the address or model name is wrong (404), or the account is rate limited (429).
+
+A small local model is a weaker checker than Claude. It may mark claims UNVERIFIABLE more often, or miss a contradiction. The planted-bug half does not use a model, so it is as strong as ever.
+
+The Desk app still connects to Claude only. Use the command line for another provider.
 
 ### Exit codes
 
@@ -710,7 +756,7 @@ ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", ".gitignore", ".github/
 require_full_coverage = true        # the hook rejects uncovered code files (false = warn)
 
 [checker]
-provider = "auto"                   # "auto" | "claude" | "claude-cli" | "stub"
+provider = "auto"                   # "auto" | "claude" | "claude-cli" | "openai" | "stub"
 model = "claude-opus-5-5"
 
 [mutate]
@@ -803,6 +849,8 @@ npm run build                   # bundles the main process, the preload and the 
 ```
 
 Desk is written entirely in TypeScript (strict, no `any`) and a test fails if any hand-written JavaScript appears.
+
+The repo rules for coding agents live in `CLAUDE.md`, which Claude Code reads. `AGENTS.md` is a word-for-word copy for agents that read that file instead, such as OpenAI's Codex. Edit both, or a test fails.
 
 ```
 src/claimcheck/   the CLI: init flow, onboarding, spec conversation, checker, mutate, ledger, hook, redaction, providers
