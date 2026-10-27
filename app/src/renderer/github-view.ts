@@ -190,12 +190,15 @@ const renderIssueRow = ({ issue, ui, actions, nowMs }: { issue: IssueSummary; ui
     ],
   });
 
+/** A message that fills the space under the toolbar and sits in the middle of it, both ways. */
+const renderCentered = ({ children }: { children: readonly Child[] }): HTMLElement => makeElement({ tag: 'div', props: { class: 'gh-center' }, children });
+
 const renderFailure = ({ message, ui, actions }: { message: string; ui: GithubUi; actions: GithubActions }): HTMLElement =>
-  makeElement({
+  renderCentered({ children: [makeElement({
     tag: 'div',
     props: { class: 'gh-state' },
     children: [makeElement({ tag: 'p', props: { class: 'error', attrs: { role: 'alert' } }, children: [message] }), makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'Try again', onClick: actions.refreshGithub }), ui.ghOk ? null : renderButton({ label: 'Connect GitHub', onClick: actions.connectGithub })] })],
-  });
+  })] });
 
 const EMPTY_WORDS = new Map<GithubKind, Map<GithubFilter, string>>([
   [
@@ -220,10 +223,10 @@ const renderPullList = ({ ui, actions, nowMs }: { ui: GithubUi; actions: GithubA
   const load = ui.pulls;
   const pulls = load.state === 'ready' ? load.items.filter((pull) => keepPull({ pull, filter })) : [];
   const states = new Map<GithubLoad<PullRequestSummary>['state'], () => Child>([
-    ['idle', () => renderMuted({ text: 'Loading pull requests…' })],
-    ['loading', () => renderMuted({ text: 'Loading pull requests…' })],
+    ['idle', () => renderCentered({ children: [renderMuted({ text: 'Loading pull requests…' })] })],
+    ['loading', () => renderCentered({ children: [renderMuted({ text: 'Loading pull requests…' })] })],
     ['failed', () => renderFailure({ message: load.state === 'failed' ? load.message : '', ui, actions })],
-    ['ready', () => (pulls.length === 0 ? renderMuted({ text: EMPTY_WORDS.get('pulls')?.get(filter) ?? '' }) : makeElement({ tag: 'div', props: { class: 'gh-rows' }, children: pulls.map((pull) => renderPullRow({ pull, ui, actions, nowMs })) }))],
+    ['ready', () => (pulls.length === 0 ? renderCentered({ children: [renderMuted({ text: EMPTY_WORDS.get('pulls')?.get(filter) ?? '' })] }) : makeElement({ tag: 'div', props: { class: 'gh-rows' }, children: pulls.map((pull) => renderPullRow({ pull, ui, actions, nowMs })) }))],
   ]);
   return makeElement({ tag: 'nav', props: { class: 'claims panel', attrs: { 'aria-label': 'Pull requests' } }, children: [renderToolbar({ kind: 'pulls', ui, actions, shownCount: pulls.length }), states.get(load.state)?.() ?? null] });
 };
@@ -233,10 +236,10 @@ const renderIssueList = ({ ui, actions, nowMs }: { ui: GithubUi; actions: Github
   const load = ui.issues;
   const issues = load.state === 'ready' ? load.items.filter((issue) => keepIssue({ issue, filter })) : [];
   const states = new Map<GithubLoad<IssueSummary>['state'], () => Child>([
-    ['idle', () => renderMuted({ text: 'Loading issues…' })],
-    ['loading', () => renderMuted({ text: 'Loading issues…' })],
+    ['idle', () => renderCentered({ children: [renderMuted({ text: 'Loading issues…' })] })],
+    ['loading', () => renderCentered({ children: [renderMuted({ text: 'Loading issues…' })] })],
     ['failed', () => renderFailure({ message: load.state === 'failed' ? load.message : '', ui, actions })],
-    ['ready', () => (issues.length === 0 ? renderMuted({ text: EMPTY_WORDS.get('issues')?.get(filter) ?? '' }) : makeElement({ tag: 'div', props: { class: 'gh-rows' }, children: issues.map((issue) => renderIssueRow({ issue, ui, actions, nowMs })) }))],
+    ['ready', () => (issues.length === 0 ? renderCentered({ children: [renderMuted({ text: EMPTY_WORDS.get('issues')?.get(filter) ?? '' })] }) : makeElement({ tag: 'div', props: { class: 'gh-rows' }, children: issues.map((issue) => renderIssueRow({ issue, ui, actions, nowMs })) }))],
   ]);
   return makeElement({ tag: 'nav', props: { class: 'claims panel', attrs: { 'aria-label': 'Issues' } }, children: [renderToolbar({ kind: 'issues', ui, actions, shownCount: issues.length }), states.get(load.state)?.() ?? null] });
 };
