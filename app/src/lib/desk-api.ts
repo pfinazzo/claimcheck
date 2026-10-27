@@ -19,6 +19,7 @@ import * as ccDefault from './cc-cli.ts';
 import type { CcRun } from './cc-cli.ts';
 import { SAFE_BRANCH, buildDraftInput, normalizeFinish, normalizeInit, normalizeStatus, normalizeStep } from './cc-protocol.ts';
 import * as ghDefault from './gh.ts';
+import { fetchIssue, fetchIssues, fetchPullRequest, fetchPullRequests } from './github-data.ts';
 import { updateAppState } from './ledger.ts';
 import { buildProposePrompt, buildImplementPrompt } from './prompts.ts';
 import { createRecents, isRealProjectFolder } from './recents.ts';
@@ -568,6 +569,14 @@ export const createDeskApi = ({
     return { url, branch };
   };
 
+  /** A pull request or issue number from the page: a whole number above zero, or the call is refused. */
+  const readItemNumber = ({ value }: { value: unknown }): number => {
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) throw new Error('That is not a pull request or issue number.');
+    return value;
+  };
+
+  const readGithubOptions = (): { cwd: string; execFn?: typeof execFn } => ({ cwd: requireBoard().repo.path, ...(execFn ? { execFn } : {}) });
+
   /**
    * Opens a web link, or a fix worktree folder. The target can come from a file in the
    * repo (app-state.json ships in a clone), so anything else is refused: no arbitrary
@@ -751,6 +760,10 @@ export const createDeskApi = ({
     runClaimcheck,
     openPullRequest,
     openBranchPullRequest,
+    listPullRequests: async () => fetchPullRequests(readGithubOptions()),
+    listIssues: async () => fetchIssues(readGithubOptions()),
+    getPullRequest: async ({ number }: { number: unknown }) => fetchPullRequest({ ...readGithubOptions(), number: readItemNumber({ value: number }) }),
+    getIssue: async ({ number }: { number: unknown }) => fetchIssue({ ...readGithubOptions(), number: readItemNumber({ value: number }) }),
     githubStatus,
     githubSignIn,
     inspectFix,

@@ -16,6 +16,7 @@
     "src/lib/cc-protocol.ts",
     "src/lib/fixer.ts",
     "test/renderer.test.ts",
+    "test/markdown.test.ts",
     "test/helpers.ts"
   ],
   "exclude": []

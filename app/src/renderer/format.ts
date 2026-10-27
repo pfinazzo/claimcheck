@@ -101,3 +101,21 @@ const SPEC_WORD: Record<Board['repo']['specState'], string> = {
 export const formatSpecWord = ({ state }: { state: Board['repo']['specState'] }): string => SPEC_WORD[state];
 
 export const formatShortHash = ({ height }: { height: string | null | undefined }): string => (height ? height.slice(0, 12) : '');
+
+const AGE_STEPS: readonly { seconds: number; word: string }[] = [
+  { seconds: 365 * 24 * 3600, word: 'y' },
+  { seconds: 30 * 24 * 3600, word: 'mo' },
+  { seconds: 7 * 24 * 3600, word: 'w' },
+  { seconds: 24 * 3600, word: 'd' },
+  { seconds: 3600, word: 'h' },
+  { seconds: 60, word: 'm' },
+];
+
+/** How long ago a time was, in the shortest plain words: "just now", "5m ago", "3d ago". An unreadable time gives an empty string. */
+export const formatAge = ({ iso, nowMs }: { iso: string; nowMs: number }): string => {
+  const thenMs = Date.parse(iso);
+  if (Number.isNaN(thenMs)) return '';
+  const seconds = Math.max(0, Math.floor((nowMs - thenMs) / 1000));
+  const step = AGE_STEPS.find((candidate) => seconds >= candidate.seconds);
+  return step ? `${Math.floor(seconds / step.seconds)}${step.word} ago` : 'just now';
+};

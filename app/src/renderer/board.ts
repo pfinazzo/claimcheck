@@ -12,17 +12,17 @@ import type { Board, Claim } from '../shared/types.ts';
 import { renderDetail, type DetailActions } from './detail.ts';
 import { makeElement, type Child } from './dom.ts';
 import { calculateSummaryStats, collectClaimGroups, formatFactsLine, formatPlural, formatSpecWord, formatSummaryLine } from './format.ts';
+import { renderGithubView, type GithubActions, type GithubUi } from './github-view.ts';
 import { renderGraphView } from './graph-view.ts';
 
-export type BoardMode = 'list' | 'graph';
+export type BoardMode = 'list' | 'graph' | 'pulls' | 'issues';
 
-export type BoardUi = {
+export type BoardUi = GithubUi & {
   board: Board | null;
   /** The board shows the claims as a list with a detail pane, or as the confidence map with a table of all of them. */
   mode: BoardMode;
   selectedId: string | null;
   runs: Map<string, PublicRun>;
-  ghOk: boolean;
   /** The look the person picked: light, dark, or follow the computer. */
   theme: ThemeChoice;
   /** The pull request opened from the whole branch from the all-clear banner, once there is one. */
@@ -31,7 +31,7 @@ export type BoardUi = {
   drawer: { open: boolean; status: string; lines: readonly string[] };
 };
 
-export type BoardActions = DetailActions & {
+export type BoardActions = DetailActions & GithubActions & {
   select: (options: { id: string | null }) => void;
   setMode: (options: { mode: BoardMode }) => void;
   setTheme: (options: { choice: ThemeChoice }) => void;
@@ -46,12 +46,25 @@ export type BoardActions = DetailActions & {
   closeDrawer: () => void;
 };
 
-const BOARD_MODES: readonly BoardMode[] = ['list', 'graph'];
+const BOARD_MODES: readonly BoardMode[] = ['list', 'graph', 'pulls', 'issues'];
 
 const MODE_LABELS = new Map<BoardMode, string>([
   ['list', 'Claims'],
   ['graph', 'Confidence map'],
+  ['pulls', 'Pull requests'],
+  ['issues', 'Issues'],
 ]);
+
+/** A tab's words, with how many are open once the list has loaded. */
+const toModeLabel = ({ mode, ui }: { mode: BoardMode; ui: BoardUi }): string => {
+  const words = MODE_LABELS.get(mode) ?? mode;
+  const counts = new Map<BoardMode, number | null>([
+    ['pulls', ui.pulls.state === 'ready' ? ui.pulls.items.length : null],
+    ['issues', ui.issues.state === 'ready' ? ui.issues.items.length : null],
+  ]);
+  const count = counts.get(mode) ?? null;
+  return count === null ? words : `${words} (${count})`;
+};
 
 /** The badge for a claim that is already handled; claims still open have none. */
 const DONE_LABEL = new Map<unknown, string>([
@@ -299,7 +312,7 @@ const renderModeTabs = ({ ui, actions }: { ui: BoardUi; actions: BoardActions })
       makeElement({
         tag: 'button',
         props: { class: `tab${ui.mode === mode ? ' active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': ui.mode === mode }, on: { click: () => actions.setMode({ mode }) } },
-        children: [MODE_LABELS.get(mode) ?? mode],
+        children: [toModeLabel({ mode, ui })],
       }),
     ),
   });
@@ -333,6 +346,7 @@ const renderListView = ({ board, ui, actions }: { board: Board; ui: BoardUi; act
 /** What fills the page under the stats: the empty state, the claims list, or the confidence map. */
 const renderBody = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
   const board = ui.board;
+  if (board && (ui.mode === 'pulls' || ui.mode === 'issues')) return renderGithubView({ kind: ui.mode, ui, actions });
   if (!board || board.claims.length === 0) return renderEmptyState({ ui, actions });
   return ui.mode === 'graph' ? renderGraphView({ ui, actions }) : renderListView({ board, ui, actions });
 };
@@ -341,5 +355,6 @@ const renderBody = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HT
 export const renderBoard = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): Child[] => {
   const board = ui.board;
   const hasClaims = board !== null && board.claims.length > 0;
-  return [renderHeader({ ui, actions }), board && hasClaims ? renderStats({ board }) : null, board && isBoardClear({ board }) ? renderAllClear({ board, ui, actions }) : null, board && hasClaims ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
+  const isClaimsTab = ui.mode === 'list' || ui.mode === 'graph';
+  return [renderHeader({ ui, actions }), board && hasClaims && isClaimsTab ? renderStats({ board }) : null, board && isClaimsTab && isBoardClear({ board }) ? renderAllClear({ board, ui, actions }) : null, board ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
 };

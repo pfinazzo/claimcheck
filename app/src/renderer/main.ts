@@ -17,6 +17,7 @@ import { connectDialog, openDialog, showTrustDialog, type DialogHost } from './d
 import { DEMO_FIX, buildDemoClearBoard, buildDemoGraphBoard, buildDemoProposeRun, runDemoWizard } from './demo.ts';
 import { makeElement, mount, type Child } from './dom.ts';
 import { showGithubDialog } from './github-dialog.ts';
+import { toDetailKey, type GithubDetailLoad, type GithubKind } from './github-view.ts';
 import { refreshConfidenceMapTheme, drawConfidenceMap } from './graph-view.ts';
 import { createScene } from './scene.ts';
 import { renderWizard, type WizardCtx } from './wizard.ts';
@@ -37,7 +38,7 @@ darkScheme.addEventListener('change', (event) => {
   refreshConfidenceMapTheme();
 });
 
-const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, branchPr: null, running: false, drawer: { open: false, status: '', lines: [] } };
+const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, branchPr: null, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), running: false, drawer: { open: false, status: '', lines: [] } };
 // What the page is showing right now, and its pending timers.
 const page: { view: ViewName; wizard: WizardState | null; connection: ConnectionSummary | null; wasSignalled: boolean; toastTimer: number; saveTimer: number; shownBefore: string; didDemoAction: boolean; clearRepo: string | null; needsBefore: number; celebratedAtMs: number } = {
   view: 'empty',
@@ -209,6 +210,25 @@ const boardActions: BoardActions = {
   setMode: ({ mode }) => {
     ui.mode = mode;
     renderAll();
+    loadShownGithubList({ isForced: false });
+  },
+  refreshGithub: () => {
+    ui.details.clear();
+    loadShownGithubList({ isForced: true });
+  },
+  selectPull: ({ number }) => {
+    ui.selectedPull = number;
+    renderAll();
+    void loadGithubDetail({ kind: 'pull', number, isForced: false });
+  },
+  selectIssue: ({ number }) => {
+    ui.selectedIssue = number;
+    renderAll();
+    void loadGithubDetail({ kind: 'issue', number, isForced: false });
+  },
+  setGithubFilter: ({ filter }) => {
+    ui.githubFilter = filter;
+    renderAll();
   },
   openBranchPr: () => runGuarded({ callback: async () => {
     const { url, branch } = await desk.openBranchPullRequest();
@@ -243,6 +263,100 @@ const boardActions: BoardActions = {
   } }),
   openPr: (claimId, runId) => runGuarded({ callback: async () => { const { url } = await desk.openPullRequest({ runId }); toast({ text: `Pull request opened: ${url}` }); void claimId; } }),
   openPath: (target) => runGuarded({ callback: async () => { await desk.openPath({ target }); } }),
+};
+
+// ---- pull requests and issues -----------------------------------------------------------
+
+/** The lists being fetched right now, so a refresh that arrives while one is on its way does not start a second. */
+const githubInFlight = new Set<GithubKind>();
+
+const fetchPullDetail = async ({ number }: { number: number }): Promise<GithubDetailLoad> => ({ state: 'pull', value: await desk.getPullRequest({ number }) });
+
+const fetchIssueDetail = async ({ number }: { number: number }): Promise<GithubDetailLoad> => ({ state: 'issue', value: await desk.getIssue({ number }) });
+
+const DETAIL_FETCHERS = new Map<'pull' | 'issue', (options: { number: number }) => Promise<GithubDetailLoad>>([
+  ['pull', fetchPullDetail],
+  ['issue', fetchIssueDetail],
+]);
+
+/**
+ * Fetches one pull request or issue in full. A copy already on the page is kept unless `isForced`,
+ * and a forced refresh keeps showing the old copy until the new one arrives, so nothing flashes.
+ */
+const loadGithubDetail = async ({ kind, number, isForced }: { kind: 'pull' | 'issue'; number: number; isForced: boolean }): Promise<void> => {
+  const key = toDetailKey({ kind, number });
+  const known = ui.details.get(key);
+  if (known && !isForced) return;
+  if (!known) {
+    ui.details.set(key, { state: 'loading' });
+    renderAll();
+  }
+  try {
+    ui.details.set(key, await (DETAIL_FETCHERS.get(kind) ?? fetchPullDetail)({ number }));
+  } catch (error) {
+    ui.details.set(key, { state: 'failed', message: renderMessage({ error }) });
+  }
+  renderAll();
+};
+
+/** After a list arrives, opens the first item when nothing is open yet or the open one is gone. */
+const findNumberToOpen = ({ numbers, current }: { numbers: readonly number[]; current: number | null }): number | null => (current !== null && numbers.includes(current) ? current : (numbers[0] ?? null));
+
+const loadPulls = async ({ isForced }: { isForced: boolean }): Promise<void> => {
+  if (githubInFlight.has('pulls') || (ui.pulls.state === 'ready' && !isForced)) return;
+  githubInFlight.add('pulls');
+  if (ui.pulls.state !== 'ready') {
+    ui.pulls = { state: 'loading' };
+    renderAll();
+  }
+  try {
+    const { viewer, pullRequests } = await desk.listPullRequests();
+    ui.pulls = { state: 'ready', items: pullRequests, viewer };
+    ui.selectedPull = findNumberToOpen({ numbers: pullRequests.map((pull) => pull.number), current: ui.selectedPull });
+  } catch (error) {
+    ui.pulls = { state: 'failed', message: renderMessage({ error }) };
+  }
+  githubInFlight.delete('pulls');
+  renderAll();
+  if (ui.selectedPull !== null) void loadGithubDetail({ kind: 'pull', number: ui.selectedPull, isForced });
+};
+
+const loadIssues = async ({ isForced }: { isForced: boolean }): Promise<void> => {
+  if (githubInFlight.has('issues') || (ui.issues.state === 'ready' && !isForced)) return;
+  githubInFlight.add('issues');
+  if (ui.issues.state !== 'ready') {
+    ui.issues = { state: 'loading' };
+    renderAll();
+  }
+  try {
+    const { viewer, issues } = await desk.listIssues();
+    ui.issues = { state: 'ready', items: issues, viewer };
+    ui.selectedIssue = findNumberToOpen({ numbers: issues.map((issue) => issue.number), current: ui.selectedIssue });
+  } catch (error) {
+    ui.issues = { state: 'failed', message: renderMessage({ error }) };
+  }
+  githubInFlight.delete('issues');
+  renderAll();
+  if (ui.selectedIssue !== null) void loadGithubDetail({ kind: 'issue', number: ui.selectedIssue, isForced });
+};
+
+const GITHUB_LOADERS = new Map<string, (options: { isForced: boolean }) => Promise<void>>([
+  ['pulls', loadPulls],
+  ['issues', loadIssues],
+]);
+
+/** Loads the list behind the tab being shown, if it is one of the two GitHub tabs. */
+const loadShownGithubList = ({ isForced }: { isForced: boolean }): void => {
+  void GITHUB_LOADERS.get(ui.mode)?.({ isForced });
+};
+
+/** Forgets everything fetched from GitHub, for when the repo changes underneath it. */
+const resetGithub = (): void => {
+  ui.pulls = { state: 'idle' };
+  ui.issues = { state: 'idle' };
+  ui.selectedPull = null;
+  ui.selectedIssue = null;
+  ui.details.clear();
 };
 
 // ---- state coming from the main process ------------------------------------------
@@ -294,6 +408,7 @@ const applyBoard = ({ board: fresh }: { board: Board }): void => {
   // `--view board:graph` adds sample claims, and every refresh of the board would otherwise remove them.
   const board = (DEMO_BOARD_BUILDERS.get(demoParam ?? '') ?? ((options: { board: Board }) => options.board))({ board: fresh });
   const isSameRepo = page.clearRepo === board.repo.path;
+  if (!isSameRepo) resetGithub();
   const didJustClear = isSameRepo && page.needsBefore > 0 && isBoardClear({ board });
   if (didJustClear) page.celebratedAtMs = Date.now();
   page.clearRepo = board.repo.path;
@@ -360,6 +475,7 @@ const refreshOnFocus = async (): Promise<void> => {
     const board = await desk.getBoard();
     if (board) applyBoard({ board });
     renderAll();
+    loadShownGithubList({ isForced: true });
   } catch {
     // The repo was busy or closing when the window was focused; the next focus tries again.
     return;

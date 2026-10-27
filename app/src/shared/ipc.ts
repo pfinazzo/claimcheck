@@ -43,6 +43,10 @@ export type DeskBridge = {
   runClaimcheck: (payload?: In<'runClaimcheck'>) => Out<'runClaimcheck'>;
   openPullRequest: (payload: In<'openPullRequest'>) => Out<'openPullRequest'>;
   openBranchPullRequest: () => Out<'openBranchPullRequest'>;
+  listPullRequests: () => Out<'listPullRequests'>;
+  listIssues: () => Out<'listIssues'>;
+  getPullRequest: (payload: In<'getPullRequest'>) => Out<'getPullRequest'>;
+  getIssue: (payload: In<'getIssue'>) => Out<'getIssue'>;
   openPath: (payload: In<'openPath'>) => Out<'openPath'>;
   trustRepo: () => Out<'trustRepo'>;
   getRun: (payload: In<'getRun'>) => Out<'getRun'>;
@@ -68,7 +72,7 @@ export type DeskBridge = {
 /** The names of the calls that go through ipcMain.handle, in the order the bridge lists them. */
 export const INVOKE_CHANNELS = [
   'openRepo', 'recents', 'getTheme', 'setTheme', 'getBoard', 'getView', 'connect', 'testConnection', 'startPropose', 'startImplement', 'acceptRisk', 'copyPrompt',
-  'runClaimcheck', 'openPullRequest', 'openBranchPullRequest', 'githubStatus', 'githubSignIn', 'inspectFix', 'openPath', 'trustRepo', 'getRun', 'ghReady', 'wizardLoad', 'wizardSave', 'wizardStart', 'wizardStatus',
+  'runClaimcheck', 'openPullRequest', 'openBranchPullRequest', 'listPullRequests', 'listIssues', 'getPullRequest', 'getIssue', 'githubStatus', 'githubSignIn', 'inspectFix', 'openPath', 'trustRepo', 'getRun', 'ghReady', 'wizardLoad', 'wizardSave', 'wizardStart', 'wizardStatus',
   'wizardInit', 'wizardSaveTestCmd', 'wizardDraft', 'wizardFinish', 'wizardCancel', 'wizardSpec', 'wizardExit',
 ] as const;
 
