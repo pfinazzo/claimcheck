@@ -2,19 +2,67 @@
   "criteria": [
     {
       "id": 1,
-      "sha256": "c00bb7c5bf6e8ef665a8fd8eb2daf938dcf6ef0ae5ada6957f27c47335668b05"
+      "sha256": "afd3b39bf47b2a51043a6cef37d752a6b989cf98409c2ab5c8f6ed5d41987047"
     },
     {
       "id": 2,
-      "sha256": "c89f5d045e897a8ecda499547f9d9207d3f591a71931c5742fd4c0eb7c42e57d"
+      "sha256": "e178ad34cd6a5d8139c61b87649197abe16ecec93482c0c360a10dd9f12d94ae"
     },
     {
       "id": 3,
-      "sha256": "eb27f7895860cc6decc0991cf7138bfb079e9b7d12c69ca2007d4d8539dea0e0"
+      "sha256": "83eebafac17dcf8b8fd1d5c71228c86760a3ab14bf69bd6e274fe721ef00cb7a"
+    },
+    {
+      "id": 4,
+      "sha256": "00942330ce6928eea19c657bd13fa89eece8103ca5e7e2fb9e43777902cbb463"
+    },
+    {
+      "id": 5,
+      "sha256": "b8ae8c66b867bedc9fda7bb4cd9bd916f587de02a7a1adea3ef79127b87a1ed3"
+    },
+    {
+      "id": 6,
+      "sha256": "317474581b997f77988d895f4c595f2237c2b58d8eb78f4490e67ffb01a1fa1b"
+    },
+    {
+      "id": 7,
+      "sha256": "07b0a889f1ead0e6eeaef5d1a0aac8bd6ef281ee2cfd145d050107df7be02a51"
+    },
+    {
+      "id": 8,
+      "sha256": "44b74b820d4fb83f66f56f95b58377c786d624ca7c5df8f5eaccfbe9257eaf7c"
+    },
+    {
+      "id": 9,
+      "sha256": "e2c70a22791a974bff60a718da6ad3e242112fad2c1025aa2dc11b281b80b215"
+    },
+    {
+      "id": 10,
+      "sha256": "ec2db643a30949af9f63a49cf6a8d7d4e8182a72c02daf786fe690829839bd47"
+    },
+    {
+      "id": 11,
+      "sha256": "75d6d14eaae36754ca357e2cafb6e82b341ae2d9fc5100b7cfad4b2dc0680471"
+    },
+    {
+      "id": 12,
+      "sha256": "d66bac8eee4ef295c930fd222070ecfb88a27347f685d2e5013e523c826d899a"
+    },
+    {
+      "id": 13,
+      "sha256": "07c2a0ce21c48ed64b063387d0b9f9f83c766a61b6f7fbf0d0f132107d1c2f47"
+    },
+    {
+      "id": 14,
+      "sha256": "19cc2e47d2dbcb67275f245f562e261691ded640066274df9c536ef12c5a4d4a"
+    },
+    {
+      "id": 15,
+      "sha256": "30b81d3571bafaabc5aaff1fb5a368978fdbc5a3a93d7384308fbea4dc5be808"
     }
   ],
-  "frozen_at": "2026-10-25T01:47:02Z",
-  "git_head": "3ad8418a876dc2b7761b07c1b2ee3b9e63bf65c3",
-  "spec_sha256": "038637c681a11c41a5e82854bce4b6bb2fa38f032adf5fd5b4ad2664fa5350d9",
+  "frozen_at": "2026-10-27T11:48:17Z",
+  "git_head": "15b675da080f4484e7f9b726bba5c6a5db705de7",
+  "spec_sha256": "3e45aa023923e24f232378e071e45f224fe1cdf4ae099c0a4fba772ee235123a",
   "version": 1
 }
