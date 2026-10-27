@@ -15,6 +15,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 - `npm run screenshot` views that open each dialog or tab with sample data: `board:trust`, `board:github`, `board:code`, `board:open`, `board:propose` and `board:graph`.
 
 ### Changed
+- The whole Desk page scrolls now, so the list and the opened item beside it get real height instead of what was left under the summary and banner. The summary strip and the all-clear banner show on the Claims and Confidence map tabs only.
 - Desk has a new look: glass panels over a Three.js backdrop (a wireframe grid rolling toward a lit horizon under a field of light), a stat strip, confidence bars on the claim list, evidence tiles on the detail, and a numbered step rail in the setup wizard. Light and dark follow the system, reduced motion draws one still frame, and a machine without WebGL gets the panels alone. The other screenshots in the README still show the previous look.
 - Open repo takes a pasted folder path as well as the folder picker, and shows each recent repo as its name over its path.
 
