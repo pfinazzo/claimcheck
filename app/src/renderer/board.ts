@@ -181,7 +181,7 @@ const renderAllClear = ({ board, ui, actions }: { board: Board; ui: BoardUi; act
     tag: 'section',
     props: { class: 'all-clear panel', attrs: { 'aria-label': 'All claims backed' } },
     children: [
-      makeElement({ tag: 'div', props: { class: 'all-clear-mark', attrs: { 'aria-hidden': 'true' } }, children: [...Array.from({ length: SPARK_COUNT }, () => makeElement({ tag: 'span', props: { class: 'spark' } })), makeElement({ tag: 'span', props: { class: 'check' }, children: ['✓'] })] }),
+      makeElement({ tag: 'div', props: { class: 'all-clear-mark', attrs: { 'aria-hidden': 'true' } }, children: [...Array.from({ length: SPARK_COUNT }, () => makeElement({ tag: 'span', props: { class: 'spark' } })), makeElement({ tag: 'span', props: { class: 'check' } })] }),
       makeElement({
         tag: 'div',
         props: { class: 'all-clear-text' },

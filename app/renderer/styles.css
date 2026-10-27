@@ -530,7 +530,11 @@ textarea { resize: vertical; }
 .gh-toolbar p { margin: 0; }
 .gh-rows { display: flex; flex-direction: column; }
 .gh-pills { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-2) 0 0; padding: 0; }
-.gh-state { padding: var(--space-3); }
+.gh-view .claims { display: flex; flex-direction: column; }
+.gh-center { flex: 1; display: flex; align-items: center; justify-content: center; padding: var(--space-5); text-align: center; }
+.gh-center p { margin: 0; }
+.gh-state { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); }
+.gh-state .row { justify-content: center; }
 .gh-body { margin: var(--space-2) 0 0; line-height: 1.6; overflow-wrap: anywhere; }
 .markdown > :first-child { margin-top: 0; }
 .markdown > :last-child { margin-bottom: 0; }
@@ -567,15 +571,16 @@ textarea { resize: vertical; }
   gap: var(--space-5);
   margin: var(--space-3) var(--space-4) 0;
   padding: var(--space-4) var(--space-5);
-  border-color: color-mix(in srgb, var(--ok) 55%, var(--line));
-  background-image: linear-gradient(110deg, var(--ok-soft), transparent 65%);
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--line));
+  background-image: linear-gradient(110deg, var(--ok-soft), transparent 55%);
 }
-.all-clear h2 { margin: 0; font-size: var(--size-xl); letter-spacing: -0.01em; }
-.all-clear p { margin: var(--space-1) 0 0; }
+.all-clear h2 { margin: 0; font-size: var(--size-lg); font-weight: 600; letter-spacing: -0.01em; }
+.all-clear p { margin: var(--size-2) 0 0; font-size: var(--size-md); }
 .all-clear .pr-offer { align-items: flex-end; }
 .all-clear .pr-blocker { max-width: var(--size-280); margin: 0; text-align: right; }
 .all-clear-mark { position: relative; display: grid; place-items: center; width: calc(var(--size-32) + var(--size-12)); height: calc(var(--size-32) + var(--size-12)); }
-.all-clear-mark .check { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; background: var(--ok); color: var(--on-accent); font-size: var(--size-xl); font-weight: 700; box-shadow: 0 0 var(--size-24) var(--ok-soft); }
+.all-clear-mark .check { position: relative; width: 100%; height: 100%; border-radius: 50%; background: var(--ok-soft); border: var(--border-width-strong) solid var(--ok); box-shadow: 0 0 var(--size-24) var(--ok-soft); }
+.all-clear-mark .check::after { content: ""; position: absolute; left: 50%; top: 50%; width: var(--size-10); height: var(--size-18); border: solid var(--ok); border-width: 0 var(--size-3) var(--size-3) 0; border-radius: var(--size-2); transform: translate(-50%, -62%) rotate(45deg); }
 .spark { position: absolute; top: 50%; left: 50%; width: var(--size-6); height: var(--size-6); margin: calc(var(--size-3) * -1); border-radius: 50%; background: var(--accent-2); opacity: 0; }
 .spark:nth-child(odd) { background: var(--accent); }
 .spark:nth-child(1) { --turn: 0deg; }
