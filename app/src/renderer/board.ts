@@ -7,6 +7,7 @@
 
 import type { PublicRun } from '../lib/fixer.ts';
 import { findBranchPullRequestBlocker, findPullRequestBlocker } from '../shared/pull-request.ts';
+import type { PullRequestCheck } from '../shared/github.ts';
 import { THEME_CHOICES, THEME_HINTS, THEME_LABELS, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, Claim } from '../shared/types.ts';
 import { renderDetail, type DetailActions } from './detail.ts';
@@ -27,6 +28,8 @@ export type BoardUi = GithubUi & {
   theme: ThemeChoice;
   /** The pull request opened from the whole branch from the all-clear banner, once there is one. */
   branchPr: { branch: string; url: string } | null;
+  /** Set while the board shows a pull request being graded in a folder of its own. */
+  pullRequestCheck: PullRequestCheck | null;
   running: boolean;
   drawer: { open: boolean; status: string; lines: readonly string[] };
 };
@@ -37,6 +40,10 @@ export type BoardActions = DetailActions & GithubActions & {
   setTheme: (options: { choice: ThemeChoice }) => void;
   /** Opens a pull request from the branch the repo is on, once nothing needs a decision. */
   openBranchPr: () => void;
+  /** Back from a pull request check to the repo that was open. */
+  leavePullCheck: () => void;
+  /** Shows the comment that would be posted on the pull request being checked, and posts it if the person says so. */
+  previewPullSummary: () => void;
   /** Opens one claim in the list view. */
   showClaim: (options: { id: string }) => void;
   openRepo: () => void;
@@ -47,6 +54,9 @@ export type BoardActions = DetailActions & GithubActions & {
 };
 
 const BOARD_MODES: readonly BoardMode[] = ['list', 'graph', 'pulls', 'issues'];
+
+/** While a pull request is being graded, its folder is the board, so the tabs about the repo's own pull requests and issues step aside. */
+const CHECK_MODES: readonly BoardMode[] = ['list', 'graph'];
 
 const MODE_LABELS = new Map<BoardMode, string>([
   ['list', 'Claims'],
@@ -91,6 +101,30 @@ const renderThemeSwitch = ({ ui, actions }: { ui: BoardUi; actions: BoardActions
         children: [THEME_LABELS.get(choice) ?? choice],
       }),
     ),
+  });
+
+const CONFIG_SOURCE_WORDS = new Map<PullRequestCheck['configSource'], (check: PullRequestCheck) => string>([
+  ['base', (check) => `Using the settings on ${check.baseRef}, so the pull request cannot loosen its own checks.`],
+  ['pull-request', () => 'This pull request brings its own claimcheck settings, so the checks use them. The checker is still yours.'],
+]);
+
+/** The strip above a pull request check: which one, which commit, whose settings, and the way out. */
+const renderPullRequestCheckBar = ({ check, ui, actions }: { check: PullRequestCheck; ui: BoardUi; actions: BoardActions }): HTMLElement =>
+  makeElement({
+    tag: 'section',
+    props: { class: 'pr-check panel', attrs: { 'aria-label': 'Pull request being checked' } },
+    children: [
+      makeElement({
+        tag: 'div',
+        props: { class: 'pr-check-text' },
+        children: [
+          makeElement({ tag: 'p', props: { class: 'eyebrow' }, children: [`Checking pull request #${check.number}`] }),
+          makeElement({ tag: 'h2', props: {}, children: [check.title] }),
+          makeElement({ tag: 'p', props: { class: 'muted' }, children: [`Commit ${check.headSha.slice(0, 10)} against ${check.baseRef}. ${CONFIG_SOURCE_WORDS.get(check.configSource)?.(check) ?? ''}`] }),
+        ],
+      }),
+      makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'Post results', onClick: actions.previewPullSummary, cls: 'primary', disabled: ui.running }), renderButton({ label: 'View on GitHub', onClick: () => actions.openPath(check.url) }), renderButton({ label: 'Back', onClick: actions.leavePullCheck, cls: 'ghost' })] }),
+    ],
   });
 
 const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
@@ -154,11 +188,16 @@ const describeAllClear = ({ board }: { board: Board }): string => {
   return stats.total === 0 ? `${claims}${held}.` : `${claims}${held}. The tests caught ${stats.caught} of ${stats.total} planted bugs.`;
 };
 
+/** While a pull request is being graded, the way forward is to post what was found on that pull request. */
+const renderPostOffer = ({ actions }: { actions: BoardActions }): HTMLElement =>
+  makeElement({ tag: 'div', props: { class: 'pr-offer' }, children: [makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'Post results to the pull request', onClick: actions.previewPullSummary, cls: 'primary' })] }), makeElement({ tag: 'p', props: { class: 'muted pr-blocker' }, children: ['You see the exact comment first.'] })] });
+
 /**
  * What the pull request button says and does: it opens one, or shows the reason it cannot and
  * puts Connect GitHub one press away. Once a pull request exists it links to it instead.
  */
 const renderBranchPrOffer = ({ board, ui, actions }: { board: Board; ui: BoardUi; actions: BoardActions }): HTMLElement => {
+  if (ui.pullRequestCheck) return renderPostOffer({ actions });
   const opened = ui.branchPr !== null && ui.branchPr.branch === board.repo.branch ? ui.branchPr : null;
   if (opened) return makeElement({ tag: 'div', props: { class: 'pr-offer' }, children: [makeElement({ tag: 'p', props: { class: 'muted', attrs: { role: 'status' } }, children: ['Pull request opened.'] }), renderButton({ label: 'View pull request', onClick: () => actions.openPath(opened.url), cls: 'primary' })] });
   const blocker = findBranchPullRequestBlocker({ isGhReady: ui.ghOk, origin: board.repo.origin, branch: board.repo.branch, base: board.config.base, isBranchPushed: board.repo.isBranchPushed });
@@ -308,7 +347,7 @@ const renderModeTabs = ({ ui, actions }: { ui: BoardUi; actions: BoardActions })
   makeElement({
     tag: 'div',
     props: { class: 'tabs mode-tabs', attrs: { role: 'tablist', 'aria-label': 'Board view' } },
-    children: BOARD_MODES.map((mode) =>
+    children: (ui.pullRequestCheck ? CHECK_MODES : BOARD_MODES).map((mode) =>
       makeElement({
         tag: 'button',
         props: { class: `tab${ui.mode === mode ? ' active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': ui.mode === mode }, on: { click: () => actions.setMode({ mode }) } },
@@ -356,5 +395,5 @@ export const renderBoard = ({ ui, actions }: { ui: BoardUi; actions: BoardAction
   const board = ui.board;
   const hasClaims = board !== null && board.claims.length > 0;
   const isClaimsTab = ui.mode === 'list' || ui.mode === 'graph';
-  return [renderHeader({ ui, actions }), board && hasClaims && isClaimsTab ? renderStats({ board }) : null, board && isClaimsTab && isBoardClear({ board }) ? renderAllClear({ board, ui, actions }) : null, board ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
+  return [renderHeader({ ui, actions }), ui.pullRequestCheck ? renderPullRequestCheckBar({ check: ui.pullRequestCheck, ui, actions }) : null, board && hasClaims && isClaimsTab ? renderStats({ board }) : null, board && isClaimsTab && isBoardClear({ board }) ? renderAllClear({ board, ui, actions }) : null, board ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
 };

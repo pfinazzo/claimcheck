@@ -10,7 +10,8 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { parseUnifiedDiff, type ParsedDiff } from '../shared/diff.ts';
-import { findBranchPullRequestBlocker, findPullRequestBlocker } from '../shared/pull-request.ts';
+import { findBranchPullRequestBlocker, findPullRequestBlocker, isPlainBranchName } from '../shared/pull-request.ts';
+import type { PullRequestCheck, PullRequestSummaryPreview } from '../shared/github.ts';
 import { isKnownThemeChoice, toThemeChoice, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, CcFinish, CcInit, CcStatus, CcStep, ConnectionMode, ConnectionSummary, DraftInput, TrustInfo, ViewName } from '../shared/types.ts';
 import * as cliDefault from './claude-cli.ts';
@@ -20,6 +21,7 @@ import type { CcRun } from './cc-cli.ts';
 import { SAFE_BRANCH, buildDraftInput, normalizeFinish, normalizeInit, normalizeStatus, normalizeStep } from './cc-protocol.ts';
 import * as ghDefault from './gh.ts';
 import { fetchIssue, fetchIssues, fetchPullRequest, fetchPullRequests } from './github-data.ts';
+import { createPullRequestWorktree } from './pr-worktree.ts';
 import { updateAppState } from './ledger.ts';
 import { buildProposePrompt, buildImplementPrompt } from './prompts.ts';
 import { createRecents, isRealProjectFolder } from './recents.ts';
@@ -67,7 +69,6 @@ export type GitHubStatusView = {
 
 /** Branch and base names are passed to git as one argument, so they must look like names and never like options. */
 const FIX_BRANCH_NAME = /^claimcheck\/[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
-const BASE_NAME = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
 const LONGEST_DIFF_CHARS = 600_000;
 const LONGEST_COMMIT_LIST = 30;
 const DIFF_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
@@ -115,6 +116,8 @@ export type ViewPayload = {
   wizard: WizardState | null;
   connection: ConnectionSummary;
   repoPath: string | null;
+  /** Set while the board shows a pull request being graded in a folder of its own. */
+  pullRequestCheck: PullRequestCheck | null;
 };
 
 export type DeskApiOptions = {
@@ -177,6 +180,7 @@ export const createDeskApi = ({
     view: ViewName;
     wizard: WizardState | null;
     ccCall: CcRun | null;
+    pullRequestCheck: PullRequestCheck | null;
   } = {
     repoPath: null,
     board: null,
@@ -188,6 +192,7 @@ export const createDeskApi = ({
     view: 'empty',
     wizard: null,
     ccCall: null,
+    pullRequestCheck: null,
   };
   const saveSettings = (): void => writeFileSync(settingsFile, `${JSON.stringify(state.settings, null, 2)}\n`, 'utf8');
   const exec = (execFn ?? (runExecFile));
@@ -285,7 +290,7 @@ export const createDeskApi = ({
     writeFileSync(wizardFile, `${JSON.stringify(all, null, 2)}\n`, 'utf8');
   };
 
-  const currentView = (): ViewPayload => ({ view: state.view, board: state.board, wizard: state.wizard, connection: connectionSummary(), repoPath: state.repoPath });
+  const currentView = (): ViewPayload => ({ view: state.view, board: state.board, wizard: state.wizard, connection: connectionSummary(), repoPath: state.repoPath, pullRequestCheck: state.pullRequestCheck });
   const setView = ({ view }: { view: ViewName }): void => {
     state.view = view;
     emitView(currentView());
@@ -315,6 +320,7 @@ export const createDeskApi = ({
     if (!chosen) return { ok: false, error: 'No folder chosen.' };
     const resolved = path.resolve(chosen);
     if (!existsSync(resolved) || !statSync(resolved).isDirectory()) return { ok: false, error: 'That folder does not exist.' };
+    state.pullRequestCheck = null;
     const gen = ++state.gen;
     const probe = await readBoard({ repoPath: resolved });
     if (gen !== state.gen) return { ok: false, error: 'Another repo was opened first.' };
@@ -451,6 +457,13 @@ export const createDeskApi = ({
     ...(execFn ? { execFn } : {}),
   });
 
+  /**
+   * The checker a run uses when the caller named none. Normally the repo's own setting. While
+   * grading a pull request whose settings came from the pull request itself, always the
+   * reviewer's own: a pull request must not choose the stand-in checker and grade itself.
+   */
+  const toCheckerProvider = ({ board }: { board: Board }): string => (state.pullRequestCheck?.configSource === 'pull-request' ? 'auto' : board.config.checker.provider);
+
   const runClaimcheck = async ({ provider, trust }: { provider?: string; trust?: unknown } = {}): Promise<{ exitCode: number | null }> => {
     const board = requireBoard();
     if (state.claimcheckRunning) throw new Error('claimcheck is already running.');
@@ -461,7 +474,8 @@ export const createDeskApi = ({
       const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board }));
       const outcome = await runnerModule.runClaimcheck({
         repoPath: board.repo.path,
-        provider: provider ?? board.config.checker.provider,
+        provider: provider ?? toCheckerProvider({ board }),
+        ...(state.pullRequestCheck ? { extraArgs: ['--base', state.pullRequestCheck.baseRef] } : {}),
         resolved,
         ...(spawnFn ? { spawnFn } : {}),
         onLine: (line) => emitRun({ type: 'claimcheck', line }),
@@ -497,7 +511,7 @@ export const createDeskApi = ({
     const branch = latestRun?.branch ?? (typeof claim.fix?.branch === 'string' ? claim.fix.branch : '');
     if (!FIX_BRANCH_NAME.test(branch)) throw new Error('This claim has no fix branch to inspect yet.');
     const base = board.config.base;
-    if (!BASE_NAME.test(base)) throw new Error(`The base branch name "${base}" in .claimcheck/config.toml is not a plain branch name.`);
+    if (!isPlainBranchName({ name: base })) throw new Error(`The base branch name "${base}" in .claimcheck/config.toml is not a plain branch name.`);
     const gitOptions = { cwd: board.repo.path, windowsHide: true, timeout: GIT_TIMEOUT_MS, maxBuffer: DIFF_MAX_BUFFER_BYTES };
     const readDiff = async ({ from }: { from: string }): Promise<string> => toText({ value: (await exec('git', ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=3', `${from}...${branch}`], gitOptions)).stdout });
     // The base branch may not exist in this clone under that name, so the current commit is the fallback.
@@ -556,7 +570,7 @@ export const createDeskApi = ({
     const base = board.config.base;
     const blocker = findBranchPullRequestBlocker({ isGhReady: await ghModule.isGhReady(execFn ? { execFn } : {}), origin, branch, base, isBranchPushed });
     if (blocker) throw new Error(blocker);
-    if (!branch || !BASE_NAME.test(branch) || !BASE_NAME.test(base)) throw new Error(`The branch name "${branch ?? ''}" or the base name "${base}" is not a plain branch name, so Desk will not pass it to GitHub.`);
+    if (!branch || !isPlainBranchName({ name: branch }) || !isPlainBranchName({ name: base })) throw new Error(`The branch name "${branch ?? ''}" or the base name "${base}" is not a plain branch name, so Desk will not pass it to GitHub.`);
     const subject = await readLastCommitSubject({ cwd: board.repo.path });
     const url = await ghModule.openPullRequest({
       cwd: board.repo.path,
@@ -567,6 +581,59 @@ export const createDeskApi = ({
       ...(execFn ? { execFn } : {}),
     });
     return { url, branch };
+  };
+
+  /**
+   * Fetches a pull request into a folder of its own and opens it as the board, so it can be graded
+   * with the same screens as any repo. The person's checkout is not touched. Running its tests
+   * still goes through the usual dialog that lists the commands first.
+   */
+  const checkPullRequest = async ({ number }: { number: unknown }): Promise<PullRequestCheck> => {
+    const originPath = state.pullRequestCheck?.originPath ?? requireBoard().repo.path;
+    const detail = await fetchPullRequest({ cwd: originPath, number: readItemNumber({ value: number }), ...(execFn ? { execFn } : {}) });
+    if (!detail.carriesClaims) throw new Error('This pull request has no .claimcheck/claims.yaml, so there are no claims to grade. Ask its author to add them.');
+    const prepared = await createPullRequestWorktree({ repoPath: originPath, userDir, number: detail.number, baseBranch: detail.baseBranch, ...(execFn ? { execFn } : {}) });
+    const check: PullRequestCheck = { number: detail.number, title: detail.title, url: detail.url, headSha: prepared.headSha, baseRef: prepared.baseRef, originPath, configSource: prepared.configSource };
+    state.watcher?.close();
+    state.gen += 1;
+    state.repoPath = prepared.worktree;
+    state.board = null;
+    state.wizard = null;
+    state.pullRequestCheck = check;
+    startWatching();
+    await refresh();
+    setView({ view: 'board' });
+    return check;
+  };
+
+  /** Back from a pull request check to the repo the person opened. */
+  const leavePullRequestCheck = async (): Promise<OpenResult> => {
+    const originPath = state.pullRequestCheck?.originPath;
+    if (!originPath) throw new Error('No pull request is being checked.');
+    return openRepo({ given: originPath });
+  };
+
+  /** The comment that would be posted on the pull request being checked, built from the board as it is now. */
+  const buildSummaryPreview = (): PullRequestSummaryPreview => {
+    const check = state.pullRequestCheck;
+    if (!check) throw new Error('Check a pull request first.');
+    const board = requireBoard();
+    return { number: check.number, url: check.url, body: ghModule.buildReviewSummary({ claims: board.claims, headSha: check.headSha, configSource: check.configSource, baseRef: check.baseRef }) };
+  };
+
+  /**
+   * Posts the results on the pull request. The page sends back the exact text the person was shown,
+   * and it is posted only if it still matches what the board says now. Otherwise the person looks again.
+   */
+  const postPullRequestSummary = async ({ body }: { body: unknown }): Promise<{ url: string }> => {
+    const preview = buildSummaryPreview();
+    if (body !== preview.body) throw new Error('The results changed since you looked at them. Look again, then post.');
+    const check = state.pullRequestCheck;
+    if (!check) throw new Error('Check a pull request first.');
+    const blocker = findPullRequestBlocker({ isGhReady: await ghModule.isGhReady(execFn ? { execFn } : {}), origin: requireBoard().repo.origin });
+    if (blocker) throw new Error(blocker);
+    const url = await ghModule.createPullRequestComment({ cwd: check.originPath, number: check.number, body: preview.body, ...(execFn ? { execFn } : {}) });
+    return { url };
   };
 
   /** A pull request or issue number from the page: a whole number above zero, or the call is refused. */
@@ -760,6 +827,10 @@ export const createDeskApi = ({
     runClaimcheck,
     openPullRequest,
     openBranchPullRequest,
+    checkPullRequest,
+    leavePullRequestCheck,
+    previewPullRequestSummary: (): Promise<PullRequestSummaryPreview> => toPromise({ work: () => buildSummaryPreview() }),
+    postPullRequestSummary,
     listPullRequests: async () => fetchPullRequests(readGithubOptions()),
     listIssues: async () => fetchIssues(readGithubOptions()),
     getPullRequest: async ({ number }: { number: unknown }) => fetchPullRequest({ ...readGithubOptions(), number: readItemNumber({ value: number }) }),

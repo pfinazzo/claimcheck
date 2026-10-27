@@ -19,3 +19,6 @@ export const FINDER_TIMEOUT_MS = 10_000;
 
 /** One Anthropic API request. The SDK's own default is ten minutes per attempt. */
 export const API_TIMEOUT_MS = 300_000;
+
+/** Fetching a pull request or a base branch moves real data, so it gets longer than a local git command. */
+export const GIT_FETCH_TIMEOUT_MS = 300_000;

@@ -92,3 +92,22 @@ export type GithubLoad<T> =
   | { state: 'loading' }
   | { state: 'ready'; items: readonly T[]; viewer: string }
   | { state: 'failed'; message: string };
+
+/** Which side's .claimcheck/config.toml a pull request check uses. */
+export type PullRequestConfigSource = 'base' | 'pull-request';
+
+/** A pull request being graded in a folder of its own, as the page needs to describe it. */
+export type PullRequestCheck = {
+  number: number;
+  title: string;
+  url: string;
+  headSha: string;
+  /** What the diff is measured against, as git names it: origin/main. */
+  baseRef: string;
+  /** The repo the person opened, which Back returns to. */
+  originPath: string;
+  configSource: PullRequestConfigSource;
+};
+
+/** What is about to be posted on a pull request: shown first, and posted only when the person says so. */
+export type PullRequestSummaryPreview = { number: number; url: string; body: string };

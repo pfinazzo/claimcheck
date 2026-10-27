@@ -29,3 +29,13 @@ export const findBranchPullRequestBlocker = ({ isGhReady, origin, branch, base, 
   if (!isBranchPushed) return `This branch is not on GitHub yet. Run git push -u origin ${branch} in a terminal, then come back.`;
   return null;
 };
+
+const PLAIN_BRANCH_NAME = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+
+/**
+ * A branch name that is safe to hand to git and gh as one argument: letters, digits and . _ / -,
+ * not starting with a dash, with none of the shapes git reads as something else (.., //, a trailing
+ * slash or dot, or .lock).
+ */
+export const isPlainBranchName = ({ name }: { name: string }): boolean =>
+  PLAIN_BRANCH_NAME.test(name) && !name.includes('..') && !name.includes('//') && !name.endsWith('/') && !name.endsWith('.') && !name.endsWith('.lock');

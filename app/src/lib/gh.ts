@@ -106,11 +106,25 @@ const toCaughtText = ({ claim }: { claim: Claim }): string => {
   return catchRate === null || catchRate === undefined ? 'not run' : `${Math.round(catchRate * 100)}%`;
 };
 
-const toStatusText = ({ claim }: { claim: Claim }): string => (claim.flags.length === 0 ? 'backed' : toTableCell({ text: `settled by hand, still flagged: ${claim.flags.join(', ')}${claim.note ? `. ${claim.note}` : ''}` }));
+const STATUS_WORDS = new Map<string, string>([
+  ['accepted', 'accepted as a risk, still flagged'],
+  ['resolved', 'fixed but not checked again, still flagged'],
+]);
+
+/** Where a claim stands, in words for the table: backed, settled by hand while still flagged, or still waiting for a decision. */
+const toStatusText = ({ claim }: { claim: Claim }): string => {
+  if (claim.flags.length === 0) return 'backed';
+  const words = STATUS_WORDS.get(claim.status) ?? 'needs a decision';
+  return toTableCell({ text: `${words}: ${claim.flags.join(', ')}${claim.note ? `. ${claim.note}` : ''}` });
+};
 
 const describeClaimCount = ({ claims }: { claims: readonly Claim[] }): string => {
-  const heldCount = claims.filter((claim) => claim.flags.length > 0).length;
-  return heldCount === 0 ? `Every claim about this change is backed (${claims.length}).` : `${claims.length} claims about this change: ${claims.length - heldCount} backed, and ${heldCount} settled by hand but still flagged. Read those first.`;
+  const flagged = claims.filter((claim) => claim.flags.length > 0);
+  if (flagged.length === 0) return `Every claim about this change is backed (${claims.length}).`;
+  const heldCount = flagged.filter((claim) => STATUS_WORDS.has(claim.status)).length;
+  const waitingCount = flagged.length - heldCount;
+  const parts = [`${claims.length - flagged.length} backed`, ...(heldCount > 0 ? [`${heldCount} settled by hand but still flagged`] : []), ...(waitingCount > 0 ? [`${waitingCount} still ${waitingCount === 1 ? 'needs' : 'need'} a decision`] : [])];
+  return `${claims.length} claims about this change: ${parts.join(', ')}. Read the flagged ones first.`;
 };
 
 /**
@@ -118,15 +132,19 @@ const describeClaimCount = ({ claims }: { claims: readonly Claim[] }): string =>
  * to flag. It lists each claim with its three figures, and says plainly that backed claims are not
  * a review.
  */
+const buildClaimsTable = ({ claims }: { claims: readonly Claim[] }): readonly string[] => [
+  '| Claim | Stated confidence | Checker | Planted bugs caught | Status |',
+  '| --- | --- | --- | --- | --- |',
+  ...claims.map((claim) => `| ${toTableCell({ text: `${claim.id}: ${claim.claim}` })} | ${claim.confidence === null ? 'none' : claim.confidence.toFixed(2)} | ${(claim.verdict?.verdict ?? 'not run').toLowerCase()} | ${toCaughtText({ claim })} | ${toStatusText({ claim })} |`),
+];
+
 export const buildBranchPrBody = ({ claims }: { claims: readonly Claim[] }): string =>
   [
     '## claimcheck found nothing left to decide',
     '',
     describeClaimCount({ claims }),
     '',
-    '| Claim | Stated confidence | Checker | Planted bugs caught | Status |',
-    '| --- | --- | --- | --- | --- |',
-    ...claims.map((claim) => `| ${toTableCell({ text: `${claim.id}: ${claim.claim}` })} | ${claim.confidence === null ? 'none' : claim.confidence.toFixed(2)} | ${(claim.verdict?.verdict ?? 'not run').toLowerCase()} | ${toCaughtText({ claim })} | ${toStatusText({ claim })} |`),
+    ...buildClaimsTable({ claims }),
     '',
     'Backed means the author, an independent checker and the planted-bug run raised no objection. It does not replace a review. Read the kill conditions and the diff like any other pull request.',
     '',
@@ -164,5 +182,46 @@ export const openPullRequest = async ({ cwd, base, head, title, body, execFn = r
     return String(stdout).split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line)) ?? String(stdout).trim();
   } catch (error) {
     throw toPullRequestFailure({ error });
+  }
+};
+
+/**
+ * The comment a reviewer can post on a pull request after checking it: each claim with its three
+ * figures, which commit was checked, which settings were used, and a plain line that this is not
+ * an approval. Built here from the board, never from text the page sends.
+ */
+export const buildReviewSummary = ({ claims, headSha, configSource, baseRef }: { claims: readonly Claim[]; headSha: string; configSource: 'base' | 'pull-request'; baseRef: string }): string => {
+  const settings = configSource === 'base' ? `the settings on ${baseRef}, so the pull request could not loosen its own checks` : "the pull request's own settings, because the base branch has none yet";
+  return [
+    '## claimcheck review',
+    '',
+    `Checked commit \`${headSha.slice(0, 10)}\` against \`${baseRef}\`, using ${settings}.`,
+    '',
+    describeClaimCount({ claims }),
+    '',
+    ...buildClaimsTable({ claims }),
+    '',
+    'Backed means the author, an independent checker and the planted-bug run raised no objection. It is not an approval. A person still has to read the change.',
+    '',
+    'Posted from claimcheck Desk by a reviewer.',
+  ].join('\n');
+};
+
+/** What gh says when it refuses a comment, matched to a sentence that says what to do. The first match wins. */
+const GH_COMMENT_REFUSALS: readonly { when: RegExp; say: string }[] = [
+  { when: /gh auth login|not logged in|authentication|bad credentials|HTTP 401/i, say: 'The GitHub CLI is not signed in. Press Connect GitHub, then try again.' },
+  { when: /HTTP 403|forbidden|resource not accessible|must have/i, say: 'GitHub would not let this account comment on that pull request.' },
+  { when: /could not resolve to a (pull request|repository)|HTTP 404|not found/i, say: 'GitHub cannot find that pull request any more. It may have been closed or moved.' },
+  { when: /locked/i, say: 'That pull request is locked, so nobody can comment on it.' },
+];
+
+/** Posts `body` as a comment on a pull request and returns the comment's address. Only called after the person confirmed the exact text. */
+export const createPullRequestComment = async ({ cwd, number, body, execFn = runExecFile }: { cwd: string; number: number; body: string; execFn?: ExecFn }): Promise<string> => {
+  try {
+    const { stdout } = await execFn('gh', ['pr', 'comment', String(number), '--body', body], { cwd, windowsHide: true, timeout: GH_TIMEOUT_MS });
+    return String(stdout).split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line)) ?? String(stdout).trim();
+  } catch (error) {
+    const reason = toPlainMessage({ error });
+    throw new Error(GH_COMMENT_REFUSALS.find((candidate) => candidate.when.test(reason))?.say || `GitHub did not accept the comment: ${reason}`, { cause: error });
   }
 };
