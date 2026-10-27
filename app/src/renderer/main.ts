@@ -18,6 +18,7 @@ import { DEMO_FIX, buildDemoClearBoard, buildDemoGraphBoard, buildDemoProposeRun
 import { makeElement, mount, type Child } from './dom.ts';
 import { showGithubDialog } from './github-dialog.ts';
 import { showSummaryDialog } from './summary-dialog.ts';
+import { buildSpecGoal } from '../shared/github.ts';
 import { toDetailKey, type GithubDetailLoad, type GithubKind } from './github-view.ts';
 import { refreshConfidenceMapTheme, drawConfidenceMap } from './graph-view.ts';
 import { createScene } from './scene.ts';
@@ -245,6 +246,12 @@ const boardActions: BoardActions = {
         toast({ text: `Posted on the pull request: ${url}` });
       } }),
     });
+  } }),
+  specFromIssue: ({ number }) => runGuarded({ callback: async () => {
+    const loaded = ui.details.get(toDetailKey({ kind: 'issue', number }));
+    if (loaded?.state !== 'issue') throw new Error('Open the issue first, then write a spec from it.');
+    await desk.wizardStart({ entry: 'board', goal: buildSpecGoal({ issue: loaded.value }) });
+    applyView({ value: await desk.getView() });
   } }),
   refreshGithub: () => {
     ui.details.clear();

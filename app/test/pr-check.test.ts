@@ -255,3 +255,12 @@ test('the review comment says which commit and which settings, and is not an app
   assert.match(body, /\| c2: claim c2 \| 0\.90 \| supported \| 90% \| needs a decision: weak-tests \|/);
   assert.match(body, /It is not an approval/);
 });
+
+test('the spec wizard can start with a goal taken from an issue, and an empty goal leaves it blank', async () => {
+  const { desk } = await openSceneInDesk({ baseHasConfig: true });
+  const started = await desk.wizardStart({ entry: 'board', goal: 'Shipping is too expensive (issue #12)\n\nFree over $50.' });
+  assert.equal(started.goal, 'Shipping is too expensive (issue #12)\n\nFree over $50.');
+  assert.equal(started.step, 'spec');
+  assert.equal((await desk.wizardStart({ entry: 'board', goal: '   ' })).goal, '');
+  assert.equal((await desk.wizardStart({ entry: 'board', goal: 42 })).goal, '', 'only text is taken');
+});
