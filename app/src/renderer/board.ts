@@ -127,6 +127,12 @@ const renderPullRequestCheckBar = ({ check, ui, actions }: { check: PullRequestC
     ],
   });
 
+/** The name at the top left: the repo the person opened, even while its pull request is graded in a folder named after the pull request. */
+const toRepoName = ({ ui }: { ui: BoardUi }): string => (ui.pullRequestCheck ? (ui.pullRequestCheck.originPath.split(/[\\/]/).findLast(Boolean) ?? 'claimcheck Desk') : (ui.board?.repo.name ?? 'claimcheck Desk'));
+
+/** The small chip beside the name: the branch, or the pull request being graded, whose folder has no branch. */
+const toBranchLabel = ({ ui, board }: { ui: BoardUi; board: Board }): string => (ui.pullRequestCheck ? `pull request #${ui.pullRequestCheck.number}` : (board.repo.branch ?? ''));
+
 const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
   const board = ui.board;
   const meta = board
@@ -134,7 +140,7 @@ const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): 
         tag: 'span',
         props: { class: 'repo-meta' },
         children: [
-          board.repo.branch ? makeElement({ tag: 'span', props: { class: 'branch' }, children: [board.repo.branch] }) : null,
+          toBranchLabel({ ui, board }) ? makeElement({ tag: 'span', props: { class: 'branch' }, children: [toBranchLabel({ ui, board })] }) : null,
           makeElement({
             tag: 'span',
             props: {},
@@ -152,7 +158,7 @@ const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): 
         props: { class: 'brand' },
         children: [
           makeElement({ tag: 'span', props: { class: 'mark', attrs: { 'aria-hidden': 'true' } } }),
-          makeElement({ tag: 'div', props: { class: 'repo' }, children: [makeElement({ tag: 'strong', props: {}, children: [board ? board.repo.name : 'claimcheck Desk'] }), meta] }),
+          makeElement({ tag: 'div', props: { class: 'repo' }, children: [makeElement({ tag: 'strong', props: {}, children: [toRepoName({ ui })] }), meta] }),
         ],
       }),
       makeElement({
@@ -215,6 +221,9 @@ const renderBranchPrOffer = ({ board, ui, actions }: { board: Board; ui: BoardUi
  * Shown when every claim is backed: a short celebration, an honest line about what that means,
  * and the way forward. The sparks are decoration and only move when the banner is first reached.
  */
+/** What the banner says has nothing left to decide: the pull request being graded, or the branch the repo is on. */
+const toAllClearSubject = ({ ui, board }: { ui: BoardUi; board: Board }): string => (ui.pullRequestCheck ? `pull request #${ui.pullRequestCheck.number}` : (board.repo.branch ?? 'this branch'));
+
 const renderAllClear = ({ board, ui, actions }: { board: Board; ui: BoardUi; actions: BoardActions }): HTMLElement =>
   makeElement({
     tag: 'section',
@@ -226,8 +235,8 @@ const renderAllClear = ({ board, ui, actions }: { board: Board; ui: BoardUi; act
         props: { class: 'all-clear-text' },
         children: [
           makeElement({ tag: 'h2', props: {}, children: [countHeldClaims({ board }) === 0 ? 'Nice work. Every claim is backed.' : 'Nice work. Nothing is left to decide.'] }),
-          makeElement({ tag: 'p', props: {}, children: [`Nothing on ${board.repo.branch ?? 'this branch'} needs a decision now. ${describeAllClear({ board })}`] }),
-          makeElement({ tag: 'p', props: { class: 'muted' }, children: ['That is a good sign, not a sign-off. Open a pull request so a person reads it before it merges.'] }),
+          makeElement({ tag: 'p', props: {}, children: [`Nothing on ${toAllClearSubject({ ui, board })} needs a decision now. ${describeAllClear({ board })}`] }),
+          makeElement({ tag: 'p', props: { class: 'muted' }, children: [ui.pullRequestCheck ? 'That is a good sign, not a sign-off. Post the results so the author and the other reviewers can see them.' : 'That is a good sign, not a sign-off. Open a pull request so a person reads it before it merges.'] }),
         ],
       }),
       renderBranchPrOffer({ board, ui, actions }),
