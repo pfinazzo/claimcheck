@@ -32,6 +32,11 @@ export const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = 
   const el = getDocument().createElement(tag);
   if (props.class) el.className = props.class;
   for (const [k, v] of Object.entries(props.attrs ?? {})) {
+    // ARIA states are words, not flags: a pressed button is aria-pressed="true", and an unpressed one says "false".
+    if (k.startsWith('aria-') && typeof v === 'boolean') {
+      el.setAttribute(k, String(v));
+      continue;
+    }
     if (v === null || v === undefined || v === false) continue;
     el.setAttribute(k, v === true ? '' : String(v));
   }

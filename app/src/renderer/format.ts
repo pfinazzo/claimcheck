@@ -51,11 +51,16 @@ export const groupClaims = (board: Board): Groups => {
   return { needs, backed };
 };
 
-export const summaryLine = (board: Board): string => {
-  const n = board.claims.length;
-  if (n === 0) return 'No claims yet.';
-  const needs = board.queue.length;
-  const head = `${plural(n, 'claim')}, ${needs === 0 ? 'none need a decision' : `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`}.`;
+export type SummaryStats = {
+  claims: number;
+  needs: number;
+  /** Planted bugs across the board, each counted once per run. */
+  caught: number;
+  total: number;
+};
+
+/** The figures behind the summary: claims, how many need a decision, and planted bugs caught. */
+export const summaryStats = (board: Board): SummaryStats => {
   // Claims that list the same file carry the same planted bugs, so count each bug once per run.
   const bugs = new Map<string, boolean>();
   for (const c of board.claims) {
@@ -65,8 +70,13 @@ export const summaryLine = (board: Board): string => {
       bugs.set(JSON.stringify([run, m.file, m.line_no, m.cls, m.mutated]), m.outcome !== 'survived');
     }
   }
-  const total = bugs.size;
-  const caught = [...bugs.values()].filter(Boolean).length;
+  return { claims: board.claims.length, needs: board.queue.length, caught: [...bugs.values()].filter(Boolean).length, total: bugs.size };
+};
+
+export const summaryLine = (board: Board): string => {
+  const { claims: n, needs, caught, total } = summaryStats(board);
+  if (n === 0) return 'No claims yet.';
+  const head = `${plural(n, 'claim')}, ${needs === 0 ? 'none need a decision' : `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`}.`;
   return total === 0 ? head : `${head} ${caught} of ${total} planted bugs caught.`;
 };
 

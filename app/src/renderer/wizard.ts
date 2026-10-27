@@ -6,6 +6,7 @@
  */
 
 import type { DeskBridge } from '../shared/ipc.ts';
+import { toBridgeFailure } from '../shared/ipc.ts';
 import type { CcInit, ConnectionSummary } from '../shared/types.ts';
 import {
   BEATS, STEPS, STEP_LABELS, addCriterion, applyStepResponse, blockingProblems, buildFinishRequest, buildStepRequest, canContinue, goBack, goNext, localWarnings,
@@ -37,7 +38,7 @@ type Local = {
 
 const local: Local = { busy: null, error: null, step: '', animation: [] };
 
-const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+const msg = (e: unknown): string => toBridgeFailure(e).message;
 const btn = (label: string, onClick: () => void, cls = '', disabled = false): HTMLButtonElement =>
   h('button', { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, label);
 const more = (...body: Child[]): HTMLElement => h('details', { class: 'more' }, h('summary', {}, 'More detail'), ...body);
@@ -60,7 +61,7 @@ const later = (ctx: WizardCtx, ms: number, fn: () => void): void => {
 // ---- welcome ----------------------------------------------------------------
 
 const claimCard = (): HTMLElement =>
-  h('div', { class: 'sample' }, h('p', { class: 'muted' }, 'What the agent said'), h('p', {}, h('strong', {}, 'shipping_fee returns 0 for orders of $50 or more')), h('p', { class: 'muted' }, 'Stated confidence 0.92'));
+  h('div', { class: 'sample panel' }, h('p', { class: 'muted' }, 'What the agent said'), h('p', {}, h('strong', {}, 'shipping_fee returns 0 for orders of $50 or more')), h('p', { class: 'muted' }, 'Stated confidence 0.92'));
 
 const plantedBugDemo = (ctx: WizardCtx): HTMLElement => {
   const op = h('span', { class: 'op' }, '>=');
@@ -429,11 +430,15 @@ export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
   const steps = h('ol', { class: 'steps', attrs: { 'aria-label': 'Progress' } }, ...STEPS.map((id, i) => h('li', { class: id === s.step ? 'current' : i < stepNumber(s) - 1 ? 'past' : '' }, STEP_LABELS[id])));
   const root = h(
     'div',
-    { class: 'wizard' },
-    h('p', { class: 'muted' }, `Step ${stepNumber(s)} of ${STEPS.length}`),
-    steps,
-    h('div', { class: 'wizard-body' }, ...body, local.error ? h('p', { class: 'error', attrs: { role: 'alert' } }, local.error) : null),
-    nav,
+    { class: 'wizard-wrap' },
+    h(
+      'div',
+      { class: 'wizard panel' },
+      h('p', { class: 'step-count' }, `Step ${stepNumber(s)} of ${STEPS.length}`),
+      steps,
+      h('div', { class: 'wizard-body' }, ...body, local.error ? h('p', { class: 'error', attrs: { role: 'alert' } }, local.error) : null),
+      nav,
+    ),
   );
   while (mountInto.firstChild) mountInto.removeChild(mountInto.firstChild);
   mountInto.appendChild(root);

@@ -14,6 +14,7 @@ import { renderBoard, type BoardActions, type BoardUi } from '../src/renderer/bo
 import { demoWizard } from '../src/renderer/demo.ts';
 import { mount, setDocument } from '../src/renderer/dom.ts';
 import { factsLine, groupClaims, specWord, summaryLine } from '../src/renderer/format.ts';
+import { syncConfidenceMap } from '../src/renderer/graph-view.ts';
 import { renderWizard, type WizardCtx } from '../src/renderer/wizard.ts';
 
 const { document } = parseHTML('<!doctype html><html><body><div id="app"></div></body></html>');
@@ -63,11 +64,11 @@ const actions = (calls: string[] = []): BoardActions => ({
   select: (id) => calls.push(`select:${id}`),
   openRepo: noop, connectClaude: noop, runClaimcheck: noop, writeSpec: noop, closeDrawer: noop,
   fix: (id) => calls.push(`fix:${id}`),
-  useApproach: noop, copyPrompt: noop, copyImplement: noop, copyText: noop, acceptRisk: noop, openPr: noop, openPath: noop, connect: noop,
+  useApproach: noop, copyPrompt: noop, copyImplement: noop, copyText: noop, acceptRisk: noop, openPr: noop, openPath: noop, connect: noop, connectGithub: noop, inspect: noop, setMode: noop, showClaim: noop,
 });
 
 const ui = (board: Board | null, selectedId: string | null = null, runs: Map<string, PublicRun> = new Map()): BoardUi => ({
-  board, selectedId, runs, ghOk: false, running: false, drawer: { open: false, status: '', lines: [] },
+  board, mode: 'list', selectedId, runs, ghOk: false, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = (u: BoardUi, a = actions()): string => {
@@ -150,6 +151,125 @@ test('clicking a row selects it, and Fix this calls the action', () => {
   const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as unknown as HTMLElement;
   fix.click();
   assert.deepEqual(calls, ['select:c1', 'fix:c1']);
+});
+
+const resolvedRun = (): PublicRun => ({ id: 'run2', kind: 'implement', claimId: 'c1', status: 'resolved', startedAt: 0, mode: 'cli', activity: [], proposals: null, proposal: { title: 'Pin it', summary: 's', effort: 'low', pros: [], cons: [], touches: [] }, error: null, needsSignIn: false, branch: 'claimcheck/fix-c1-abc', worktree: '/wt', tests: { ok: true, tail: '' }, killCondition: null, commits: ['abc Pin it'], summary: 'done', prompt: 'P', prUrl: null } as unknown as PublicRun);
+
+test('Open pull request is disabled with the reason written beside it when the repo has no remote', () => {
+  const b = boardOf([claim()], ['c1']);
+  const calls: string[] = [];
+  const text = draw(ui(b, 'c1', new Map([['c1', resolvedRun()]])), { ...actions(calls), connectGithub: () => calls.push('github') });
+  const open = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Open pull request') as unknown as HTMLButtonElement;
+  assert.equal(open.disabled, true);
+  assert.ok(text.includes('no GitHub remote yet'), 'the reason is text on the page, not only a tooltip');
+  [...document.querySelectorAll('button')].find((x) => x.textContent === 'Connect GitHub')?.click();
+  assert.deepEqual(calls, ['github']);
+});
+
+test('Open pull request is enabled when gh is signed in and the repo has a remote', () => {
+  const b = { ...boardOf([claim()], ['c1']) };
+  b.repo = { ...b.repo, origin: 'https://github.com/a/b.git' };
+  draw({ ...ui(b, 'c1', new Map([['c1', resolvedRun()]])), ghOk: true });
+  const open = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Open pull request') as unknown as HTMLButtonElement;
+  assert.equal(open.disabled, false);
+  assert.equal([...document.querySelectorAll('button')].some((x) => x.textContent === 'Connect GitHub' && x.closest('.pr-offer')), false);
+});
+
+test('a fix with a branch offers Inspect the code, and pressing it names the claim', () => {
+  const calls: string[] = [];
+  draw(ui(boardOf([claim()], ['c1']), 'c1', new Map([['c1', resolvedRun()]])), { ...actions(calls), inspect: (id) => calls.push(`inspect:${id}`) });
+  [...document.querySelectorAll('button')].find((x) => x.textContent === 'Inspect the code')?.click();
+  assert.deepEqual(calls, ['inspect:c1']);
+});
+
+test('the top bar offers Connect GitHub next to Connect Claude', () => {
+  const text = draw(ui(boardOf([claim()], ['c1']), 'c1'));
+  assert.ok(text.includes('Connect GitHub') && text.includes('Connect Claude'));
+});
+
+const proposal = (title: string, isRecommended: boolean) => ({ title, summary: `${title} summary`, pros: ['p'], cons: ['c'], effort: 'small' as const, touches: ['a.py'], recommended: isRecommended });
+
+const proposeDone = (proposals: ReturnType<typeof proposal>[], recommendationWhy: string | null): PublicRun =>
+  ({ id: 'run3', kind: 'propose', claimId: 'c1', status: 'done', startedAt: 0, mode: 'cli', activity: [], proposals, recommendationWhy, proposal: null, error: null, needsSignIn: false, branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null }) as unknown as PublicRun;
+
+test('Claude\'s recommended approach is labelled, explained above the cards, and the only primary button', () => {
+  const run = proposeDone([proposal('Narrow the claim', true), proposal('Pin the boundary', false), proposal('Rewrite it', false)], 'It matches what you asked for and costs the least.');
+  const text = draw(ui(boardOf([claim()], ['c1']), 'c1', new Map([['c1', run]])));
+  assert.ok(text.includes('Claude recommends: Narrow the claim'));
+  assert.ok(text.includes('It matches what you asked for and costs the least.'));
+  const badges = [...document.querySelectorAll('.badge')];
+  assert.deepEqual(badges.map((b) => b.textContent), ['Recommended']);
+  assert.ok(badges[0]?.closest('.proposal')?.textContent?.includes('Narrow the claim'));
+  const use = [...document.querySelectorAll('button')].filter((x) => x.textContent === 'Use this approach');
+  assert.equal(use.length, 3);
+  assert.deepEqual(use.map((b) => b.classList.contains('primary')), [true, false, false]);
+});
+
+test('with no recommendation the cards show no badge, no note and no primary choice', () => {
+  const run = proposeDone([proposal('Narrow the claim', false), proposal('Pin the boundary', false), proposal('Rewrite it', false)], null);
+  const text = draw(ui(boardOf([claim()], ['c1']), 'c1', new Map([['c1', run]])));
+  assert.ok(!text.includes('Claude recommends'));
+  assert.equal(document.querySelectorAll('.badge').length, 0);
+  const use = [...document.querySelectorAll('button')].filter((x) => x.textContent === 'Use this approach');
+  assert.deepEqual(use.map((b) => b.classList.contains('primary')), [false, false, false]);
+});
+
+// ---- the confidence map tab ---------------------------------------------------------------------
+
+const mixedBoard = (): Board => {
+  const strong = claim({ id: 'c3', claim: 'strong claim', confidence: 0.95, flags: [], risk: 0.05, mutation: { total: 4, killed: 4, survived: 0, timeout: 0, catchRate: 1, ts: 't', runId: 'r', mutants: [] } });
+  const weak = claim({ id: 'c1', claim: 'weak claim', confidence: 0.4, flags: ['low-confidence'], risk: 0.9 });
+  const settled = claim({ id: 'c4', claim: 'settled claim', confidence: 0.6, flags: ['low-confidence'], status: 'resolved', risk: 0.5 });
+  return boardOf([strong, weak, settled], ['c1']);
+};
+
+test('pressed and selected states are the words true and false, which is what screen readers read', () => {
+  draw(ui(mixedBoard(), 'c1'));
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map((t) => t.getAttribute('aria-selected')), ['true', 'false']);
+  const rows = [...document.querySelectorAll('.claim-row')];
+  assert.ok(rows.length > 0);
+  assert.deepEqual(rows.map((r) => r.getAttribute('aria-pressed')), rows.map((r) => (r.getAttribute('data-claim') === 'c1' ? 'true' : 'false')));
+});
+
+test('the board offers a Claims tab and a Confidence map tab, and pressing one asks for that mode', () => {
+  const modes: string[] = [];
+  draw(ui(mixedBoard(), 'c1'), { ...actions(), setMode: (mode) => modes.push(mode) });
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map((t) => t.textContent), ['Claims', 'Confidence map']);
+  assert.equal(tabs[0]?.getAttribute('aria-selected'), 'true');
+  (tabs[1] as unknown as HTMLElement).click();
+  assert.deepEqual(modes, ['graph']);
+});
+
+test('the confidence map lists EVERY claim, flagged and backed, riskiest first, with plain-word states', () => {
+  draw({ ...ui(mixedBoard(), 'c1'), mode: 'graph' });
+  const rows = [...document.querySelectorAll('.all-claims-table tbody tr')].map((r) => (r.textContent ?? '').replace(/\s+/g, ' ').trim());
+  assert.equal(rows.length, 3, 'all three claims, not only the flagged one');
+  assert.ok(rows[0]?.startsWith('c1 weak claim'));
+  assert.ok(rows[0]?.includes('Needs a decision'));
+  assert.ok(rows[1]?.includes('settled claim') && rows[1]?.includes('Resolved'));
+  assert.ok(rows[2]?.includes('strong claim') && rows[2]?.includes('Backed') && rows[2]?.includes('100%'));
+  assert.ok((app.textContent ?? '').includes('All claims (3)'));
+  assert.ok((app.textContent ?? '').includes('1 of 3 claims need a decision'));
+});
+
+test('a row selects its claim, and Open claim leaves the map for that claim', () => {
+  const calls: string[] = [];
+  draw({ ...ui(mixedBoard(), 'c1'), mode: 'graph' }, { ...actions(calls), showClaim: (id) => calls.push(`show:${id}`) });
+  (document.querySelector('tr[data-claim="c3"] button') as unknown as HTMLElement).click();
+  [...document.querySelectorAll('button')].find((b) => b.textContent === 'Open claim')?.click();
+  assert.deepEqual(calls, ['select:c3', 'show:c1']);
+});
+
+test('where WebGL is not available the map says so, and the table is still there', () => {
+  const state = { ...ui(mixedBoard(), 'c1'), mode: 'graph' as const };
+  draw(state);
+  syncConfidenceMap({ ui: state, onSelect: noop as never, reducedMotion: true });
+  const note = document.querySelector('.map-note') as unknown as HTMLElement;
+  assert.ok((note.textContent ?? '').includes('The map could not start'));
+  assert.equal(note.hidden, false);
+  assert.equal(document.querySelectorAll('.all-claims-table tbody tr').length, 3);
 });
 
 test('empty states say what to do next', () => {

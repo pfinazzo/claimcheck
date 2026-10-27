@@ -20,6 +20,9 @@ export type DetailActions = {
   openPr: (claimId: string, runId: string) => void;
   openPath: (target: string) => void;
   connect: () => void;
+  connectGithub: () => void;
+  /** Opens the viewer on the code committed for this claim's fix. */
+  inspect: (claimId: string) => void;
 };
 
 const section = (title: string, ...children: Child[]): HTMLElement => h('section', { class: 'block' }, h('h3', {}, title), ...children);
@@ -41,7 +44,7 @@ const checker = (claim: Claim): HTMLElement => {
   return h(
     'div',
     {},
-    h('p', {}, h('span', { class: `verdict ${verdictWord(claim).replace(' ', '-')}` }, verdictWord(claim)), v.reason ? `. ${v.reason}` : ''),
+    h('p', {}, h('span', { class: `pill ${verdictWord(claim).replace(' ', '-')}` }, verdictWord(claim)), v.reason ? ` ${v.reason}` : ''),
     who ? muted(`By ${who}.`) : null,
     v.evidence.length ? code(v.evidence.join('\n')) : null,
   );
@@ -65,7 +68,7 @@ const plantedBugs = (claim: Claim): HTMLElement => {
           h(
             'tr',
             { class: x.outcome === 'survived' ? 'survived' : '' },
-            h('td', {}, x.outcome),
+            h('td', {}, h('span', { class: `pill ${x.outcome === 'survived' || x.outcome === 'killed' || x.outcome === 'timeout' ? x.outcome : ''}`.trim() }, x.outcome)),
             h('td', { class: 'mono' }, `${x.file}${x.line_no === null ? '' : `:${x.line_no}`}`),
             h('td', { class: 'mono' }, `${x.original.trim()}  →  ${x.mutated.trim()}`),
           ),
@@ -96,20 +99,37 @@ const activity = (run: PublicRun): HTMLElement => h('div', { class: 'activity' }
 const proposalCard = (p: Proposal, i: number, run: PublicRun, claim: Claim, a: DetailActions): HTMLElement =>
   h(
     'div',
-    { class: 'proposal', data: { proposal: i } },
-    h('h4', {}, p.title, h('span', { class: 'effort' }, ` ${p.effort} effort`)),
+    { class: `proposal panel${p.recommended ? ' is-recommended' : ''}`, data: { proposal: i } },
+    h('h4', {}, p.title, p.recommended ? h('span', { class: 'badge' }, 'Recommended') : null, h('span', { class: 'effort' }, ` ${p.effort} effort`)),
     muted(p.summary),
     h('div', { class: 'two' }, h('div', {}, h('strong', {}, 'Pros'), list(p.pros)), h('div', {}, h('strong', {}, 'Cons'), list(p.cons))),
     muted(`Touches: ${p.touches.join(', ') || 'not specified'}`),
     run.mode === 'api'
-      ? button('Copy build prompt', () => a.copyImplement(claim.id, run.id, i))
-      : button('Use this approach', () => a.useApproach(claim.id, run.id, i), 'primary'),
+      ? button('Copy build prompt', () => a.copyImplement(claim.id, run.id, i), p.recommended ? 'primary' : '')
+      : button('Use this approach', () => a.useApproach(claim.id, run.id, i), p.recommended ? 'primary' : ''),
   );
 
-const prButton = (claim: Claim, runId: string, prUrl: string | null | undefined, ghOk: boolean, a: DetailActions): HTMLElement =>
+/** Claude's pick and its reason, above the cards. Shown only when Claude recommended one and said why. */
+const recommendationNote = (run: PublicRun): HTMLElement | null => {
+  const pick = run.proposals?.find((p) => p.recommended);
+  if (!pick || !run.recommendationWhy) return null;
+  return h('div', { class: 'recommendation panel', attrs: { role: 'note' } }, h('strong', {}, `Claude recommends: ${pick.title}`), h('p', {}, run.recommendationWhy));
+};
+
+/** The pull-request button. When it cannot work, it is disabled, the reason is written beside it, and Connect GitHub is one press away. */
+const prButton = (claim: Claim, runId: string, prUrl: string | null | undefined, prBlocker: string | null, a: DetailActions): HTMLElement =>
   prUrl
     ? button('View pull request', () => a.openPath(prUrl))
-    : button('Open pull request', () => a.openPr(claim.id, runId), 'primary', !ghOk, ghOk ? '' : 'Run gh auth login first');
+    : h(
+        'div',
+        { class: 'pr-offer' },
+        h('div', { class: 'row' }, button('Open pull request', () => a.openPr(claim.id, runId), 'primary', prBlocker !== null), prBlocker ? button('Connect GitHub', a.connectGithub) : null),
+        prBlocker ? h('p', { class: 'muted pr-blocker', attrs: { role: 'status' } }, prBlocker) : null,
+      );
+
+/** Opens the code viewer. Offered only once a fix has a branch, because there is nothing to read before that. */
+const inspectButton = (claim: Claim, branch: string | null | undefined, a: DetailActions): HTMLElement | null =>
+  branch ? button('Inspect the code', () => a.inspect(claim.id)) : null;
 
 /** The three actions every flagged claim offers, plus the one-line accept-risk form. */
 const baseActions = (claim: Claim, run: PublicRun | null, a: DetailActions): HTMLElement => {
@@ -138,7 +158,7 @@ const promptBlock = (claim: Claim, run: PublicRun | null): HTMLElement => {
 };
 
 /** The Fix flow, one state at a time. */
-export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a: DetailActions): HTMLElement => {
+export const renderFix = (claim: Claim, run: PublicRun | null, prBlocker: string | null, a: DetailActions): HTMLElement => {
   const prompt = promptBlock(claim, run);
   const base = baseActions(claim, run, a);
   const wrap = (title: string, ...c: Child[]): HTMLElement => section(title, ...c);
@@ -154,7 +174,8 @@ export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a:
       h(
         'div',
         { class: 'row' },
-        prButton(claim, fix.runId ?? '', fix.prUrl, ghOk, a),
+        prButton(claim, fix.runId ?? '', fix.prUrl, prBlocker, a),
+        inspectButton(claim, fix.branch, a),
         button('Copy branch name', () => a.copyText(fix.branch ?? '')),
         fix.worktree ? button('Open worktree', () => a.openPath(fix.worktree ?? '')) : null,
       ),
@@ -168,7 +189,7 @@ export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a:
       h('p', {}, fix.error ?? '', ' ', h('code', {}, fix.branch ?? '')),
       resultBlock('Project tests', fix.tests),
       resultBlock('Kill condition', fix.killCondition),
-      fix.worktree ? button('Open worktree', () => a.openPath(fix.worktree ?? '')) : null,
+      h('div', { class: 'row' }, inspectButton(claim, fix.branch, a), fix.worktree ? button('Open worktree', () => a.openPath(fix.worktree ?? '')) : null),
       base,
       prompt,
     );
@@ -191,6 +212,7 @@ export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a:
     return wrap(
       'Choose an approach',
       muted(`Claude builds only the one you pick.${run.mode === 'api' ? ' API mode cannot edit your repo, so copy the build prompt into Claude Code instead.' : ''}`),
+      recommendationNote(run),
       ...(run.proposals ?? []).map((p, i) => proposalCard(p, i, run, claim, a)),
       base,
       prompt,
@@ -207,7 +229,7 @@ export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a:
       resultBlock('Project tests', run.tests),
       resultBlock('Kill condition', run.killCondition),
       activity(run),
-      run.worktree ? button('Open worktree', () => a.openPath(run.worktree ?? '')) : null,
+      h('div', { class: 'row' }, inspectButton(claim, run.branch, a), run.worktree ? button('Open worktree', () => a.openPath(run.worktree ?? '')) : null),
       base,
     );
   }
@@ -217,19 +239,38 @@ export const renderFix = (claim: Claim, run: PublicRun | null, ghOk: boolean, a:
     resultBlock('Project tests', run.tests),
     resultBlock('Kill condition', run.killCondition),
     run.commits.length ? code(run.commits.join('\n')) : null,
-    h('div', { class: 'row' }, prButton(claim, run.id, run.prUrl, ghOk, a), button('Copy branch name', () => a.copyText(run.branch ?? '')), run.worktree ? button('Open worktree', () => a.openPath(run.worktree ?? '')) : null),
+    h('div', { class: 'row' }, prButton(claim, run.id, run.prUrl, prBlocker, a), inspectButton(claim, run.branch, a), button('Copy branch name', () => a.copyText(run.branch ?? '')), run.worktree ? button('Open worktree', () => a.openPath(run.worktree ?? '')) : null),
   );
 };
 
-export const renderDetail = (claim: Claim | null, run: PublicRun | null, ghOk: boolean, a: DetailActions): HTMLElement => {
-  if (!claim) return h('div', { class: 'detail empty' }, muted('Pick a claim to see why it needs a decision.'));
-  // A fix that is under way or finished stays on top. Otherwise the evidence comes first, then the decision.
-  const fixFirst = run !== null || claim.status !== 'open' || claim.fix !== null;
-  const fixBlock = claim.flags.length > 0 || fixFirst ? renderFix(claim, run, ghOk, a) : null;
+const tile = (cls: string, label: string, value: string, note: string): HTMLElement =>
+  h('div', { class: `tile ${cls}`.trim() }, h('span', { class: 'tile-label' }, label), h('span', { class: 'tile-value' }, value), h('span', { class: 'tile-note' }, note));
+
+const VERDICT_TONES: Record<string, string> = { supported: 'ok', refuted: 'bad', unverifiable: 'warn', 'not checked': '' };
+
+/** Three figures side by side: what the author stated, what the checker said, what the planted bugs showed. */
+const evidenceTiles = (claim: Claim): HTMLElement => {
+  const m = claim.mutation;
+  const rate = m && m.total > 0 ? (m.killed + m.timeout) / m.total : null;
+  const verdict = verdictWord(claim);
   return h(
     'div',
-    { class: 'detail' },
-    h('header', { class: 'detail-head' }, h('p', { class: 'id mono' }, claim.id, claim.status === 'open' ? '' : `  ${claim.status}`), h('h2', {}, claim.claim), muted(factsLine(claim))),
+    { class: 'tiles' },
+    tile(claim.confidence !== null && claim.confidence < 0.75 ? 'warn' : '', 'Stated confidence', claim.confidence === null ? '–' : claim.confidence.toFixed(2), claim.confidence === null ? 'not stated' : 'by the author'),
+    tile(VERDICT_TONES[verdict] ?? '', 'Checker', verdict, claim.verdict ? `${claim.verdict.provider}${claim.verdict.model ? `, ${claim.verdict.model}` : ''}` : 'no run yet'),
+    tile(rate === null ? '' : rate < 0.8 ? 'bad' : 'ok', 'Planted bugs caught', rate === null ? '–' : pct(rate), m && m.total > 0 ? `${m.killed + m.timeout} of ${m.total}` : 'no run yet'),
+  );
+};
+
+export const renderDetail = (claim: Claim | null, run: PublicRun | null, prBlocker: string | null, a: DetailActions): HTMLElement => {
+  if (!claim) return h('div', { class: 'detail panel empty' }, muted('Pick a claim to see why it needs a decision.'));
+  // A fix that is under way or finished stays on top. Otherwise the evidence comes first, then the decision.
+  const fixFirst = run !== null || claim.status !== 'open' || claim.fix !== null;
+  const fixBlock = claim.flags.length > 0 || fixFirst ? renderFix(claim, run, prBlocker, a) : null;
+  return h(
+    'div',
+    { class: 'detail panel' },
+    h('header', { class: 'detail-head' }, h('p', { class: 'id mono' }, claim.id, claim.status === 'open' ? null : h('span', { class: 'pill' }, claim.status)), h('h2', {}, claim.claim), muted(factsLine(claim)), evidenceTiles(claim)),
     section('Why it is here', whyFlagged(claim)),
     fixFirst ? fixBlock : null,
     section('What the checker said', checker(claim)),

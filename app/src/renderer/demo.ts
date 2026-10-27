@@ -4,6 +4,9 @@
  * @author Patrick Finazzo
  */
 
+import type { PublicRun } from '../lib/fixer.ts';
+import type { Board, Claim, Mutant } from '../shared/types.ts';
+import { parseUnifiedDiff } from '../shared/diff.ts';
 import type { CcInit, CcFinish } from '../shared/types.ts';
 import { initialWizard, type WizardState } from '../shared/wizard-state.ts';
 
@@ -26,6 +29,140 @@ const finish: CcFinish = {
   lock_sha256: 'f484e3228c8c6b6fa429482a862a647914da4b67000e02bdf54c30e5c38c4227',
   branch: 'task/orders-of-50-or-more',
   commit: '2dc0946a1b3c5d7e9f',
+};
+
+const DEMO_DIFF = [
+  'diff --git a/.claimcheck/config.toml b/.claimcheck/config.toml',
+  '--- a/.claimcheck/config.toml',
+  '+++ b/.claimcheck/config.toml',
+  '@@ -1,4 +1,4 @@',
+  ' base = "main"',
+  '-test_cmd = \'node -e "process.exit(0)"\'',
+  '+test_cmd = "python -m pytest -q"',
+  ' ignore = []',
+  ' ',
+  'diff --git a/tests/test_calc.py b/tests/test_calc.py',
+  'new file mode 100644',
+  '--- /dev/null',
+  '+++ b/tests/test_calc.py',
+  '@@ -0,0 +1,9 @@',
+  '+from src.calc import is_adult',
+  '+',
+  '+',
+  '+def test_is_adult_at_the_boundary():',
+  '+    assert is_adult(17) is False',
+  '+    assert is_adult(18) is True',
+  '+    assert is_adult(19) is True',
+].join('\n');
+
+type DemoClaim = { id: string; claim: string; confidence: number | null; catchRate: number | null; verdict: 'SUPPORTED' | 'UNVERIFIABLE' | 'REFUTED' | null; status?: Claim['status'] };
+
+const DEMO_CLAIMS: readonly DemoClaim[] = [
+  { id: 'c1', claim: 'shipping_fee returns 0 for orders of $50 or more', confidence: 0.92, catchRate: 0.5, verdict: 'SUPPORTED' },
+  { id: 'c2', claim: 'coupons never stack with a sale price', confidence: 0.6, catchRate: 0.4, verdict: 'REFUTED' },
+  { id: 'c3', claim: 'delivery windows parse hours and minutes', confidence: 0.95, catchRate: 1, verdict: 'SUPPORTED' },
+  { id: 'c4', claim: 'a failed payment is retried with backoff', confidence: 0.9, catchRate: 0.9, verdict: 'SUPPORTED' },
+  { id: 'c5', claim: 'cart totals use the price list for the locale', confidence: 0.88, catchRate: 0.8, verdict: 'SUPPORTED' },
+  { id: 'c6', claim: 'tax is rounded half-up to the cent', confidence: 0.97, catchRate: 0.5, verdict: 'SUPPORTED' },
+  { id: 'c7', claim: 'the order webhook ignores a repeated event id', confidence: 0.55, catchRate: 0.9, verdict: 'SUPPORTED' },
+  { id: 'c8', claim: 'receipt export escapes quotes in csv', confidence: 0.82, catchRate: 0.7, verdict: 'SUPPORTED' },
+  { id: 'c9', claim: 'timestamps are stored in UTC', confidence: 0.93, catchRate: null, verdict: 'SUPPORTED' },
+  { id: 'c10', claim: 'the order list keeps a stable page order', confidence: 0.35, catchRate: 0.4, verdict: 'REFUTED' },
+  { id: 'c11', claim: 'the rate limit resets every hour', confidence: 0.7, catchRate: 0.9, verdict: 'SUPPORTED' },
+  { id: 'c12', claim: 'the email check accepts a plus sign', confidence: 0.99, catchRate: 0.2, verdict: 'REFUTED' },
+  { id: 'c13', claim: 'a null cart is rejected', confidence: 0.91, catchRate: 0.9, verdict: 'UNVERIFIABLE' },
+  { id: 'c14', claim: 'logs redact payment keys', confidence: 0.9, catchRate: 0.9, verdict: 'SUPPORTED' },
+  { id: 'c15', claim: 'config merging is deep', confidence: null, catchRate: 0.7, verdict: null },
+  { id: 'c16', claim: 'the retry limit is enforced', confidence: 0.6, catchRate: 1, verdict: 'SUPPORTED', status: 'resolved' },
+];
+
+const PLANTED_BUGS_PER_CLAIM = 10;
+const DEMO_BUG_KINDS = ['boundary', 'sign_flip', 'off_by_one', 'swap_args'] as const;
+
+/** Planted bugs for a sample claim: the share the tests caught matches the claim's catch rate exactly. */
+const demoMutants = ({ index, catchRate }: { index: number; catchRate: number }): Mutant[] =>
+  Array.from({ length: PLANTED_BUGS_PER_CLAIM }, (_, n) => ({
+    file: 'src/checkout.py',
+    line_no: index * 20 + n + 1,
+    cls: DEMO_BUG_KINDS[n % DEMO_BUG_KINDS.length] ?? 'boundary',
+    original: 'total >= limit',
+    mutated: 'total > limit',
+    outcome: n < Math.round(catchRate * PLANTED_BUGS_PER_CLAIM) ? 'killed' : 'survived',
+  }));
+
+const demoClaimOf = ({ c, index, flagConfidence, flagCatchRate }: { c: DemoClaim; index: number; flagConfidence: number; flagCatchRate: number }): Claim => {
+  // The same rules the board uses (flagsOf in lib/store.ts): a claim is flagged unless every check is satisfied.
+  const flags = [
+    ...(c.confidence === null || c.confidence < flagConfidence ? ['low-confidence'] : []),
+    ...(c.verdict === 'REFUTED' ? ['refuted'] : []),
+    ...(c.verdict !== 'SUPPORTED' && c.verdict !== 'REFUTED' ? ['unverified'] : []),
+    ...(c.catchRate !== null && c.catchRate < flagCatchRate ? ['weak-tests'] : []),
+    ...(c.catchRate === null ? ['no-mutants'] : []),
+  ];
+  const mutants = c.catchRate === null ? [] : demoMutants({ index, catchRate: c.catchRate });
+  const killed = mutants.filter((m) => m.outcome === 'killed').length;
+  return {
+    id: c.id,
+    claim: c.claim,
+    confidence: c.confidence,
+    criteria: [],
+    files: ['src/checkout.py'],
+    killCondition: 'test: tests/test_checkout.py',
+    verifiedBy: [],
+    verdict: c.verdict ? { id: c.id, verdict: c.verdict, reason: '', evidence: [], provider: 'claude', model: null, ts: '2026-10-26T00:00:00Z', runId: 'demo' } : null,
+    mutation: c.catchRate === null ? null : { total: mutants.length, killed, survived: mutants.length - killed, timeout: 0, catchRate: killed / mutants.length, mutants, ts: '2026-10-26T00:00:00Z', runId: 'demo' },
+    status: c.status ?? 'open',
+    reopened: false,
+    note: '',
+    fix: null,
+    history: [],
+    risk: 1 - (c.confidence ?? 0.5) * (c.catchRate ?? 0.5),
+    flags,
+  };
+};
+
+/** The board with a coherent set of sample claims for one project, for `--view board:graph`, so the map has something to show. */
+export const demoGraphBoard = (board: Board): Board => {
+  const { flagConfidence, flagCatchRate } = board.config.app;
+  const claims = DEMO_CLAIMS.map((c, index) => demoClaimOf({ c, index, flagConfidence, flagCatchRate }));
+  const queue = claims.filter((c) => c.flags.length > 0 && c.status === 'open').sort((a, b) => b.risk - a.risk).map((c) => c.id);
+  return { ...board, claims, queue };
+};
+
+/** Canned proposals for `--view board:propose`, with the recommended one first as the real parser orders them. */
+export const demoProposeRun = (claimId: string): PublicRun => ({
+  id: 'demo-propose',
+  kind: 'propose',
+  claimId,
+  status: 'done',
+  startedAt: 0,
+  mode: 'cli',
+  activity: [],
+  proposals: [
+    { title: 'Add boundary tests and make the test command run them', summary: 'The code is already right, but no test calls is_adult and the configured test command runs nothing. Add a test at 17, 18 and 19 and point the test command at pytest.', pros: ['Kills both surviving planted bugs', 'Touches no production code', 'Fixes the empty test command for every later claim'], cons: ['Changes the project test command, which other claims share'], effort: 'small', touches: ['tests/test_calc.py', '.claimcheck/config.toml'], recommended: true },
+    { title: 'Narrow the claim', summary: 'Say only that is_adult(18) is True, and drop the "inclusive" wording the tests cannot check.', pros: ['Smallest change', 'Makes the claim honest today'], cons: ['Leaves the boundary unproven', 'Does not fix the empty test command'], effort: 'small', touches: ['.claimcheck/claims.yaml'], recommended: false },
+    { title: 'Rewrite is_adult as a table-driven function', summary: 'Replace the comparison with a lookup that names each threshold, then test every row.', pros: ['Every threshold is explicit'], cons: ['Bigger change for a one-line function', 'Strains the project rule to keep functions simple'], effort: 'medium', touches: ['src/calc.py', 'tests/test_calc.py'], recommended: false },
+  ],
+  recommendationWhy: 'You asked for age 18 to count as an adult, and the tests never check that boundary, so adding them proves the code you already have instead of changing it. The claim-narrowing option is cheaper but leaves the boundary unproven, and the rewrite changes working code for no gain.',
+  proposal: null,
+  error: null,
+  needsSignIn: false,
+  branch: null,
+  worktree: null,
+  tests: null,
+  killCondition: null,
+  commits: [],
+  summary: null,
+  prompt: null,
+  prUrl: null,
+});
+
+/** A canned fix for `--view board:code`, so the viewer can be rendered without a real Claude run. */
+export const DEMO_FIX = {
+  branch: 'claimcheck/fix-c2-4bb2c768',
+  base: 'main',
+  commits: ['4bb2c76 Add boundary tests and make the test command run them'],
+  diff: parseUnifiedDiff({ text: DEMO_DIFF }),
 };
 
 /** The wizard as it looks at step N (1 to 6). Welcome has three beats: 1 is the first, the others come from the URL. */

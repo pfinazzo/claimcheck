@@ -7,12 +7,15 @@
 
 import type { PublicRun } from '../lib/fixer.ts';
 import type { RunUpdate } from '../shared/ipc.ts';
+import { toBridgeFailure } from '../shared/ipc.ts';
 import type { Board, ConnectionSummary, ViewName } from '../shared/types.ts';
 import type { WizardState } from '../shared/wizard-state.ts';
 import { renderBoard, type BoardActions, type BoardUi } from './board.ts';
-import { connectDialog, openDialog, trustDialog, type DialogHost } from './dialogs.ts';
-import { demoWizard } from './demo.ts';
+import { codeDialog, connectDialog, githubDialog, openDialog, trustDialog, type DialogHost } from './dialogs.ts';
+import { DEMO_FIX, demoGraphBoard, demoProposeRun, demoWizard } from './demo.ts';
 import { h, mount, type Child } from './dom.ts';
+import { refreshConfidenceMapTheme, syncConfidenceMap } from './graph-view.ts';
+import { createScene } from './scene.ts';
 import { renderWizard, type WizardCtx } from './wizard.ts';
 
 const desk = window.desk;
@@ -22,14 +25,22 @@ const toastEl = document.getElementById('toast') as HTMLElement;
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const demoParam = new URLSearchParams(window.location.search).get('demo');
+const darkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+const sceneCanvas = document.getElementById('scene') as HTMLCanvasElement | null;
+const scene = sceneCanvas ? createScene({ canvas: sceneCanvas, reducedMotion, theme: darkScheme.matches ? 'dark' : 'light' }) : null;
+darkScheme.addEventListener('change', (event) => {
+  scene?.setTheme(event.matches ? 'dark' : 'light');
+  refreshConfidenceMapTheme();
+});
 
-const ui: BoardUi = { board: null, selectedId: null, runs: new Map(), ghOk: false, running: false, drawer: { open: false, status: '', lines: [] } };
+
+const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, running: false, drawer: { open: false, status: '', lines: [] } };
 let view: ViewName = 'empty';
 let wizard: WizardState | null = null;
 let connection: ConnectionSummary | null = null;
 let signalled = false;
 
-const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+const message = (e: unknown): string => toBridgeFailure(e).message;
 
 // ---- toast and dialog host ------------------------------------------------------
 let toastTimer = 0;
@@ -43,11 +54,16 @@ const toast = (text: string, bad = false): void => {
   }, bad ? 6000 : 2800);
 };
 
+const fillDialog = ({ title, body, isWide }: { title: string; body: Child[]; isWide: boolean }): void => {
+  dialog.classList.toggle('wide', isWide);
+  mount(dialog, h('div', { class: 'dialog-head' }, h('h2', {}, title), h('button', { class: 'btn ghost', attrs: { type: 'button', 'aria-label': 'Close' }, on: { click: () => dialog.close() } }, 'Close')), h('div', { class: 'dialog-body' }, ...body));
+  if (!dialog.open) dialog.showModal();
+};
+
 const host: DialogHost = {
-  show: (title, ...body) => {
-    mount(dialog, h('div', { class: 'dialog-head' }, h('h2', {}, title), h('button', { class: 'btn ghost', attrs: { type: 'button', 'aria-label': 'Close' }, on: { click: () => dialog.close() } }, 'Close')), h('div', { class: 'dialog-body' }, ...body));
-    if (!dialog.open) dialog.showModal();
-  },
+  show: (title, ...body) => fillDialog({ title, body, isWide: false }),
+  showWide: (title, ...body) => fillDialog({ title, body, isWide: true }),
+  isOpen: () => dialog.open,
   close: () => dialog.close(),
   toast,
 };
@@ -55,18 +71,35 @@ const host: DialogHost = {
 // ---- drawing ---------------------------------------------------------------------
 const scrollOf = (sel: string): number => document.querySelector(sel)?.scrollTop ?? 0;
 
+/**
+ * The panel's entrance animation plays only when what it shows changes: a new view, or a different
+ * claim. A run update rebuilds the same panel many times a minute, and replaying it then flashes.
+ */
+let shownBefore = '';
+const markEntering = (): void => {
+  const showing = view === 'wizard' ? `wizard:${wizard?.step ?? ''}` : `board:${ui.selectedId ?? ''}`;
+  if (showing === shownBefore) return;
+  shownBefore = showing;
+  document.querySelector('.detail, .wizard')?.classList.add('is-entering');
+};
+
 const renderAll = (): void => {
   if (view === 'wizard' && wizard) {
     renderWizard(wizardCtx, app);
   } else {
     const claimsTop = scrollOf('.claims');
     const detailTop = scrollOf('.detail');
+    const graphTop = scrollOf('.graph-view');
     mount(app, ...(renderBoard(ui, boardActions) as Child[]));
     const claims = document.querySelector('.claims');
     const detail = document.querySelector('.detail');
+    const graph = document.querySelector('.graph-view');
     if (claims) claims.scrollTop = claimsTop;
     if (detail) detail.scrollTop = detailTop;
+    if (graph) graph.scrollTop = graphTop;
+    if (graph) syncConfidenceMap({ ui, onSelect: select, reducedMotion });
   }
+  markEntering();
   if (!signalled && (ui.board || wizard)) {
     signalled = true;
     requestAnimationFrame(() => desk.rendered());
@@ -117,9 +150,10 @@ const withTrust = async (call: (trust: boolean) => Promise<unknown>): Promise<vo
   try {
     await call(false);
   } catch (e) {
-    const err = e as { code?: string; details?: { commands?: { label: string; command: string }[] } };
-    if (err.code !== 'needs-trust') throw e;
-    trustDialog(host, err.details?.commands ?? [], () => {
+    const failure = toBridgeFailure(e);
+    if (failure.code !== 'needs-trust') throw e;
+    const details = failure.details as { commands?: { label: string; command: string }[] } | null;
+    trustDialog(host, details?.commands ?? [], () => {
       host.close();
       guard(async () => {
         await call(true);
@@ -138,7 +172,18 @@ const boardActions: BoardActions = {
   openRepo: () => guard(() => openDialog(desk, host, () => { ui.selectedId = null; })),
   connectClaude: () => connectDialog(desk, host, connection),
   connect: () => connectDialog(desk, host, connection),
-  runClaimcheck: () => guard(() => withTrust(async (trust) => { ui.drawer.open = true; await desk.runClaimcheck({ trust }); })),
+  setMode: (mode) => {
+    ui.mode = mode;
+    renderAll();
+  },
+  showClaim: (id) => {
+    ui.selectedId = id;
+    ui.mode = 'list';
+    renderAll();
+  },
+  connectGithub: () => githubDialog(desk, host, onGithubStatus),
+  inspect: (claimId) => guard(async () => { codeDialog(host, await desk.inspectFix({ claimId })); }),
+  runClaimcheck: () => guard(() => withTrust(async (trust) => { await desk.runClaimcheck({ trust }); })),
   writeSpec: () => guard(async () => { await desk.wizardStart({ entry: 'board' }); applyView(await desk.getView()); }),
   closeDrawer: () => {
     ui.drawer.open = false;
@@ -159,7 +204,41 @@ const boardActions: BoardActions = {
 };
 
 // ---- state coming from the main process ------------------------------------------
-const applyBoard = (board: Board): void => {
+/** What `--view board:trust|github|code` screenshots do once the board is drawn: open the dialog they show. */
+const DEMO_ACTIONS: Record<string, () => void> = {
+  'board:trust': () => boardActions.runClaimcheck(),
+  'board:github': () => boardActions.connectGithub(),
+  'board:open': () => boardActions.openRepo(),
+  'board:graph': () => {
+    ui.mode = 'graph';
+    ui.selectedId = 'c6';
+    renderAll();
+  },
+  'board:propose': () => {
+    const claimId = ui.selectedId ?? '';
+    ui.runs.set(claimId, demoProposeRun(claimId));
+    renderAll();
+  },
+  'board:code': () => codeDialog(host, DEMO_FIX),
+};
+let didDemoAction = false;
+const runDemoAction = (): void => {
+  const action = DEMO_ACTIONS[demoParam ?? ''];
+  if (!action || didDemoAction) return;
+  didDemoAction = true;
+  window.setTimeout(action, 0);
+};
+
+/** Heard from the GitHub dialog on every status, so Open pull request enables when sign-in finishes. */
+const onGithubStatus = (status: { isSignedIn: boolean }): void => {
+  if (ui.ghOk === status.isSignedIn) return;
+  ui.ghOk = status.isSignedIn;
+  if (view === 'board') renderAll();
+};
+
+const applyBoard = (fresh: Board): void => {
+  // `--view board:graph` adds sample claims, and every refresh of the board would otherwise remove them.
+  const board = demoParam === 'board:graph' ? demoGraphBoard(fresh) : fresh;
   ui.board = board;
   connection = board.connection ?? connection;
   for (const run of (board.runs.fixes ?? []) as PublicRun[]) ui.runs.set(run.claimId, run);
@@ -177,6 +256,7 @@ const applyView = (v: Awaited<ReturnType<typeof desk.getView>>): void => {
 desk.onBoard((board) => {
   applyBoard(board);
   if (view === 'board') renderAll();
+  runDemoAction();
 });
 desk.onView(applyView);
 desk.onRunUpdate((update: RunUpdate) => {
@@ -209,6 +289,19 @@ document.addEventListener('keydown', (event) => {
     select(next.dataset.claim ?? null);
     document.querySelector<HTMLElement>(`.claim-row[data-claim="${CSS.escape(next.dataset.claim ?? '')}"]`)?.focus();
   }
+});
+
+// ---- coming back to the window --------------------------------------------------------
+// A remote added or a gh sign-in done in a terminal is picked up here, so a disabled button
+// that explained itself enables without a restart.
+window.addEventListener('focus', () => {
+  if (view !== 'board' || !ui.board) return;
+  void (async () => {
+    ui.ghOk = await desk.ghReady().catch(() => false);
+    const board = await desk.getBoard();
+    if (board) applyBoard(board);
+    renderAll();
+  })().catch(() => {});
 });
 
 // ---- boot ---------------------------------------------------------------------------
