@@ -86,13 +86,15 @@ export const PROPOSALS_SCHEMA = {
           cons: { type: 'array', items: { type: 'string' } },
           effort: { type: 'string', enum: ['small', 'medium', 'large'] },
           touches: { type: 'array', items: { type: 'string' } },
+          recommended: { type: 'boolean' },
         },
-        required: ['title', 'summary', 'pros', 'cons', 'effort', 'touches'],
+        required: ['title', 'summary', 'pros', 'cons', 'effort', 'touches', 'recommended'],
         additionalProperties: false,
       },
     },
+    why_recommended: { type: 'string' },
   },
-  required: ['proposals'],
+  required: ['proposals', 'why_recommended'],
   additionalProperties: false,
 };
 
@@ -137,9 +139,14 @@ const renderHeader = ({ context }: { context: PromptContext }): string =>
     `On this computer it is at: ${context.repo.path} (branch ${context.repo.branch} at ${String(context.repo.head ?? '').slice(0, 7)}). Work in that folder. Every path below is relative to it.`,
   ].join('\n');
 
+const NO_GOAL_RECORDED = 'No goal was recorded for this change. Infer it from the frozen acceptance criteria in .claimcheck/spec.md and from the claim itself.';
+
+/** The person's own words about what they want built, or a line telling Claude to infer it. */
+const describeGoal = ({ context }: { context: PromptContext }): string => context.goal?.trim() || NO_GOAL_RECORDED;
+
 /** AC 17. */
 export const buildProposePrompt = ({ context }: { context: PromptContext }): string =>
-  redactText({ input: `${renderHeader({ context })}\n\n${makeFill({ template: readTemplate({ name: 'propose.md' }), values: { claim: describeClaim({ context }), test_cmd: context.config.test_cmd } })}\n\n${CLOSING_SENTENCE}` }).text;
+  redactText({ input: `${renderHeader({ context })}\n\n${makeFill({ template: readTemplate({ name: 'propose.md' }), values: { claim: describeClaim({ context }), goal: describeGoal({ context }), test_cmd: context.config.test_cmd } })}\n\n${CLOSING_SENTENCE}` }).text;
 
 /** The build prompt for a chosen approach. */
 export const buildImplementPrompt = ({ context, proposal, rejected = [] }: { context: PromptContext; proposal: Proposal; rejected?: readonly Proposal[] }): string =>

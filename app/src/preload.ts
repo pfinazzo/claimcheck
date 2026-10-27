@@ -1,7 +1,8 @@
 /**
  * The only bridge between the page and Node: `window.desk`.
- * Every call returns the handler's value or throws its error message
- * (with `code` and `details` when the handler gave them).
+ * Every call returns the handler's value or rejects with a BridgeFailure: a plain object, because
+ * the context bridge keeps only the message of an Error and the page needs the code and details
+ * (the trust dialog is built from them).
  *
  * Built to dist/preload.cjs: Electron's sandboxed preload has to be CommonJS.
  *
@@ -9,12 +10,7 @@
  */
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import { INVOKE_CHANNELS, type DeskBridge, type InvokeChannel, type Reply } from './shared/ipc.ts';
-
-class BridgeError extends Error {
-  code?: string;
-  details?: unknown;
-}
+import { INVOKE_CHANNELS, type BridgeFailure, type DeskBridge, type InvokeChannel, type Reply } from './shared/ipc.ts';
 
 type Invokers = { [K in InvokeChannel]: DeskBridge[K] };
 
@@ -23,10 +19,9 @@ const sendCall = <K extends InvokeChannel>({ name }: { name: K }): DeskBridge[K]
   const invoke = async ({ payload }: { payload?: unknown } = {}): Promise<unknown> => {
     const response = (await ipcRenderer.invoke(`desk:${name}`, payload)) as Reply<unknown>;
     if (!response.ok) {
-      const error = new BridgeError(response.error);
-      if (response.code) error.code = response.code;
-      if (response.details) error.details = response.details;
-      throw error;
+      const failure: BridgeFailure = { bridge: 'failure', message: response.error, code: response.code, details: response.details };
+      // eslint-disable-next-line @typescript-eslint/only-throw-error -- an Error loses its code and details crossing the context bridge, so a plain object is thrown on purpose
+      throw failure;
     }
     return response.value;
   };

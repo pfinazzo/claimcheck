@@ -14,6 +14,7 @@ import { renderBoard, type BoardActions, type BoardUi } from '../src/renderer/bo
 import { runDemoWizard } from '../src/renderer/demo.ts';
 import { mount, setDocument } from '../src/renderer/dom.ts';
 import { formatFactsLine, collectClaimGroups, formatSpecWord, formatSummaryLine } from '../src/renderer/format.ts';
+import { drawConfidenceMap } from '../src/renderer/graph-view.ts';
 import { renderWizard, type WizardCtx } from '../src/renderer/wizard.ts';
 import { createRecorder } from './helpers.ts';
 
@@ -62,13 +63,17 @@ const readBoard = ({ claims, queue }: { claims: readonly Claim[]; queue: readonl
 const skipAction = (): void => {};
 const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<typeof createRecorder<string>> } = {}): BoardActions => ({
   select: ({ id }) => calls.record(`select:${id}`),
+  setMode: ({ mode }) => calls.record(`mode:${mode}`),
+  showClaim: ({ id }) => calls.record(`show:${id}`),
+  connectGithub: () => calls.record('github'),
+  inspect: (id) => calls.record(`inspect:${id}`),
   openRepo: skipAction, connectClaude: skipAction, runClaimcheck: skipAction, writeSpec: skipAction, closeDrawer: skipAction,
   fix: (id) => calls.record(`fix:${id}`),
   useApproach: skipAction, copyPrompt: skipAction, copyImplement: skipAction, copyText: skipAction, acceptRisk: skipAction, openPr: skipAction, openPath: skipAction, connect: skipAction,
 });
 
-const makeUi = ({ board, selectedId = null, runs = new Map() }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun> }): BoardUi => ({
-  board, selectedId, runs, ghOk: false, running: false, drawer: { open: false, status: '', lines: [] },
+const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean }): BoardUi => ({
+  board, mode, selectedId, runs, ghOk, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = ({ ui, actions = makeActions() }: { ui: BoardUi; actions?: BoardActions }): string => {
@@ -141,6 +146,12 @@ test('a backed claim does not offer Fix this', () => {
   const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim({ over: { flags: [] } })], queue: [] }), selectedId: 'c1' }) });
   assert.ok(!text.includes('Fix this'));
   assert.ok(text.includes('Nothing is flagged'));
+  assert.ok(text.includes('What to do next'), 'a backed claim says what the person does from here');
+});
+
+test('a flagged claim does not show the all-clear steps', () => {
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim({ over: { flags: ['refuted'] } })], queue: ['c1'] }), selectedId: 'c1' }) });
+  assert.ok(!text.includes('What to do next'));
 });
 
 test('clicking a row selects it, and Fix this calls the action', () => {
@@ -175,12 +186,146 @@ test('markup in a claim, a verdict, a path or a mutation is shown as text, never
 });
 
 test('a running fix shows its activity and offers no second Fix press', () => {
-  const run = { id: 'run1', kind: 'propose', claimId: 'c1', status: 'running', startedAt: 0, mode: 'cli', activity: ['Read src/a.py'], proposals: null, proposal: null, error: null, needsSignIn: false, branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null } satisfies PublicRun;
+  const run = { id: 'run1', kind: 'propose', claimId: 'c1', status: 'running', startedAt: 0, mode: 'cli', activity: ['Read src/a.py'], proposals: null, recommendationWhy: null, proposal: null, error: null, needsSignIn: false, branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null } satisfies PublicRun;
   const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: ['c1'] }), selectedId: 'c1', runs: new Map([['c1', run]]) }) });
   assert.ok(text.includes('Claude is reading the code'));
   assert.ok(text.includes('Read src/a.py'));
   const fix = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Fix this') as HTMLButtonElement;
   assert.equal(fix.disabled, true);
+});
+
+// ---- pressed and selected states --------------------------------------------------
+
+test('pressed and selected states are the words true and false, which is what screen readers read', () => {
+  const board = readBoard({ claims: [makeClaim(), makeClaim({ over: { id: 'c2' } })], queue: ['c1'] });
+  draw({ ui: makeUi({ board, selectedId: 'c1' }) });
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('aria-selected')), ['true', 'false']);
+  const rows = [...document.querySelectorAll('.claim-row')];
+  assert.deepEqual(rows.map((row) => row.getAttribute('aria-pressed')), rows.map((row) => (row.getAttribute('data-claim') === 'c1' ? 'true' : 'false')));
+});
+
+// ---- the confidence map tab ---------------------------------------------------------
+
+const makeMixedBoard = (): Board => {
+  const strong = makeClaim({ over: { id: 'c3', claim: 'strong claim', confidence: 0.95, flags: [], risk: 0.05, mutation: { total: 4, killed: 4, survived: 0, timeout: 0, catchRate: 1, ts: 't', runId: 'r', mutants: [] } } });
+  const weak = makeClaim({ over: { id: 'c1', claim: 'weak claim', confidence: 0.4, flags: ['low-confidence'], risk: 0.9 } });
+  const settled = makeClaim({ over: { id: 'c4', claim: 'settled claim', confidence: 0.6, flags: ['low-confidence'], status: 'resolved', risk: 0.5 } });
+  return readBoard({ claims: [strong, weak, settled], queue: ['c1'] });
+};
+
+test('the board offers a Claims tab and a Confidence map tab, and pressing one asks for that mode', () => {
+  const calls = createRecorder<string>();
+  draw({ ui: makeUi({ board: makeMixedBoard(), selectedId: 'c1' }), actions: makeActions({ calls }) });
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Claims', 'Confidence map']);
+  assert.equal(tabs[0]?.getAttribute('aria-selected'), 'true');
+  (tabs[1] as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['mode:graph']);
+});
+
+test('the confidence map lists EVERY claim, flagged and backed, riskiest first, with plain-word states', () => {
+  draw({ ui: makeUi({ board: makeMixedBoard(), selectedId: 'c1', mode: 'graph' }) });
+  const rows = [...document.querySelectorAll('.all-claims-table tbody tr')].map((row) => row.textContent.replace(/\s+/g, ' ').trim());
+  assert.equal(rows.length, 3, 'all three claims, not only the flagged one');
+  assert.ok(rows[0]?.startsWith('c1 weak claim'));
+  assert.ok(rows[0]?.includes('Needs a decision'));
+  assert.ok(rows[1]?.includes('settled claim') && rows[1].includes('Resolved'));
+  assert.ok(rows[2]?.includes('strong claim') && rows[2].includes('Backed') && rows[2].includes('100%'));
+  assert.ok(app.textContent.includes('All claims (3)'));
+  assert.ok(app.textContent.includes('1 of 3 claims need a decision'));
+});
+
+test('a row selects its claim, and Open claim leaves the map for that claim', () => {
+  const calls = createRecorder<string>();
+  draw({ ui: makeUi({ board: makeMixedBoard(), selectedId: 'c1', mode: 'graph' }), actions: makeActions({ calls }) });
+  (document.querySelector('tr[data-claim="c3"] button') as HTMLElement).click();
+  [...document.querySelectorAll('button')].find((button) => button.textContent === 'Open claim')?.click();
+  assert.deepEqual(calls.list(), ['select:c3', 'show:c1']);
+});
+
+test('where WebGL is not available the map says so, and the table is still there', () => {
+  const ui = makeUi({ board: makeMixedBoard(), selectedId: 'c1', mode: 'graph' });
+  draw({ ui });
+  drawConfidenceMap({ ui, onSelect: skipAction, reducedMotion: true });
+  const note = document.querySelector('.map-note') as HTMLElement;
+  assert.ok(note.textContent.includes('The map could not start'));
+  assert.equal(note.hidden, false);
+  assert.equal(document.querySelectorAll('.all-claims-table tbody tr').length, 3);
+});
+
+// ---- pull requests, the code viewer and GitHub -----------------------------------------
+
+const makeResolvedRun = (): PublicRun => ({
+  id: 'run2', kind: 'implement', claimId: 'c1', status: 'resolved', startedAt: 0, mode: 'cli', activity: [], proposals: null, recommendationWhy: null,
+  proposal: { title: 'Pin it', summary: 's', effort: 'small', pros: [], cons: [], touches: [], recommended: true },
+  error: null, needsSignIn: false, branch: 'claimcheck/fix-c1-abc', worktree: '/wt', tests: { ok: true, code: 0, tail: '' }, killCondition: null, commits: ['abc Pin it'], summary: 'done', prompt: 'P', prUrl: null,
+});
+
+test('Open pull request is disabled with the reason written beside it when the repo has no remote', () => {
+  const calls = createRecorder<string>();
+  const board = readBoard({ claims: [makeClaim()], queue: ['c1'] });
+  const text = draw({ ui: makeUi({ board, selectedId: 'c1', runs: new Map([['c1', makeResolvedRun()]]), ghOk: true }), actions: makeActions({ calls }) });
+  const open = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Open pull request') as HTMLButtonElement;
+  assert.equal(open.disabled, true);
+  assert.ok(text.includes('no GitHub remote yet'), 'the reason is text on the page, not only a tooltip');
+  [...document.querySelectorAll('button')].find((button) => button.textContent === 'Connect GitHub' && button.closest('.pr-offer'))?.click();
+  assert.deepEqual(calls.list(), ['github']);
+});
+
+test('Open pull request is enabled when gh is signed in and the repo has a remote', () => {
+  const board = { ...readBoard({ claims: [makeClaim()], queue: ['c1'] }) };
+  board.repo = { ...board.repo, origin: 'https://github.com/a/b.git' };
+  draw({ ui: makeUi({ board, selectedId: 'c1', runs: new Map([['c1', makeResolvedRun()]]), ghOk: true }) });
+  const open = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Open pull request') as HTMLButtonElement;
+  assert.equal(open.disabled, false);
+  assert.equal([...document.querySelectorAll('button')].some((button) => button.textContent === 'Connect GitHub' && button.closest('.pr-offer')), false);
+});
+
+test('a fix with a branch offers Inspect the code, and pressing it names the claim', () => {
+  const calls = createRecorder<string>();
+  draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: ['c1'] }), selectedId: 'c1', runs: new Map([['c1', makeResolvedRun()]]) }), actions: makeActions({ calls }) });
+  [...document.querySelectorAll('button')].find((button) => button.textContent === 'Inspect the code')?.click();
+  assert.deepEqual(calls.list(), ['inspect:c1']);
+});
+
+test('the top bar offers Connect GitHub next to Connect Claude', () => {
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: ['c1'] }), selectedId: 'c1' }) });
+  assert.ok(text.includes('Connect GitHub') && text.includes('Connect Claude'));
+});
+
+// ---- Claude's recommendation ---------------------------------------------------------------
+
+const makeProposal = ({ title, isRecommended }: { title: string; isRecommended: boolean }) => ({ title, summary: `${title} summary`, pros: ['p'], cons: ['c'], effort: 'small' as const, touches: ['a.py'], recommended: isRecommended });
+
+const makeProposeDone = ({ proposals, recommendationWhy }: { proposals: PublicRun['proposals']; recommendationWhy: string | null }): PublicRun => ({
+  id: 'run3', kind: 'propose', claimId: 'c1', status: 'done', startedAt: 0, mode: 'cli', activity: [], proposals, recommendationWhy, proposal: null, error: null, needsSignIn: false,
+  branch: null, worktree: null, tests: null, killCondition: null, commits: [], summary: null, prompt: 'P', prUrl: null,
+});
+
+test("Claude's recommended approach is labelled, explained above the cards, and the only primary button", () => {
+  const run = makeProposeDone({
+    proposals: [makeProposal({ title: 'Narrow the claim', isRecommended: true }), makeProposal({ title: 'Pin the boundary', isRecommended: false }), makeProposal({ title: 'Rewrite it', isRecommended: false })],
+    recommendationWhy: 'It matches what you asked for and costs the least.',
+  });
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: ['c1'] }), selectedId: 'c1', runs: new Map([['c1', run]]) }) });
+  assert.ok(text.includes('Claude recommends: Narrow the claim'));
+  assert.ok(text.includes('It matches what you asked for and costs the least.'));
+  const badges = [...document.querySelectorAll('.badge')];
+  assert.deepEqual(badges.map((badge) => badge.textContent), ['Recommended']);
+  assert.ok(badges[0]?.closest('.proposal')?.textContent.includes('Narrow the claim'));
+  const use = [...document.querySelectorAll('button')].filter((button) => button.textContent === 'Use this approach');
+  assert.equal(use.length, 3);
+  assert.deepEqual(use.map((button) => button.classList.contains('primary')), [true, false, false]);
+});
+
+test('with no recommendation the cards show no badge, no note and no primary choice', () => {
+  const run = makeProposeDone({ proposals: ['Narrow the claim', 'Pin the boundary', 'Rewrite it'].map((title) => makeProposal({ title, isRecommended: false })), recommendationWhy: null });
+  const text = draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: ['c1'] }), selectedId: 'c1', runs: new Map([['c1', run]]) }) });
+  assert.ok(!text.includes('Claude recommends'));
+  assert.equal(document.querySelectorAll('.badge').length, 0);
+  const use = [...document.querySelectorAll('button')].filter((button) => button.textContent === 'Use this approach');
+  assert.deepEqual(use.map((button) => button.classList.contains('primary')), [false, false, false]);
 });
 
 // ---- the wizard -------------------------------------------------------------------

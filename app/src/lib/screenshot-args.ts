@@ -1,5 +1,7 @@
 /**
- * Reads `--screenshot <repo> <out.png> [--theme light|dark] [--size WxH] [--view board|wizard:STEP[:BEAT]]`.
+ * Reads `--screenshot <repo> <out.png> [--theme light|dark] [--size WxH] [--view board|board:trust|board:github|board:code|wizard:STEP[:BEAT]]`.
+ * `board:trust` presses Run claimcheck on a repo that has not been trusted yet, so the commands dialog shows.
+ * `board:github` opens the Connect GitHub dialog, `board:code` opens the code viewer on a canned fix, `board:open` opens the Open repository dialog, `board:propose` shows sample proposals with a recommendation, and `board:graph` shows the confidence map with sample claims.
  *
  * @author Patrick Finazzo
  */
@@ -31,7 +33,7 @@ export const parseScreenshotArgs = ({ argList }: { argList: readonly string[] })
   const positional = rest.filter((arg, index) => !arg.startsWith('--') && !VALUE_FLAGS.includes(rest[index - 1] ?? ''));
   const size = /^(\d{3,4})x(\d{3,4})$/.exec(flags['--size'] ?? '1440x900');
   const requestedView = flags['--view'] ?? 'board';
-  const view = /^(board|wizard:[1-6](:[0-2])?)$/.test(requestedView) ? requestedView : 'board';
+  const view = /^(board|board:(trust|github|code|open|propose|graph)|wizard:[1-6](:[0-2])?)$/.test(requestedView) ? requestedView : 'board';
   const theme = flags['--theme'];
   return {
     repo: positional[0],

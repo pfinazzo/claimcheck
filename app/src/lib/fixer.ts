@@ -49,25 +49,47 @@ export const cleanProposal = ({ raw: part }: { raw: unknown }): Proposal | null 
   const touches = toTextList({ value: part.touches });
   const effort = EFFORTS.find((event) => event === part.effort);
   if (!title || !summary || !pros || !cons || !touches || !effort) return null;
-  return { title, summary, pros, cons, effort, touches };
+  return { title, summary, pros, cons, effort, touches, recommended: part.recommended === true };
 };
 
 const filterValidProposals = ({ list }: { list: unknown }): Proposal[] =>
   Array.isArray(list) ? list.map((part) => cleanProposal({ raw: part })).filter((part): part is Proposal => part !== null).slice(0, 6) : [];
 
-/** Proposals from a CLI result (structured output) or JSON inside text, each checked against the schema. */
-export const parseProposals = ({ outcome }: { outcome: unknown }): Proposal[] => {
+/**
+ * Exactly one approach is recommended, and it comes first. If Claude marked none, nothing is
+ * recommended and the page says nothing. If it marked several, only the first mark stands.
+ */
+const sortRecommendedFirst = ({ proposals }: { proposals: readonly Proposal[] }): Proposal[] => {
+  const chosen = proposals.find((proposal) => proposal.recommended);
+  if (!chosen) return [...proposals];
+  return [{ ...chosen, recommended: true }, ...proposals.filter((proposal) => proposal !== chosen).map((proposal) => ({ ...proposal, recommended: false }))];
+};
+
+export type ProposalSet = {
+  proposals: readonly Proposal[];
+  /** Claude's reason for the recommendation, empty when nothing is recommended. */
+  why: string;
+};
+
+const buildProposalSet = ({ list, why }: { list: unknown; why: unknown }): ProposalSet => {
+  const proposals = sortRecommendedFirst({ proposals: filterValidProposals({ list }) });
+  const reason = typeof why === 'string' ? why.trim() : '';
+  return { proposals, why: proposals.some((proposal) => proposal.recommended) ? reason : '' };
+};
+
+/** Proposals and the recommendation from a CLI result (structured output) or JSON inside text, each checked against the schema. */
+export const parseProposalSet = ({ outcome }: { outcome: unknown }): ProposalSet => {
   const rec: Rec = isRecord(outcome) ? outcome : {};
   const structured = rec.structured ?? rec.structured_output;
-  const fromStructured = filterValidProposals({ list: isRecord(structured) ? structured.proposals : undefined });
-  if (fromStructured.length) return fromStructured;
+  const fromStructured = isRecord(structured) ? buildProposalSet({ list: structured.proposals, why: structured.why_recommended }) : null;
+  if (fromStructured?.proposals.length) return fromStructured;
   const text = typeof outcome === 'string' ? outcome : toText({ value: rec.finalText ?? rec.result });
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start >= 0 && end > start) {
     const parsed = parseJsonOrUndefined({ text: text.slice(start, end + 1) });
-    const fromText = filterValidProposals({ list: isRecord(parsed) ? parsed.proposals : undefined });
-    if (fromText.length) return fromText;
+    const fromText = isRecord(parsed) ? buildProposalSet({ list: parsed.proposals, why: parsed.why_recommended }) : null;
+    if (fromText?.proposals.length) return fromText;
   }
   throw new Error('Claude did not return any proposals.');
 };
@@ -188,6 +210,8 @@ export type PublicRun = {
   mode: 'cli' | 'api';
   activity: readonly string[];
   proposals: Proposal[] | null;
+  /** Why Claude recommends the first proposal, or null when it recommended none. */
+  recommendationWhy: string | null;
   proposal: Proposal | null;
   error: string | null;
   needsSignIn: boolean;
@@ -201,9 +225,10 @@ export type PublicRun = {
   prUrl: string | null;
 };
 
-type FixRun = Omit<PublicRun, 'proposals' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> & {
+type FixRun = Omit<PublicRun, 'proposals' | 'recommendationWhy' | 'proposal' | 'branch' | 'worktree' | 'tests' | 'killCondition' | 'summary' | 'prompt' | 'prUrl' | 'mode'> & {
   mode?: 'cli' | 'api';
   proposals?: Proposal[] | null;
+  recommendationWhy?: string;
   proposal?: Proposal;
   proposeRunId?: string;
   repoPath: string;
@@ -225,9 +250,11 @@ export type FixerOptions = {
   execFn?: ExecFn;
   claudeBin?: string | null;
   onUpdate?: (run: PublicRun) => void;
+  /** What the person said they wanted built in this repo, for Claude to weigh the approaches against. */
+  goalFor?: (repoPath: string) => string;
 };
 
-export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn, execFn = runExecFile, claudeBin = null, onUpdate = () => {} }: FixerOptions = {}) => {
+export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null, spawnFn = nodeSpawn, execFn = runExecFile, claudeBin = null, onUpdate = () => {}, goalFor = () => '' }: FixerOptions = {}) => {
   const runs = new Map<string, FixRun>();
   const publish = ({ run }: { run: FixRun }): void => onUpdate(toPublic({ run }));
   const isBusy = (): boolean => [...runs.values()].some((fixRun) => fixRun.status === 'running');
@@ -248,7 +275,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
   const contextFor = ({ board, claimId }: { board: Board; claimId: string }): PromptContext & { config: Board['config'] } => {
     const claim = board.claims.find((claim) => claim.id === claimId);
     if (!claim) throw new Error(`No claim ${claimId} on the board.`);
-    return { repo: board.repo, config: board.config, claim };
+    return { repo: board.repo, config: board.config, claim, goal: goalFor(board.repo.path) };
   };
 
   /** What API mode gets instead of a repo: the diff of the claim's files and the test files it names. */
@@ -275,12 +302,19 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
 
   type ProposeJob = { run: FixRun; prompt: string; model?: string | undefined };
 
+  /** Reads Claude's answer and stores the proposals and the recommendation on the run. */
+  const storeProposals = ({ run, outcome }: { run: FixRun; outcome: unknown }): void => {
+    const set = parseProposalSet({ outcome });
+    run.proposals = [...set.proposals];
+    run.recommendationWhy = set.why;
+  };
+
   /** Asks the API for proposals and stores them on the run. */
   const proposeViaApi = async ({ run, context: context, prompt, model }: ProposeJob & { context: ReturnType<typeof contextFor> }): Promise<void> => {
     if (!keyStore?.hasKey()) throw new Error('No API key saved. Connect Claude first.');
     addActivity({ run, line: 'Sending the claim, its diff and tests to the API…' });
     const text = await apiModule.requestProposalsWithStore({ store: keyStore, system: prompt, user: await inlineContext({ context }), schema: PROPOSALS_SCHEMA, model });
-    run.proposals = parseProposals({ outcome: text });
+    storeProposals({ run, outcome: text });
   };
 
   /** Has Claude Code read the repository and propose fixes, and stores them on the run. */
@@ -293,7 +327,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
       run.needsSignIn = out.needsSignIn;
       throw new Error(out.error);
     }
-    run.proposals = parseProposals({ outcome: out });
+    storeProposals({ run, outcome: out });
   };
 
   const startPropose = ({ board, claimId, mode = 'cli', model }: { board: Board; claimId: string; mode?: 'cli' | 'api'; model?: string | undefined }): Promise<PublicRun> => toPromise({ work: () => {
@@ -419,7 +453,7 @@ export const createFixer = ({ cliModule = cli, apiModule = api, keyStore = null,
 
   const toPublic = ({ run }: { run: FixRun }): PublicRun => ({
     id: run.id, kind: run.kind, claimId: run.claimId, status: run.status, startedAt: run.startedAt, mode: run.mode ?? 'cli',
-    activity: run.activity, proposals: run.proposals ?? null, proposal: run.proposal ?? null, error: run.error, needsSignIn: run.needsSignIn,
+    activity: run.activity, proposals: run.proposals ?? null, recommendationWhy: run.recommendationWhy || null, proposal: run.proposal ?? null, error: run.error, needsSignIn: run.needsSignIn,
     branch: run.branch ?? null, worktree: run.worktree ?? null, tests: run.tests ?? null, killCondition: run.killCondition ?? null, commits: run.commits,
     summary: run.summary ?? null, prompt: run.prompt ?? null, prUrl: run.prUrl ?? null,
   });

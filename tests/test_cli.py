@@ -5,6 +5,7 @@
 
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 import pytest
@@ -17,9 +18,11 @@ def test_ac1_version_via_module_and_script():
     output = subprocess.run([sys.executable, "-m", "claimcheck", "--version"], capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert output.returncode == 0
     assert output.stdout.strip() == "claimcheck 0.1.0"
-    scripts = Path(sys.executable).parent
-    script = next((scripts / candidate for candidate in ("claimcheck.exe", "claimcheck") if (scripts / candidate).exists()), None)
-    assert script is not None, "console script not installed; run pip install -e ."
+    # A venv keeps its scripts beside python.exe, but a normal Windows install keeps them in a Scripts
+    # folder one level down. Python knows where its own scripts go, so ask it, then try the old spot too.
+    folders = [Path(sysconfig.get_path("scripts")), Path(sys.executable).parent]
+    script = next((folder / name for folder in folders for name in ("claimcheck.exe", "claimcheck") if (folder / name).exists()), None)
+    assert script is not None, f"console script not found in {folders[0]}; run: {sys.executable} -m pip install -e ."
     out2 = subprocess.run([str(script), "--version"], capture_output=True, text=True, timeout=SUBPROCESS_TIMEOUT_S)
     assert out2.stdout.strip() == "claimcheck 0.1.0"
 

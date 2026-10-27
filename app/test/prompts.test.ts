@@ -39,8 +39,8 @@ test('AC 17: propose prompt header, body and closing sentence', async () => {
 
 test('implement prompt names the chosen approach and the rejected ones', async () => {
   const context = await makeContextFor();
-  const chosen = { title: 'Pin the boundary', summary: 'Add a test.', pros: ['small'], cons: ['none'], effort: 'small' as const, touches: ['tests/test_calc.py'] };
-  const other = { title: 'Rewrite', summary: 'x', pros: [], cons: ['big'], effort: 'large' as const, touches: [] };
+  const chosen = { title: 'Pin the boundary', summary: 'Add a test.', pros: ['small'], cons: ['none'], effort: 'small' as const, touches: ['tests/test_calc.py'], recommended: true };
+  const other = { title: 'Rewrite', summary: 'x', pros: [], cons: ['big'], effort: 'large' as const, touches: [], recommended: false };
   const text = buildImplementPrompt({ context, proposal: chosen, rejected: [other] });
   assert.ok(text.includes('Title: Pin the boundary'));
   assert.ok(text.includes('- Rewrite: big'));
@@ -55,7 +55,19 @@ test('AC 18: proposals schema is strict and 3–4 long', () => {
   assert.equal(items.maxItems, 4);
   assert.equal(items.items.additionalProperties, false);
   assert.deepEqual(items.items.properties.effort.enum, ['small', 'medium', 'large']);
-  assert.deepEqual(items.items.required, ['title', 'summary', 'pros', 'cons', 'effort', 'touches']);
+  assert.deepEqual(items.items.required, ['title', 'summary', 'pros', 'cons', 'effort', 'touches', 'recommended']);
+  assert.deepEqual(PROPOSALS_SCHEMA.required, ['proposals', 'why_recommended']);
+});
+
+test('the propose prompt asks for exactly one recommendation and carries what the person is trying to do', async () => {
+  const context = await makeContextFor();
+  const withGoal = buildProposePrompt({ context: { ...context, goal: 'Orders of $50 or more should ship free.' } });
+  assert.ok(withGoal.includes('Orders of $50 or more should ship free.'));
+  assert.ok(withGoal.includes('What the person is trying to do'));
+  assert.ok(withGoal.includes('recommend exactly one approach'));
+  assert.ok(withGoal.includes('`why_recommended`'));
+  const withoutGoal = buildProposePrompt({ context });
+  assert.ok(withoutGoal.includes('No goal was recorded for this change'), 'Claude is told to infer the goal from the spec');
 });
 
 test('tool lists: blocked covers push, gh, web, installs', () => {

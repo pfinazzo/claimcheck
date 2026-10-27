@@ -11,7 +11,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
 import type { StreamEvent } from '../src/lib/claude-cli.ts';
-import { IMPLEMENT_ARGS, PROPOSE_ARGS, createFixer, parseProposals, type FixerOptions, type PublicRun } from '../src/lib/fixer.ts';
+import { IMPLEMENT_ARGS, PROPOSE_ARGS, createFixer, parseProposalSet, type FixerOptions, type PublicRun } from '../src/lib/fixer.ts';
 import { readAppState } from '../src/lib/ledger.ts';
 import { readBoard } from '../src/lib/store.ts';
 import type { Proposal } from '../src/shared/types.ts';
@@ -23,9 +23,9 @@ type Cli = NonNullable<FixerOptions['cliModule']>;
 type Api = NonNullable<FixerOptions['apiModule']>;
 
 const PROPOSALS: Proposal[] = [
-  { title: 'Pin the boundary', summary: 'Add a test for 18.', pros: ['small'], cons: ['only tests'], effort: 'small', touches: ['tests/test_calc.py'] },
-  { title: 'Narrow the claim', summary: 'Say >18.', pros: ['honest'], cons: ['changes claims.yaml'], effort: 'small', touches: ['.claimcheck/claims.yaml'] },
-  { title: 'Rewrite is_adult', summary: 'Table-driven.', pros: ['clear'], cons: ['bigger'], effort: 'medium', touches: ['src/calc.py', 'tests/test_calc.py'] },
+  { title: 'Pin the boundary', summary: 'Add a test for 18.', pros: ['small'], cons: ['only tests'], effort: 'small', touches: ['tests/test_calc.py'], recommended: false },
+  { title: 'Narrow the claim', summary: 'Say >18.', pros: ['honest'], cons: ['changes claims.yaml'], effort: 'small', touches: ['.claimcheck/claims.yaml'], recommended: false },
+  { title: 'Rewrite is_adult', summary: 'Table-driven.', pros: ['clear'], cons: ['bigger'], effort: 'medium', touches: ['src/calc.py', 'tests/test_calc.py'], recommended: false },
 ];
 
 type RunOpts = {
@@ -66,10 +66,36 @@ const waitFor = async ({ fixer, id, status, millis = 8000 }: { fixer: ReturnType
   return waitFor({ fixer, id, status, millis: millis - 25 });
 };
 
-test('AC 18: parseProposals accepts structured output or JSON text, else throws', () => {
-  assert.equal(parseProposals({ outcome: { structured: { proposals: PROPOSALS } } }).length, 3);
-  assert.equal(parseProposals({ outcome: `Here you go:\n${JSON.stringify({ proposals: PROPOSALS })}\n` }).length, 3);
-  assert.throws(() => parseProposals({ outcome: { finalText: 'nothing useful' } }), /Claude did not return any proposals\./);
+test('AC 18: parseProposalSet accepts structured output or JSON text, else throws', () => {
+  assert.equal(parseProposalSet({ outcome: { structured: { proposals: PROPOSALS } } }).proposals.length, 3);
+  assert.equal(parseProposalSet({ outcome: `Here you go:\n${JSON.stringify({ proposals: PROPOSALS })}\n` }).proposals.length, 3);
+  assert.throws(() => parseProposalSet({ outcome: { finalText: 'nothing useful' } }), /Claude did not return any proposals\./);
+});
+
+const buildMarkedProposals = ({ index }: { index: number }): Proposal[] => PROPOSALS.map((proposal, position) => ({ ...proposal, recommended: position === index }));
+
+test('the one recommended approach moves to the front with its reason', () => {
+  const set = parseProposalSet({ outcome: { structured: { proposals: buildMarkedProposals({ index: 2 }), why_recommended: '  Fits the goal, costs more.  ' } } });
+  assert.deepEqual(set.proposals.map((proposal) => [proposal.title, proposal.recommended]), [['Rewrite is_adult', true], ['Pin the boundary', false], ['Narrow the claim', false]]);
+  assert.equal(set.why, 'Fits the goal, costs more.');
+});
+
+test('when Claude marks several approaches only the first mark stands, and when it marks none nothing is recommended', () => {
+  const several = parseProposalSet({ outcome: { structured: { proposals: PROPOSALS.map((proposal, position) => ({ ...proposal, recommended: position > 0 })), why_recommended: 'because' } } });
+  assert.deepEqual(several.proposals.map((proposal) => proposal.recommended), [true, false, false]);
+  assert.equal(several.proposals[0]?.title, 'Narrow the claim');
+  const none = parseProposalSet({ outcome: { structured: { proposals: PROPOSALS, why_recommended: 'a reason with nothing to attach to' } } });
+  assert.deepEqual(none.proposals.map((proposal) => proposal.recommended), [false, false, false]);
+  assert.equal(none.why, '', 'a reason is dropped when no approach is recommended');
+});
+
+test('a recommendation also comes through JSON text, and a missing flag reads as not recommended', () => {
+  const text = `Done.\n${JSON.stringify({ proposals: buildMarkedProposals({ index: 1 }), why_recommended: 'Honest and small.' })}`;
+  const set = parseProposalSet({ outcome: text });
+  assert.equal(set.proposals[0]?.title, 'Narrow the claim');
+  assert.equal(set.why, 'Honest and small.');
+  const legacy = PROPOSALS.map(({ recommended: _ignored, ...rest }) => rest);
+  assert.deepEqual(parseProposalSet({ outcome: { structured: { proposals: legacy } } }).proposals.map((proposal) => proposal.recommended), [false, false, false]);
 });
 
 test('AC 19: propose (CLI) spawns with the read-only flags and json schema', async () => {

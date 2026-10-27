@@ -56,7 +56,7 @@ const assertClean = ({ text, where }: { text: unknown; where: string }): void =>
 test('the proposal and build prompts carry no secret from the claim, the evidence, the survivors or the remote url', () => {
   const promptContext = makeContext();
   assertClean({ text: buildProposePrompt({ context: promptContext }), where: 'the proposal prompt' });
-  const proposal = { title: 't', summary: `use ${KEY}`, pros: [], cons: [], effort: 'small' as const, touches: ['src/a.py'] };
+  const proposal = { title: 't', summary: `use ${KEY}`, pros: [], cons: [], effort: 'small' as const, touches: ['src/a.py'], recommended: false };
   assertClean({ text: buildImplementPrompt({ context: promptContext, proposal, rejected: [] }), where: 'the build prompt' });
   assert.match(buildProposePrompt({ context: promptContext }), /\[REDACTED:/);
 });

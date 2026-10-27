@@ -4,7 +4,24 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- A **Confidence map** tab in Desk: a 3D chart, drawn with Three.js, of every claim placed by its stated confidence, the share of planted bugs the tests caught, and the independent checker's verdict. Three red sheets mark the flag lines, a green box marks the backed region, and you can orbit, zoom and pan it. A table of all claims, flagged and backed, sits beside it. The README has a plain-English guide to reading it.
+- Claude now recommends one of the approaches it proposes for a fix. The recommended approach is labelled, listed first, and explained above the cards, weighed against the goal you gave when writing the spec. If Claude marks none, Desk shows no recommendation instead of guessing.
+- **Connect GitHub** in Desk: checks `gh` is installed and signed in and that the repo has a remote, and starts `gh auth login --web` in a terminal when it is not signed in, updating itself when the sign-in finishes.
+- **Inspect the code** on a fix: a read-only viewer for the files and lines Claude committed, with line numbers.
+- `npm run screenshot` views that open each dialog or tab with sample data: `board:trust`, `board:github`, `board:code`, `board:open`, `board:propose` and `board:graph`.
+
+### Changed
+- Desk has a new look: glass panels over a Three.js backdrop (a wireframe grid rolling toward a lit horizon under a field of light), a stat strip, confidence bars on the claim list, evidence tiles on the detail, and a numbered step rail in the setup wizard. Light and dark follow the system, reduced motion draws one still frame, and a machine without WebGL gets the panels alone. The other screenshots in the README still show the previous look.
+- Open repo takes a pasted folder path as well as the folder picker, and shows each recent repo as its name over its path.
+
+### Fixed
+- Open pull request was offered whenever `gh` was signed in, even for a repo with no remote, and then failed with Node's raw error: the whole command line and pull request body. The button is now disabled with the reason beside it until it can work, the server checks again when it is pressed, `gh`'s refusals become plain sentences, and every failure shown in Desk is cut down to what the program said.
+- Desk showed "This repo can run commands on your computer" as an error toast instead of the dialog that lists the commands with a Run them button. The context bridge dropped the error's code and details on the way to the page; the bridge now carries them as plain data.
+- Desk no longer flashes the whole panel on every run update. The panel's entrance animation plays only when the view or the selected claim changes.
+- Pressed and selected buttons in Desk wrote `aria-pressed` and `aria-selected` as empty attributes instead of `true` or `false`, so screen readers could not tell which claim or tab was selected.
+- Open repo listed scratch folders from the system temp directory, and Desk could launch into one. Screenshot runs had saved their throwaway test repos into the real recent-repos list. They now use a data folder of their own, the list drops temp and missing folders when it is read, and the folder picker starts beside your last project.
+- `test_ac1_version_via_module_and_script` failed under a correctly installed Windows Python that is not a virtual environment, because it looked for the `claimcheck` script beside `python.exe` instead of in the `Scripts` folder. It now asks Python where scripts go.
 
 ## [0.1.0] - 2026-10-25
 

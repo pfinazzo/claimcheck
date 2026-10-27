@@ -178,6 +178,8 @@ export type Proposal = {
   cons: readonly string[];
   effort: 'small' | 'medium' | 'large';
   touches: readonly string[];
+  /** True on the one approach Claude recommends, and on no other. */
+  recommended: boolean;
 };
 
 /** What the prompts need to know about one claim in one repo. */
@@ -185,6 +187,8 @@ export type PromptContext = {
   repo: Pick<RepoInfo, 'origin' | 'path' | 'branch' | 'head'>;
   config: Pick<BoardConfig, 'test_cmd'> & Partial<BoardConfig>;
   claim: Claim;
+  /** What the person said they wanted built when they wrote the spec. Empty when none was recorded. */
+  goal?: string;
 };
 
 // ---- the claimcheck CLI protocol (machine commands) ----------------------------

@@ -63,11 +63,16 @@ const describeNeeds = ({ needs }: { needs: number }): string => {
   return `${needs} ${needs === 1 ? 'needs' : 'need'} a decision`;
 };
 
-export const formatSummaryLine = ({ board }: { board: Board }): string => {
-  const count = board.claims.length;
-  if (count === 0) return 'No claims yet.';
-  const needs = board.queue.length;
-  const head = `${formatPlural({ count, one: 'claim' })}, ${describeNeeds({ needs })}.`;
+export type SummaryStats = {
+  claims: number;
+  needs: number;
+  /** Planted bugs across the board, each counted once per run. */
+  caught: number;
+  total: number;
+};
+
+/** The figures behind the summary: claims, how many need a decision, and planted bugs caught. */
+export const calculateSummaryStats = ({ board }: { board: Board }): SummaryStats => {
   // Claims that list the same file carry the same planted bugs, so count each bug once per run.
   const bugs = new Map<string, boolean>(
     board.claims.flatMap((claim) =>
@@ -76,8 +81,13 @@ export const formatSummaryLine = ({ board }: { board: Board }): string => {
         .map((mutant): [string, boolean] => [JSON.stringify([claim.mutation?.runId ?? '', mutant.file, mutant.line_no, mutant.cls, mutant.mutated]), mutant.outcome !== 'survived']),
     ),
   );
-  const total = bugs.size;
-  const caught = [...bugs.values()].filter(Boolean).length;
+  return { claims: board.claims.length, needs: board.queue.length, caught: [...bugs.values()].filter(Boolean).length, total: bugs.size };
+};
+
+export const formatSummaryLine = ({ board }: { board: Board }): string => {
+  const { claims: count, needs, caught, total } = calculateSummaryStats({ board });
+  if (count === 0) return 'No claims yet.';
+  const head = `${formatPlural({ count, one: 'claim' })}, ${describeNeeds({ needs })}.`;
   return total === 0 ? head : `${head} ${caught} of ${total} planted bugs caught.`;
 };
 

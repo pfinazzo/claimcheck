@@ -9,6 +9,8 @@ import { execFile, type ChildProcess, type SpawnOptions } from 'node:child_proce
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { parseUnifiedDiff, type ParsedDiff } from '../shared/diff.ts';
+import { findPullRequestBlocker } from '../shared/pull-request.ts';
 import type { Board, CcFinish, CcInit, CcStatus, CcStep, ConnectionMode, ConnectionSummary, DraftInput, TrustInfo, ViewName } from '../shared/types.ts';
 import * as cliDefault from './claude-cli.ts';
 import * as apiDefault from './claude-api.ts';
@@ -18,7 +20,7 @@ import { SAFE_BRANCH, buildDraftInput, normalizeFinish, normalizeInit, normalize
 import * as ghDefault from './gh.ts';
 import { updateAppState } from './ledger.ts';
 import { buildProposePrompt, buildImplementPrompt } from './prompts.ts';
-import { createRecents } from './recents.ts';
+import { createRecents, isRealProjectFolder } from './recents.ts';
 import * as runnerDefault from './runner.ts';
 import { readBoard } from './store.ts';
 import { setTomlString } from './toml.ts';
@@ -40,6 +42,32 @@ type Rec = Record<string, unknown>;
 export const NOT_A_REPO_MESSAGE = 'This folder is not a git repository. claimcheck works on a repo, so run git init there first.';
 export const NEEDS_TRUST_CODE = 'needs-trust';
 export const OPEN_PATH_MESSAGE = 'Only a fix worktree folder or a web link can be opened from here.';
+
+/** A fix's code as the viewer shows it. */
+export type InspectedFix = {
+  branch: string;
+  base: string;
+  commits: readonly string[];
+  diff: ParsedDiff;
+};
+
+export type GitHubStatusView = {
+  isInstalled: boolean;
+  isSignedIn: boolean;
+  account: string | null;
+  /** A repo is open in Desk. */
+  hasRepo: boolean;
+  origin: string | null;
+  /** Why Open pull request would not work right now, or null when it would. */
+  blocker: string | null;
+};
+
+/** Branch and base names are passed to git as one argument, so they must look like names and never like options. */
+const FIX_BRANCH_NAME = /^claimcheck\/[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+const BASE_NAME = /^[A-Za-z0-9._][A-Za-z0-9._/-]*$/;
+const LONGEST_DIFF_CHARS = 600_000;
+const LONGEST_COMMIT_LIST = 30;
+const DIFF_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 export class NeedsTrustError extends Error {
   code = NEEDS_TRUST_CODE;
@@ -132,7 +160,7 @@ export const createDeskApi = ({
   mkdirSync(userDir, { recursive: true });
   const settingsFile = path.join(userDir, 'settings.json');
   const wizardFile = path.join(userDir, 'wizard-state.json');
-  const recents = createRecents({ dir: userDir });
+  const recents = createRecents({ dir: userDir, isUsable: (folder) => isRealProjectFolder({ folder }) });
   const trustStore = createTrustStore({ dir: userDir });
   const state: {
     repoPath: string | null;
@@ -161,6 +189,7 @@ export const createDeskApi = ({
   const exec = (execFn ?? (runExecFile));
 
   const fixer = createFixer({
+    goalFor: (repoPath) => loadWizard({ repoPath })?.goal.trim() ?? '',
     cliModule,
     apiModule,
     keyStore,
@@ -206,7 +235,7 @@ export const createDeskApi = ({
     // The exact text Copy prompt would copy, so "See the prompt" can show it before any run.
     for (const claim of board.claims) {
       try {
-        claim.promptText = buildProposePrompt({ context: { repo: board.repo, config: board.config, claim } });
+        claim.promptText = buildProposePrompt({ context: { repo: board.repo, config: board.config, claim, goal: loadWizard({ repoPath: board.repo.path })?.goal.trim() ?? '' } });
       } catch {
         claim.promptText = '';
       }
@@ -319,7 +348,7 @@ export const createDeskApi = ({
     const board = requireBoard();
     const claim = board.claims.find((claim) => claim.id === claimId);
     if (!claim) throw new Error(`No claim ${claimId}.`);
-    return { repo: board.repo, config: board.config, claim };
+    return { repo: board.repo, config: board.config, claim, goal: loadWizard({ repoPath: board.repo.path })?.goal.trim() ?? '' };
   };
 
   const copyPrompt = ({ claimId, kind = 'propose', proposeRunId, choice }: { claimId: string; kind?: 'propose' | 'implement'; proposeRunId?: string; choice?: number }): Promise<{ text: string }> => toPromise({ work: () => {
@@ -441,11 +470,50 @@ export const createDeskApi = ({
     }
   };
 
+  /** Whether GitHub can work: gh installed, gh signed in, and whether this repo has a remote. */
+  const githubStatus = async (): Promise<GitHubStatusView> => {
+    const board = (await refresh()) ?? state.board;
+    const status = await ghModule.fetchGithubStatus(execFn ? { execFn } : {});
+    const origin = board?.repo.origin ?? null;
+    return { ...status, hasRepo: board !== null, origin, blocker: findPullRequestBlocker({ isGhReady: status.isSignedIn, origin }) };
+  };
+
+  /** Opens gh's own sign-in in a terminal. Desk never handles the token. */
+  const githubSignIn = (): Promise<true> => toPromise({ work: () => {
+    ghModule.startGithubSignIn(spawnFn ? { spawnFn } : {});
+    return true as const;
+  } });
+
+  /** The code Claude committed for a claim's fix: its commits and a parsed diff against the base branch. Read-only. */
+  const inspectFix = async ({ claimId }: { claimId: string }): Promise<InspectedFix> => {
+    const board = (await refresh()) ?? requireBoard();
+    const claim = board.claims.find((candidate) => candidate.id === claimId);
+    if (!claim) throw new Error(`No claim ${claimId}.`);
+    const latestRun = fixer.list().findLast((run) => run.claimId === claimId && run.kind === 'implement' && run.branch);
+    const branch = latestRun?.branch ?? (typeof claim.fix?.branch === 'string' ? claim.fix.branch : '');
+    if (!FIX_BRANCH_NAME.test(branch)) throw new Error('This claim has no fix branch to inspect yet.');
+    const base = board.config.base;
+    if (!BASE_NAME.test(base)) throw new Error(`The base branch name "${base}" in .claimcheck/config.toml is not a plain branch name.`);
+    const gitOptions = { cwd: board.repo.path, windowsHide: true, timeout: GIT_TIMEOUT_MS, maxBuffer: DIFF_MAX_BUFFER_BYTES };
+    const readDiff = async ({ from }: { from: string }): Promise<string> => toText({ value: (await exec('git', ['diff', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=3', `${from}...${branch}`], gitOptions)).stdout });
+    // The base branch may not exist in this clone under that name, so the current commit is the fallback.
+    const text = await readDiff({ from: base }).catch(() => readDiff({ from: 'HEAD' })).catch(() => {
+      throw new Error(`The fix branch ${branch} is not in this repo any more. It may have been deleted.`);
+    });
+    const isTruncated = text.length > LONGEST_DIFF_CHARS;
+    const shown = isTruncated ? text.slice(0, text.lastIndexOf('\n', LONGEST_DIFF_CHARS)) : text;
+    const log = await exec('git', ['log', '--oneline', `-${LONGEST_COMMIT_LIST}`, `${base}..${branch}`], gitOptions).catch(() => ({ stdout: '' }));
+    const commits = toText({ value: log.stdout }).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return { branch, base, commits, diff: parseUnifiedDiff({ text: shown, isTruncated }) };
+  };
+
   const openPullRequest = async ({ runId }: { runId: string }): Promise<{ url: string }> => {
-    const board = requireBoard();
+    // Read the repo again: the person may have added a remote in a terminal since the board was drawn.
+    const board = (await refresh()) ?? requireBoard();
     const run = fixer.raw(runId);
     if (!run || run.kind !== 'implement' || run.status !== 'resolved' || !run.proposal || !run.worktree || !run.branch) throw new Error('Only a resolved fix can become a pull request.');
-    if (!(await ghModule.isGhReady(execFn ? { execFn } : {}))) throw new Error('The GitHub CLI is not installed or not signed in. Run gh auth login.');
+    const blocker = findPullRequestBlocker({ isGhReady: await ghModule.isGhReady(execFn ? { execFn } : {}), origin: board.repo.origin });
+    if (blocker) throw new Error(blocker);
     const claim = board.claims.find((claim) => claim.id === run.claimId);
     if (!claim) throw new Error(`No claim ${run.claimId}.`);
     const url = await ghModule.openPullRequest({
@@ -622,7 +690,8 @@ export const createDeskApi = ({
     openRepo,
     recents: (): Promise<string[]> => toPromise({ work: () => recents.list() }),
     lastRepo: (): string | null => recents.last(),
-    getBoard: (): Promise<Board | null> => toPromise({ work: () => state.board }),
+    // Re-reads the repo, so a remote added or a branch changed outside Desk shows up.
+    getBoard: async (): Promise<Board | null> => (await refresh()) ?? state.board,
     getView: (): Promise<ViewPayload> => toPromise({ work: () => currentView() }),
     connect,
     testConnection,
@@ -632,6 +701,9 @@ export const createDeskApi = ({
     copyPrompt,
     runClaimcheck,
     openPullRequest,
+    githubStatus,
+    githubSignIn,
+    inspectFix,
     openPath: openTarget,
     trustRepo,
     getRun: ({ runId }: { runId: string }): Promise<PublicRun | null> => toPromise({ work: () => fixer.get(runId) }),

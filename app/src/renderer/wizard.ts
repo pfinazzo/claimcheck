@@ -6,6 +6,7 @@
  */
 
 import type { DeskBridge } from '../shared/ipc.ts';
+import { toBridgeFailure } from '../shared/ipc.ts';
 import type { CcInit, ConnectionSummary } from '../shared/types.ts';
 import {
   BEATS, STEPS, STEP_LABELS, addCriterion, applyStepResponse, collectBlockingProblems, buildFinishRequest, buildStepRequest, canContinue, goBack, goNext, collectLocalWarnings,
@@ -38,7 +39,7 @@ type Local = {
 
 const local: Local = { busy: null, error: null, step: '', animation: [] };
 
-const renderMessage = ({ error }: { error: unknown }): string => (error instanceof Error ? error.message : String(error));
+const renderMessage = ({ error }: { error: unknown }): string => toBridgeFailure({ error }).message;
 const renderButton = ({ label, onClick, cls = '', disabled = false }: { label: string; onClick: () => void; cls?: string; disabled?: boolean }): HTMLButtonElement =>
   makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, children: [label] });
 const renderMore = (...body: Child[]): HTMLElement => makeElement({ tag: 'details', props: { class: 'more' }, children: [makeElement({ tag: 'summary', props: {}, children: ['More detail'] }), ...body] });

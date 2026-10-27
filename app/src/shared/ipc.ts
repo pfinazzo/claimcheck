@@ -11,6 +11,7 @@
 import type { createDeskApi, ViewPayload } from '../lib/desk-api.ts';
 import type { PublicRun } from '../lib/fixer.ts';
 import type { Board } from './types.ts';
+import { toText } from './text.ts';
 
 type FullApi = ReturnType<typeof createDeskApi>;
 /** Only the callable members: the api object also carries state and the fixer. */
@@ -27,6 +28,9 @@ export type DeskBridge = {
   openRepo: (payload?: { path?: string | null }) => Out<'openRepo'>;
   recents: () => Out<'recents'>;
   getBoard: () => Out<'getBoard'>;
+  githubStatus: () => Out<'githubStatus'>;
+  githubSignIn: () => Out<'githubSignIn'>;
+  inspectFix: (payload: In<'inspectFix'>) => Out<'inspectFix'>;
   getView: () => Out<'getView'>;
   connect: (payload?: In<'connect'>) => Out<'connect'>;
   testConnection: (payload?: In<'testConnection'>) => Out<'testConnection'>;
@@ -61,7 +65,7 @@ export type DeskBridge = {
 /** The names of the calls that go through ipcMain.handle, in the order the bridge lists them. */
 export const INVOKE_CHANNELS = [
   'openRepo', 'recents', 'getBoard', 'getView', 'connect', 'testConnection', 'startPropose', 'startImplement', 'acceptRisk', 'copyPrompt',
-  'runClaimcheck', 'openPullRequest', 'openPath', 'trustRepo', 'getRun', 'ghReady', 'wizardLoad', 'wizardSave', 'wizardStart', 'wizardStatus',
+  'runClaimcheck', 'openPullRequest', 'githubStatus', 'githubSignIn', 'inspectFix', 'openPath', 'trustRepo', 'getRun', 'ghReady', 'wizardLoad', 'wizardSave', 'wizardStart', 'wizardStatus',
   'wizardInit', 'wizardSaveTestCmd', 'wizardDraft', 'wizardFinish', 'wizardCancel', 'wizardSpec', 'wizardExit',
 ] as const;
 
@@ -69,3 +73,20 @@ export type InvokeChannel = (typeof INVOKE_CHANNELS)[number];
 
 /** What every invoke returns across the bridge. */
 export type Reply<T> = { ok: true; value: T } | { ok: false; error: string; code: string | null; details: unknown };
+
+/**
+ * What a failed call rejects with on the page. Electron's context bridge copies only an Error's
+ * message, so the preload rejects with this plain object instead and the code and details survive.
+ */
+export type BridgeFailure = { bridge: 'failure'; message: string; code: string | null; details: unknown };
+
+// A type guard must name the value it narrows, so it takes it positionally.
+// eslint-disable-next-line no-restricted-syntax
+const isBridgeFailure = (value: unknown): value is BridgeFailure =>
+  typeof value === 'object' && value !== null && (value as { bridge?: unknown }).bridge === 'failure' && typeof (value as { message?: unknown }).message === 'string';
+
+/** Reads any rejection the page can see as one shape: a bridge failure, an Error, or anything else as text. */
+export const toBridgeFailure = ({ error }: { error: unknown }): BridgeFailure => {
+  if (isBridgeFailure(error)) return error;
+  return { bridge: 'failure', message: error instanceof Error ? error.message : toText({ value: error }), code: null, details: null };
+};

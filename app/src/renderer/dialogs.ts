@@ -1,10 +1,12 @@
 /**
- * The three small dialogs: open a repo, connect Claude, and "this repo can run commands".
+ * The small dialogs: open a repo, connect Claude, and "this repo can run commands". The GitHub
+ * dialog and the code viewer have files of their own.
  *
  * @author Patrick Finazzo
  */
 
 import type { DeskBridge } from '../shared/ipc.ts';
+import { toBridgeFailure } from '../shared/ipc.ts';
 import type { ConnectionSummary } from '../shared/types.ts';
 import { makeElement, mount, type Child } from './dom.ts';
 import { toText } from '../shared/text.ts';
@@ -12,6 +14,9 @@ import { toText } from '../shared/text.ts';
 export type DialogHost = {
   /** Fills the dialog and shows it. */
   show: (title: string, ...body: Child[]) => void;
+  /** Like show, in a dialog wide enough for code. */
+  showWide: (title: string, ...body: Child[]) => void;
+  isOpen: () => boolean;
   close: () => void;
   toast: (options: { text: string; bad?: boolean }) => void;
 };
@@ -28,9 +33,10 @@ const API_OK_TEXT = new Map<unknown, string>([
   [false, ' It did not work.'],
 ]);
 
-const renderButton = ({ label, onClick, cls = '' }: { label: string; onClick: () => void; cls?: string }): HTMLButtonElement => makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button' }, on: { click: onClick } }, children: [label] });
+export const renderButton = ({ label, onClick, cls = '' }: { label: string; onClick: () => void; cls?: string }): HTMLButtonElement => makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button' }, on: { click: onClick } }, children: [label] });
 const renderField = ({ label, list = [] }: { label: string; list?: readonly Child[] }): HTMLElement => makeElement({ tag: 'label', props: { class: 'field' }, children: [makeElement({ tag: 'span', props: {}, children: [label] }), ...list] });
-const renderMessage = ({ error }: { error: unknown }): string => (error instanceof Error ? error.message : String(error));
+/** What to tell the person about a failure. The bridge rejects with a plain object, so an Error is not the only shape. */
+export const renderMessage = ({ error }: { error: unknown }): string => toBridgeFailure({ error }).message;
 
 export const openDialog = async ({ desk, host, onOpened }: { desk: DeskBridge; host: DialogHost; onOpened: () => void }): Promise<void> => {
   const recents = await desk.recents();
@@ -44,11 +50,42 @@ export const openDialog = async ({ desk, host, onOpened }: { desk: DeskBridge; h
       host.toast({ text: renderMessage({ error }), bad: true });
     }
   };
+  // A pasted path often arrives wrapped in quotes ("Copy as path" on Windows does that).
+  const openTyped = ({ value }: { value: string }): void => {
+    const typed = value.trim().replace(/^"(.*)"$/, '$1');
+    if (typed) void open({ path: typed });
+  };
+  const pathInput = makeElement({
+    tag: 'input',
+    props: {
+      attrs: { type: 'text', id: 'repo-path', placeholder: 'C:\\Users\\you\\code\\my-project', autocomplete: 'off' },
+      on: { keydown: (event) => { if ((event as KeyboardEvent).key === 'Enter') openTyped({ value: pathInput.value }); } },
+    },
+  });
   host.show(
     'Open a repository',
+    makeElement({ tag: 'p', props: { class: 'muted' }, children: ['Pick any git repository on this computer. If it is not set up for claimcheck yet, Desk walks you through it.'] }),
     renderButton({ label: 'Choose a folder…', onClick: () => void open(), cls: 'primary' }),
-    recents.length ? makeElement({ tag: 'p', props: { class: 'muted' }, children: ['Recent'] }) : makeElement({ tag: 'p', props: { class: 'muted' }, children: ['No recent repositories yet.'] }),
-    makeElement({ tag: 'div', props: { class: 'stack' }, children: [...recents.map((text) => renderButton({ label: text, onClick: () => void open({ path: text }) }))] }),
+    makeElement({
+      tag: 'label',
+      props: { class: 'field', attrs: { for: 'repo-path' } },
+      children: [
+        makeElement({ tag: 'span', props: {}, children: ['Or paste a folder path'] }),
+        makeElement({ tag: 'div', props: { class: 'row' }, children: [pathInput, renderButton({ label: 'Open', onClick: () => openTyped({ value: pathInput.value }) })] }),
+      ],
+    }),
+    recents.length ? makeElement({ tag: 'h3', props: {}, children: ['Recent'] }) : makeElement({ tag: 'p', props: { class: 'muted' }, children: ['No recent repositories yet.'] }),
+    makeElement({
+      tag: 'div',
+      props: { class: 'stack' },
+      children: recents.map((folder) =>
+        makeElement({
+          tag: 'button',
+          props: { class: 'btn recent', attrs: { type: 'button' }, on: { click: () => void open({ path: folder }) } },
+          children: [makeElement({ tag: 'strong', props: {}, children: [folder.split(/[\\/]/).filter(Boolean).at(-1) ?? folder] }), makeElement({ tag: 'span', props: { class: 'muted' }, children: [folder] })],
+        }),
+      ),
+    }),
   );
 };
 

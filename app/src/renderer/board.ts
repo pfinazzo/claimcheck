@@ -1,18 +1,24 @@
 /**
- * The board: a slim top bar, one summary sentence, the claims in two groups, and the selected
- * claim's detail beside them.
+ * The board: a glass top bar, three figures, the claims in two groups with a confidence meter
+ * each, and the selected claim's detail beside them. A second tab shows every claim as a 3D map.
  *
  * @author Patrick Finazzo
  */
 
 import type { PublicRun } from '../lib/fixer.ts';
+import { findPullRequestBlocker } from '../shared/pull-request.ts';
 import type { Board, Claim } from '../shared/types.ts';
 import { renderDetail, type DetailActions } from './detail.ts';
 import { makeElement, type Child } from './dom.ts';
-import { formatFactsLine, collectClaimGroups, formatSpecWord, formatSummaryLine } from './format.ts';
+import { calculateSummaryStats, collectClaimGroups, formatFactsLine, formatSpecWord, formatSummaryLine } from './format.ts';
+import { renderGraphView } from './graph-view.ts';
+
+export type BoardMode = 'list' | 'graph';
 
 export type BoardUi = {
   board: Board | null;
+  /** The board shows the claims as a list with a detail pane, or as the confidence map with a table of all of them. */
+  mode: BoardMode;
   selectedId: string | null;
   runs: Map<string, PublicRun>;
   ghOk: boolean;
@@ -22,6 +28,9 @@ export type BoardUi = {
 
 export type BoardActions = DetailActions & {
   select: (options: { id: string | null }) => void;
+  setMode: (options: { mode: BoardMode }) => void;
+  /** Opens one claim in the list view. */
+  showClaim: (options: { id: string }) => void;
   openRepo: () => void;
   connectClaude: () => void;
   runClaimcheck: () => void;
@@ -29,13 +38,12 @@ export type BoardActions = DetailActions & {
   closeDrawer: () => void;
 };
 
-const renderButton = ({ label, onClick, cls = '', disabled = false }: { label: string; onClick: () => void; cls?: string; disabled?: boolean }): HTMLButtonElement =>
-  makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, children: [label] });
+const BOARD_MODES: readonly BoardMode[] = ['list', 'graph'];
 
-const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
-  const board = ui.board;
-  return makeElement({ tag: 'header', props: { class: 'topbar' }, children: [makeElement({ tag: 'div', props: { class: 'repo' }, children: [makeElement({ tag: 'strong', props: {}, children: [board ? board.repo.name : 'claimcheck Desk'] }), board ? makeElement({ tag: 'span', props: { class: 'muted' }, children: [[board.repo.branch, formatSpecWord({ state: board.repo.specState })].filter(Boolean).join('  ·  ')] }) : null] }), makeElement({ tag: 'div', props: { class: 'row' }, children: [board ? renderButton({ label: 'Write a spec', onClick: actions.writeSpec }) : null, renderButton({ label: 'Connect Claude', onClick: actions.connectClaude }), board ? renderButton({ label: ui.running ? 'Running…' : 'Run claimcheck', onClick: actions.runClaimcheck, cls: 'primary', disabled: ui.running }) : null, renderButton({ label: 'Open repo', onClick: actions.openRepo })] })] });
-};
+const MODE_LABELS = new Map<BoardMode, string>([
+  ['list', 'Claims'],
+  ['graph', 'Confidence map'],
+]);
 
 /** The badge for a claim that is already handled; claims still open have none. */
 const DONE_LABEL = new Map<unknown, string>([
@@ -44,41 +52,213 @@ const DONE_LABEL = new Map<unknown, string>([
   ['fixing', 'Fix in progress'],
 ]);
 
-const renderRow = ({ claim, ui, boardActions }: { claim: Claim; ui: BoardUi; boardActions: BoardActions }): HTMLElement => {
+/** A catch rate below this reads as weak on the planted-bug meter. */
+const WEAK_RATIO = 0.8;
+
+const renderButton = ({ label, onClick, cls = '', disabled = false }: { label: string; onClick: () => void; cls?: string; disabled?: boolean }): HTMLButtonElement =>
+  makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, children: [label] });
+
+const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
+  const board = ui.board;
+  const meta = board
+    ? makeElement({
+        tag: 'span',
+        props: { class: 'repo-meta' },
+        children: [
+          board.repo.branch ? makeElement({ tag: 'span', props: { class: 'branch' }, children: [board.repo.branch] }) : null,
+          makeElement({
+            tag: 'span',
+            props: {},
+            children: [makeElement({ tag: 'span', props: { class: `dot ${board.repo.specState}`, attrs: { 'aria-hidden': 'true' } } }), formatSpecWord({ state: board.repo.specState })],
+          }),
+        ],
+      })
+    : null;
+  return makeElement({
+    tag: 'header',
+    props: { class: 'topbar panel' },
+    children: [
+      makeElement({
+        tag: 'div',
+        props: { class: 'brand' },
+        children: [
+          makeElement({ tag: 'span', props: { class: 'mark', attrs: { 'aria-hidden': 'true' } } }),
+          makeElement({ tag: 'div', props: { class: 'repo' }, children: [makeElement({ tag: 'strong', props: {}, children: [board ? board.repo.name : 'claimcheck Desk'] }), meta] }),
+        ],
+      }),
+      makeElement({
+        tag: 'div',
+        props: { class: 'row' },
+        children: [
+          board ? renderButton({ label: 'Write a spec', onClick: actions.writeSpec }) : null,
+          renderButton({ label: 'Connect Claude', onClick: actions.connectClaude }),
+          renderButton({ label: 'Connect GitHub', onClick: actions.connectGithub }),
+          board ? renderButton({ label: ui.running ? 'Running…' : 'Run claimcheck', onClick: actions.runClaimcheck, cls: 'primary', disabled: ui.running }) : null,
+          renderButton({ label: 'Open repo', onClick: actions.openRepo }),
+        ],
+      }),
+    ],
+  });
+};
+
+/** A bar filled to `ratio` (0 to 1). The width is set through the CSSOM, since the CSP forbids inline style attributes. */
+const renderMeterBar = ({ ratio, isWeak }: { ratio: number; isWeak: boolean }): HTMLElement => {
+  const fill = makeElement({ tag: 'span', props: {} });
+  fill.style.width = `${Math.round(ratio * 100)}%`;
+  return makeElement({ tag: 'span', props: { class: `meter${isWeak ? ' weak' : ''}` }, children: [fill] });
+};
+
+const renderStat = ({ cls, label, value, note, meter = null }: { cls: string; label: string; value: Child; note: Child; meter?: HTMLElement | null }): HTMLElement =>
+  makeElement({
+    tag: 'div',
+    props: { class: `stat panel ${cls}`.trim() },
+    children: [makeElement({ tag: 'span', props: { class: 'stat-label' }, children: [label] }), makeElement({ tag: 'span', props: { class: 'stat-value' }, children: [value, note] }), meter],
+  });
+
+const renderSmall = ({ text }: { text: string }): HTMLElement => makeElement({ tag: 'small', props: {}, children: [text] });
+
+/** Three figures: claims, how many need a decision, and planted bugs caught. */
+const renderStats = ({ board }: { board: Board }): HTMLElement => {
+  const stats = calculateSummaryStats({ board });
+  const rate = stats.total === 0 ? null : stats.caught / stats.total;
+  return makeElement({
+    tag: 'section',
+    props: { class: 'stats', attrs: { 'aria-label': formatSummaryLine({ board }) } },
+    children: [
+      renderStat({ cls: '', label: 'Claims', value: stats.claims, note: null }),
+      renderStat({ cls: stats.needs === 0 ? 'clear' : 'needs', label: 'Need a decision', value: stats.needs, note: stats.needs === 0 ? renderSmall({ text: 'none' }) : null }),
+      renderStat({
+        cls: '',
+        label: 'Planted bugs caught',
+        value: stats.total === 0 ? '–' : stats.caught,
+        note: renderSmall({ text: stats.total === 0 ? 'no run yet' : `of ${stats.total}` }),
+        meter: rate === null ? null : renderMeterBar({ ratio: rate, isWeak: rate < WEAK_RATIO }),
+      }),
+    ],
+  });
+};
+
+const renderConfidenceMeter = ({ claim, isWeak }: { claim: Claim; isWeak: boolean }): HTMLElement | null =>
+  claim.confidence === null
+    ? null
+    : makeElement({
+        tag: 'span',
+        props: { class: 'claim-meter', attrs: { 'aria-hidden': 'true' } },
+        children: [renderMeterBar({ ratio: claim.confidence, isWeak }), makeElement({ tag: 'span', props: { class: 'num' }, children: [claim.confidence.toFixed(2)] })],
+      });
+
+const renderRow = ({ claim, ui, boardActions, isWeak }: { claim: Claim; ui: BoardUi; boardActions: BoardActions; isWeak: boolean }): HTMLElement => {
   const done = DONE_LABEL.get(claim.status) ?? '';
-  return makeElement({ tag: 'button', props: {
+  return makeElement({
+    tag: 'button',
+    props: {
       class: `claim-row${claim.id === ui.selectedId ? ' selected' : ''}`,
       attrs: { type: 'button', 'aria-pressed': claim.id === ui.selectedId },
       dataset: { claim: claim.id },
       on: { click: () => boardActions.select({ id: claim.id }) },
-    }, children: [makeElement({ tag: 'span', props: { class: 'claim-title' }, children: [claim.claim] }), makeElement({ tag: 'span', props: { class: 'claim-facts' }, children: [formatFactsLine({ claim })] }), done ? makeElement({ tag: 'span', props: { class: 'claim-status' }, children: [done] }) : null] });
+    },
+    children: [
+      makeElement({ tag: 'span', props: { class: 'claim-title' }, children: [claim.claim] }),
+      makeElement({ tag: 'span', props: { class: 'claim-facts' }, children: [formatFactsLine({ claim })] }),
+      renderConfidenceMeter({ claim, isWeak }),
+      done ? makeElement({ tag: 'span', props: { class: 'claim-status' }, children: [done] }) : null,
+    ],
+  });
 };
 
-const renderGroup = ({ title, claims, ui, boardActions }: { title: string; claims: readonly Claim[]; ui: BoardUi; boardActions: BoardActions }): HTMLElement | null =>
-  claims.length ? makeElement({ tag: 'section', props: { class: 'group' }, children: [makeElement({ tag: 'h3', props: {}, children: [`${title} (${claims.length})`] }), ...claims.map((claim) => renderRow({ claim, ui, boardActions }))] }) : null;
+const renderGroup = ({ title, claims, ui, boardActions, isWeak }: { title: string; claims: readonly Claim[]; ui: BoardUi; boardActions: BoardActions; isWeak: boolean }): HTMLElement | null =>
+  claims.length
+    ? makeElement({
+        tag: 'section',
+        props: { class: 'group' },
+        children: [makeElement({ tag: 'h3', props: {}, children: [`${title} (${claims.length})`] }), ...claims.map((claim) => renderRow({ claim, ui, boardActions, isWeak }))],
+      })
+    : null;
 
 const renderEmptyState = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement =>
-  makeElement({ tag: 'div', props: { class: 'empty-state' }, children: [makeElement({ tag: 'h2', props: {}, children: [ui.board ? 'No claims yet' : 'Open a repository'] }), makeElement({ tag: 'p', props: { class: 'muted' }, children: [ui.board
-        ? 'Your coding agent adds claims to .claimcheck/claims.yaml as it works. When it has, press Run claimcheck.'
-        : 'Pick a project folder. If it is not set up for claimcheck yet, Desk walks you through it.'] }), ui.board ? null : renderButton({ label: 'Open repo', onClick: actions.openRepo, cls: 'primary' })] });
+  makeElement({
+    tag: 'div',
+    props: { class: 'empty-state' },
+    children: [
+      makeElement({ tag: 'h2', props: {}, children: [ui.board ? 'No claims yet' : 'Open a repository'] }),
+      makeElement({
+        tag: 'p',
+        props: { class: 'muted' },
+        children: [
+          ui.board
+            ? 'Your coding agent adds claims to .claimcheck/claims.yaml as it works. When it has, press Run claimcheck.'
+            : 'Pick a project folder. If it is not set up for claimcheck yet, Desk walks you through it.',
+        ],
+      }),
+      ui.board ? null : renderButton({ label: 'Open repo', onClick: actions.openRepo, cls: 'primary' }),
+    ],
+  });
 
 const renderDrawer = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement | null =>
   ui.drawer.open
-    ? makeElement({ tag: 'section', props: { class: 'drawer' }, children: [makeElement({ tag: 'div', props: { class: 'drawer-head' }, children: [makeElement({ tag: 'strong', props: {}, children: ['claimcheck run'] }), makeElement({ tag: 'span', props: { class: 'muted' }, children: [ui.drawer.status] }), renderButton({ label: 'Close', onClick: actions.closeDrawer })] }), makeElement({ tag: 'pre', props: { class: 'code' }, children: [ui.drawer.lines.join('\n')] })] })
+    ? makeElement({
+        tag: 'section',
+        props: { class: 'drawer panel' },
+        children: [
+          makeElement({
+            tag: 'div',
+            props: { class: 'drawer-head' },
+            children: [makeElement({ tag: 'strong', props: {}, children: ['claimcheck run'] }), makeElement({ tag: 'span', props: { class: 'muted' }, children: [ui.drawer.status] }), renderButton({ label: 'Close', onClick: actions.closeDrawer })],
+          }),
+          makeElement({ tag: 'pre', props: { class: 'code' }, children: [ui.drawer.lines.join('\n')] }),
+        ],
+      })
     : null;
+
+const renderModeTabs = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement =>
+  makeElement({
+    tag: 'div',
+    props: { class: 'tabs mode-tabs', attrs: { role: 'tablist', 'aria-label': 'Board view' } },
+    children: BOARD_MODES.map((mode) =>
+      makeElement({
+        tag: 'button',
+        props: { class: `tab${ui.mode === mode ? ' active' : ''}`, attrs: { type: 'button', role: 'tab', 'aria-selected': ui.mode === mode }, on: { click: () => actions.setMode({ mode }) } },
+        children: [MODE_LABELS.get(mode) ?? mode],
+      }),
+    ),
+  });
+
+/** The claims list with the selected claim's detail beside it. */
+const renderListView = ({ board, ui, actions }: { board: Board; ui: BoardUi; actions: BoardActions }): HTMLElement => {
+  const groups = collectClaimGroups({ board });
+  const selected = board.claims.find((claim) => claim.id === ui.selectedId) ?? null;
+  return makeElement({
+    tag: 'main',
+    props: { class: 'split' },
+    children: [
+      makeElement({
+        tag: 'nav',
+        props: { class: 'claims panel', attrs: { 'aria-label': 'Claims' } },
+        children: [
+          renderGroup({ title: 'Needs a decision', claims: groups.needs, ui, boardActions: actions, isWeak: true }),
+          renderGroup({ title: 'Backed', claims: groups.backed, ui, boardActions: actions, isWeak: false }),
+        ],
+      }),
+      renderDetail({
+        claim: selected,
+        run: selected ? (ui.runs.get(selected.id) ?? null) : null,
+        prBlocker: findPullRequestBlocker({ isGhReady: ui.ghOk, origin: board.repo.origin }),
+        detailActions: actions,
+      }),
+    ],
+  });
+};
+
+/** What fills the page under the stats: the empty state, the claims list, or the confidence map. */
+const renderBody = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
+  const board = ui.board;
+  if (!board || board.claims.length === 0) return renderEmptyState({ ui, actions });
+  return ui.mode === 'graph' ? renderGraphView({ ui, actions }) : renderListView({ board, ui, actions });
+};
 
 /** Everything inside #app for the board view. */
 export const renderBoard = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): Child[] => {
   const board = ui.board;
-  const claims = board?.claims ?? [];
-  const groups = board ? collectClaimGroups({ board: board }) : { needs: [], backed: [] };
-  const selected = claims.find((claim) => claim.id === ui.selectedId) ?? null;
-  return [
-    renderHeader({ ui, actions }),
-    board ? makeElement({ tag: 'p', props: { class: 'summary' }, children: [formatSummaryLine({ board: board })] }) : null,
-    claims.length === 0
-      ? renderEmptyState({ ui, actions })
-      : makeElement({ tag: 'main', props: { class: 'split' }, children: [makeElement({ tag: 'nav', props: { class: 'claims', attrs: { 'aria-label': 'Claims' } }, children: [renderGroup({ title: 'Needs a decision', claims: groups.needs, ui, boardActions: actions }), renderGroup({ title: 'Backed', claims: groups.backed, ui, boardActions: actions })] }), renderDetail({ claim: selected, run: selected ? (ui.runs.get(selected.id) ?? null) : null, ghOk: ui.ghOk, detailActions: actions })] }),
-    renderDrawer({ ui, actions }),
-  ];
+  const hasClaims = board !== null && board.claims.length > 0;
+  return [renderHeader({ ui, actions }), board && hasClaims ? renderStats({ board }) : null, board && hasClaims ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
 };
