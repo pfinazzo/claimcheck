@@ -662,3 +662,21 @@ test('an opened issue offers to start a spec from it, and pressing it names the 
   ([...document.querySelectorAll('.detail button')].find((button) => button.textContent === 'Write a spec from this issue') as HTMLElement).click();
   assert.deepEqual(calls.list(), ['spec:12']);
 });
+
+test('while a pull request is graded, the top left names the repo the person opened, not the folder it was fetched into', () => {
+  const board = readBoard({ claims: [makeClaim()], queue: [], repo: { name: 'pr-7-38b8936d3a', branch: 'HEAD' } });
+  draw({ ui: makeUi({ board, github: { pullRequestCheck: buildCheck({ over: { originPath: 'C:\\Users\\dana\\Desktop\\checkout-service' } }) } }) });
+  assert.equal(document.querySelector('.repo strong')?.textContent, 'checkout-service');
+  assert.equal(document.querySelector('.repo .branch')?.textContent, 'pull request #7');
+  draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: [], repo: { name: 'shop', branch: 'feature/x' } }) }) });
+  assert.equal(document.querySelector('.repo strong')?.textContent, 'shop');
+  assert.equal(document.querySelector('.repo .branch')?.textContent, 'feature/x');
+});
+
+test('the all-clear banner of a graded pull request talks about that pull request and about posting, not about opening one', () => {
+  const text = draw({ ui: makeUi({ board: readClearBoard({ repo: { branch: 'HEAD' } }), ghOk: true, github: { pullRequestCheck: buildCheck() } }) });
+  assert.ok(text.includes('Nothing on pull request #7 needs a decision now.'));
+  assert.ok(text.includes('Post the results so the author and the other reviewers can see them.'));
+  assert.ok(!text.includes('Nothing on HEAD'));
+  assert.ok(!text.includes('Open a pull request so a person reads it'));
+});

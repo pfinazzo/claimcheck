@@ -492,13 +492,39 @@ A slim top bar shows the repo, the branch and whether the spec is frozen, with *
 
 From a flagged claim, **Fix this** proposes three or four different ways to resolve it. You pick one, Desk builds it on a branch in a separate worktree, runs your tests, and records the outcome in the ledger. A fix only counts as resolved when the tests pass **and** a change was actually committed. **Accept the risk** takes a one-line reason and writes it to the ledger. Arrow keys move through the list, and the page follows your system's light or dark setting.
 
-![The same board in dark mode](docs/screenshots/desk-board-dark.png)
+Desk has a **Light**, **Dark** and **Auto** switch at the right end of the top bar. Every screenshot in this README is the dark look. The confidence map below also has a light one.
+
+Pressing **Fix this** shows the approaches Claude proposes, with the one it recommends first and the reason. **Inspect the code** shows exactly what Claude committed, read only.
+
+![Claude's proposed approaches, with its recommendation first](docs/screenshots/desk-propose.png)
+
+![The code Claude wrote for a fix, with line numbers](docs/screenshots/desk-code.png)
+
+When no claim needs a decision, a banner says so and offers **Open pull request**. It says plainly that backed is a good sign, not a sign-off.
+
+![Every claim backed: the all-clear banner](docs/screenshots/desk-all-clear.png)
+
+Before anything runs, Desk lists the commands the repo would run and waits for you. **Connect GitHub** checks that `gh` is signed in. **Open repo** takes any git repository on the computer.
+
+![The commands dialog that appears before the first run](docs/screenshots/desk-trust.png)
+
+![Connect GitHub](docs/screenshots/desk-github.png)
+
+![Open repo: a folder, a pasted path, or a recent one](docs/screenshots/desk-open-repo.png)
 
 ### Pull requests and issues
 
 Desk reads the open pull requests and issues of the repo's GitHub remote through the GitHub CLI, so it works on any repo with a remote, whether or not that repo uses claimcheck yet. Each pull request shows its checks, review state, whether it can merge, the issues it closes, its files and its description, drawn as Markdown. Nothing is written to GitHub unless you press a button that says so.
 
+![The pull requests of a repo, with checks, review state and the description as Markdown](docs/screenshots/desk-pull-requests.png)
+
+![The issues of a repo, with a button to write a spec from one](docs/screenshots/desk-issues.png)
+
 When a pull request's branch carries claims, **Check this pull request** fetches it into a folder of its own, so your checkout is never touched, and grades the claims there. It lists the commands first and runs nothing until you agree. It uses the base branch's claimcheck settings when it has them, so a pull request cannot loosen its own checks. **Post results** shows the exact comment first, and posts it only when you press Post comment. An issue offers **Write a spec from this issue**.
+
+![A pull request being checked: its own folder, the base branch's settings, and Post results](docs/screenshots/desk-pull-request-check.png)
+
+![Post results shows the exact comment before anything is posted](docs/screenshots/desk-post-results.png)
 
 ### Reading the confidence map
 
