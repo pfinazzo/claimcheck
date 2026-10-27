@@ -21,11 +21,13 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.134.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.0",
+    "three": "^0.181.0"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.19.2",
+    "@types/three": "^0.181.0",
     "electron": "^44.7.2",
     "esbuild": "^0.25.12",
     "linkedom": "^0.18.14",
