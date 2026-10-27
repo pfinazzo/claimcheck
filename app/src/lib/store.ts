@@ -323,17 +323,20 @@ export const readBoard = async ({ repoPath }: { repoPath: string }): Promise<Boa
 
   const timestamps = [...runs.check, ...runs.mutate].map((run) => run.ts).filter(Boolean).toSorted();
   const isLockOk = isLockMatching({ specText, specBytes, lock });
+  const branch = await runGit({ repo, argList: ['rev-parse', '--abbrev-ref', 'HEAD'] });
+  const remoteBranches = branch ? await runGit({ repo, argList: ['branch', '--remotes', '--contains', 'HEAD', '--list', `origin/${branch}`] }) : null;
   return {
     repo: {
       name: path.basename(repo),
       path: repo,
       origin: await runGit({ repo, argList: ['remote', 'get-url', 'origin'] }),
-      branch: await runGit({ repo, argList: ['rev-parse', '--abbrev-ref', 'HEAD'] }),
+      branch,
       head: await runGit({ repo, argList: ['rev-parse', 'HEAD'] }),
       hasClaimcheck: configText !== null || claimsText !== null,
       lockOk: isLockOk,
       specState: toSpecState({ hasSpec: specText !== null, isLocked: Boolean(lock), lockOk: isLockOk }),
       lastRunTs: timestamps.at(-1) ?? null,
+      isBranchPushed: Boolean(remoteBranches),
     },
     config,
     criteria,

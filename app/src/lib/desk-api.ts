@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileS
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { parseUnifiedDiff, type ParsedDiff } from '../shared/diff.ts';
-import { findPullRequestBlocker } from '../shared/pull-request.ts';
+import { findBranchPullRequestBlocker, findPullRequestBlocker } from '../shared/pull-request.ts';
 import { isKnownThemeChoice, toThemeChoice, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, CcFinish, CcInit, CcStatus, CcStep, ConnectionMode, ConnectionSummary, DraftInput, TrustInfo, ViewName } from '../shared/types.ts';
 import * as cliDefault from './claude-cli.ts';
@@ -533,6 +533,41 @@ export const createDeskApi = ({
     return { url };
   };
 
+  /** The first line of the last commit, which is the best title a pull request from the branch can have. Empty when git cannot say. */
+  const readLastCommitSubject = async ({ cwd }: { cwd: string }): Promise<string> => {
+    try {
+      const output = await exec('git', ['log', '-1', '--format=%s'], { cwd, windowsHide: true, timeout: GIT_TIMEOUT_MS });
+      return toText({ value: output.stdout }).trim();
+    } catch {
+      return '';
+    }
+  };
+
+  /**
+   * Opens a pull request from the branch the repo is on, into the base branch. Only when no claim
+   * is left needing a decision, and only for a branch GitHub already has: Desk never pushes.
+   */
+  const openBranchPullRequest = async (): Promise<{ url: string; branch: string }> => {
+    const board = (await refresh()) ?? requireBoard();
+    if (board.claims.length === 0) throw new Error('There are no claims to open a pull request for.');
+    if (board.queue.length > 0) throw new Error('Some claims still need a decision. Finish those first.');
+    const { origin, branch, isBranchPushed } = board.repo;
+    const base = board.config.base;
+    const blocker = findBranchPullRequestBlocker({ isGhReady: await ghModule.isGhReady(execFn ? { execFn } : {}), origin, branch, base, isBranchPushed });
+    if (blocker) throw new Error(blocker);
+    if (!branch || !BASE_NAME.test(branch) || !BASE_NAME.test(base)) throw new Error(`The branch name "${branch ?? ''}" or the base name "${base}" is not a plain branch name, so Desk will not pass it to GitHub.`);
+    const subject = await readLastCommitSubject({ cwd: board.repo.path });
+    const url = await ghModule.openPullRequest({
+      cwd: board.repo.path,
+      base,
+      head: branch,
+      title: subject || `claimcheck: ${branch}`,
+      body: ghModule.buildBranchPrBody({ claims: board.claims }),
+      ...(execFn ? { execFn } : {}),
+    });
+    return { url, branch };
+  };
+
   /**
    * Opens a web link, or a fix worktree folder. The target can come from a file in the
    * repo (app-state.json ships in a clone), so anything else is refused: no arbitrary
@@ -715,6 +750,7 @@ export const createDeskApi = ({
     copyPrompt,
     runClaimcheck,
     openPullRequest,
+    openBranchPullRequest,
     githubStatus,
     githubSignIn,
     inspectFix,

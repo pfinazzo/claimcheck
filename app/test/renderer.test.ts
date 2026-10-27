@@ -50,8 +50,8 @@ const makeClaim = ({ over = {} }: { over?: Partial<Claim> } = {}): Claim => ({
   ...over,
 });
 
-const readBoard = ({ claims, queue }: { claims: readonly Claim[]; queue: readonly string[] }): Board => ({
-  repo: { name: 'shop', path: 'C:/shop', origin: null, branch: 'feature/x', head: 'abc', hasClaimcheck: true, lockOk: true, specState: 'frozen', lastRunTs: null },
+const readBoard = ({ claims, queue, repo = {} }: { claims: readonly Claim[]; queue: readonly string[]; repo?: Partial<Board['repo']> }): Board => ({
+  repo: { name: 'shop', path: 'C:/shop', origin: null, branch: 'feature/x', head: 'abc', hasClaimcheck: true, lockOk: true, specState: 'frozen', lastRunTs: null, isBranchPushed: true, ...repo },
   config: { base: 'main', test_cmd: 'npm test', ignore: [], checker: { provider: 'auto', model: 'm' }, app: { flagConfidence: 0.75, flagCatchRate: 0.8, python: null } },
   criteria: [],
   claims,
@@ -65,6 +65,7 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   select: ({ id }) => calls.record(`select:${id}`),
   setMode: ({ mode }) => calls.record(`mode:${mode}`),
   setTheme: ({ choice }) => calls.record(`theme:${choice}`),
+  openBranchPr: () => calls.record('branch-pr'),
   showClaim: ({ id }) => calls.record(`show:${id}`),
   connectGithub: () => calls.record('github'),
   inspect: (id) => calls.record(`inspect:${id}`),
@@ -73,8 +74,8 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   useApproach: skipAction, copyPrompt: skipAction, copyImplement: skipAction, copyText: skipAction, acceptRisk: skipAction, openPr: skipAction, openPath: skipAction, connect: skipAction,
 });
 
-const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system' }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme'] }): BoardUi => ({
-  board, mode, selectedId, runs, ghOk, theme, running: false, drawer: { open: false, status: '', lines: [] },
+const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system', branchPr = null }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme']; branchPr?: BoardUi['branchPr'] }): BoardUi => ({
+  board, mode, selectedId, runs, ghOk, theme, branchPr, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = ({ ui, actions = makeActions() }: { ui: BoardUi; actions?: BoardActions }): string => {
@@ -423,4 +424,59 @@ test('the switch is there before any repo is open, and a click asks for that loo
     ([...document.querySelectorAll('.theme-switch button')].find((button) => button.textContent === label) as HTMLElement).click();
   }
   assert.deepEqual(calls.list(), ['theme:light', 'theme:dark', 'theme:system']);
+});
+
+// ---- the all-clear banner ---------------------------------------------------------------------------
+
+const readClearBoard = ({ repo = {} }: { repo?: Partial<Board['repo']> } = {}): Board => readBoard({ claims: [makeClaim({ over: { flags: [] } })], queue: [], repo: { origin: 'https://github.com/a/b.git', ...repo } });
+
+test('when nothing needs a decision, a banner congratulates and offers the pull request', () => {
+  const text = draw({ ui: makeUi({ board: readClearBoard(), ghOk: true }) });
+  assert.ok(text.includes('Nice work. Every claim is backed.'));
+  assert.ok(text.includes('Nothing on feature/x needs a decision now. 1 claim backed.'));
+  assert.ok(text.includes('a good sign, not a sign-off'), 'it does not claim the change is approved');
+  const button = [...document.querySelectorAll('.all-clear button')].find((candidate) => candidate.textContent === 'Open pull request') as HTMLElement;
+  assert.equal(button.hasAttribute('disabled'), false);
+});
+
+test('the banner is not shown while a claim still needs a decision, or when there are no claims', () => {
+  const flagged = readBoard({ claims: [makeClaim({ over: { flags: ['refuted'] } })], queue: ['c1'] });
+  assert.ok(!draw({ ui: makeUi({ board: flagged }) }).includes('Nice work'));
+  assert.ok(!draw({ ui: makeUi({ board: readBoard({ claims: [], queue: [] }) }) }).includes('Nice work'));
+});
+
+test('the pull request button asks for it, and says why it cannot when it cannot', () => {
+  const calls = createRecorder<string>();
+  draw({ ui: makeUi({ board: readClearBoard(), ghOk: true }), actions: makeActions({ calls }) });
+  ([...document.querySelectorAll('.all-clear button')].find((candidate) => candidate.textContent === 'Open pull request') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['branch-pr']);
+
+  const text = draw({ ui: makeUi({ board: readClearBoard({ repo: { isBranchPushed: false } }), ghOk: true }) });
+  assert.ok(text.includes('git push -u origin feature/x'));
+  const blocked = [...document.querySelectorAll('.all-clear button')].find((candidate) => candidate.textContent === 'Open pull request') as HTMLElement;
+  assert.equal(blocked.hasAttribute('disabled'), true);
+  assert.ok(![...document.querySelectorAll('.all-clear button')].some((candidate) => candidate.textContent === 'Connect GitHub'), 'signed in, so the only problem is the push');
+
+  draw({ ui: makeUi({ board: readClearBoard(), ghOk: false }) });
+  assert.ok([...document.querySelectorAll('.all-clear button')].some((candidate) => candidate.textContent === 'Connect GitHub'));
+});
+
+test('once the pull request is opened, the banner links to it instead of offering another', () => {
+  const calls = createRecorder<string>();
+  const actions = { ...makeActions({ calls }), openPath: (target: string) => calls.record(`path:${target}`) };
+  const text = draw({ ui: makeUi({ board: readClearBoard(), ghOk: true, branchPr: { branch: 'feature/x', url: 'https://github.com/a/b/pull/3' } }), actions });
+  assert.ok(!text.includes('Open pull request'));
+  ([...document.querySelectorAll('.all-clear button')].find((candidate) => candidate.textContent === 'View pull request') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['path:https://github.com/a/b/pull/3']);
+  const otherBranch = draw({ ui: makeUi({ board: readClearBoard(), ghOk: true, branchPr: { branch: 'feature/other', url: 'https://github.com/a/b/pull/4' } }) });
+  assert.ok(otherBranch.includes('Open pull request'), 'a pull request from a different branch does not count');
+});
+
+test('a claim settled by hand while still flagged is not called backed', () => {
+  const held = makeClaim({ over: { id: 'c2', flags: ['refuted'], status: 'accepted' } });
+  const board = readBoard({ claims: [makeClaim({ over: { flags: [] } }), held], queue: [], repo: { origin: 'https://github.com/a/b.git' } });
+  const text = draw({ ui: makeUi({ board, ghOk: true }) });
+  assert.ok(!text.includes('Every claim is backed'));
+  assert.ok(text.includes('Nothing is left to decide.'));
+  assert.ok(text.includes('1 claim backed, 1 settled by hand but still flagged.'));
 });

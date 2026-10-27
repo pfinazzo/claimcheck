@@ -147,6 +147,7 @@ const wire = (): DeskApi => {
   handle({ name: 'copyPrompt', callback: (payload: Parameters<typeof desk.copyPrompt>[0]) => desk.copyPrompt(payload) });
   handle({ name: 'runClaimcheck', callback: (payload: Parameters<typeof desk.runClaimcheck>[0]) => desk.runClaimcheck(payload) });
   handle({ name: 'openPullRequest', callback: (payload: Parameters<typeof desk.openPullRequest>[0]) => desk.openPullRequest(payload) });
+  handle({ name: 'openBranchPullRequest', callback: () => desk.openBranchPullRequest() });
   handle({ name: 'githubStatus', callback: () => desk.githubStatus() });
   handle({ name: 'githubSignIn', callback: () => desk.githubSignIn() });
   handle({ name: 'inspectFix', callback: (payload: Parameters<typeof desk.inspectFix>[0]) => desk.inspectFix(payload) });

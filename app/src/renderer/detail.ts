@@ -219,7 +219,7 @@ const renderNextSteps = (): HTMLElement =>
       makeElement({ tag: 'p', props: {}, children: ['Nothing on this claim needs a decision. You can leave it as it is.'] }),
       makeElement({ tag: 'ol', props: {}, children: [
         makeElement({ tag: 'li', props: {}, children: ['Look at the other claims in the list, and at the Confidence map. A red claim there still needs you.'] }),
-        makeElement({ tag: 'li', props: {}, children: ['When every claim is backed, your change is ready to merge.'] }),
+        makeElement({ tag: 'li', props: {}, children: ['When every claim is backed, claimcheck has nothing left to flag. Open a pull request and have a person read it.'] }),
         makeElement({ tag: 'li', props: {}, children: ['After your next commit, press Run claimcheck. It checks every claim again.'] }),
       ] }),
     ],

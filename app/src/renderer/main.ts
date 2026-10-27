@@ -11,10 +11,10 @@ import { toBridgeFailure } from '../shared/ipc.ts';
 import { DEFAULT_THEME_CHOICE } from '../shared/theme.ts';
 import type { Board, ConnectionSummary, ViewName } from '../shared/types.ts';
 import type { WizardState } from '../shared/wizard-state.ts';
-import { renderBoard, type BoardActions, type BoardUi } from './board.ts';
+import { isBoardClear, renderBoard, type BoardActions, type BoardUi } from './board.ts';
 import { showCodeDialog } from './code-dialog.ts';
 import { connectDialog, openDialog, showTrustDialog, type DialogHost } from './dialogs.ts';
-import { DEMO_FIX, buildDemoGraphBoard, buildDemoProposeRun, runDemoWizard } from './demo.ts';
+import { DEMO_FIX, buildDemoClearBoard, buildDemoGraphBoard, buildDemoProposeRun, runDemoWizard } from './demo.ts';
 import { makeElement, mount, type Child } from './dom.ts';
 import { showGithubDialog } from './github-dialog.ts';
 import { refreshConfidenceMapTheme, drawConfidenceMap } from './graph-view.ts';
@@ -37,9 +37,9 @@ darkScheme.addEventListener('change', (event) => {
   refreshConfidenceMapTheme();
 });
 
-const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, running: false, drawer: { open: false, status: '', lines: [] } };
+const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, branchPr: null, running: false, drawer: { open: false, status: '', lines: [] } };
 // What the page is showing right now, and its pending timers.
-const page: { view: ViewName; wizard: WizardState | null; connection: ConnectionSummary | null; wasSignalled: boolean; toastTimer: number; saveTimer: number; shownBefore: string; didDemoAction: boolean } = {
+const page: { view: ViewName; wizard: WizardState | null; connection: ConnectionSummary | null; wasSignalled: boolean; toastTimer: number; saveTimer: number; shownBefore: string; didDemoAction: boolean; clearRepo: string | null; needsBefore: number; celebratedAtMs: number } = {
   view: 'empty',
   wizard: null,
   connection: null,
@@ -48,6 +48,9 @@ const page: { view: ViewName; wizard: WizardState | null; connection: Connection
   saveTimer: 0,
   shownBefore: '',
   didDemoAction: false,
+  clearRepo: null,
+  needsBefore: 0,
+  celebratedAtMs: 0,
 };
 
 /** What to tell the person about a failure. The bridge rejects with a plain object, so an Error is not the only shape. */
@@ -93,6 +96,24 @@ const applyEntrance = (): void => {
   document.querySelector('.detail, .wizard')?.classList.add('is-entering');
 };
 
+/** How long the banner's celebration lasts, which is the longest animation in it. */
+const CELEBRATION_MS = 1200;
+
+/**
+ * Plays the banner's celebration for a moment after the last claim needing a decision is settled.
+ * Saving a decision makes the board refresh a second time, and each refresh draws the banner
+ * again. The animation is started part-way through by the time already spent, so a redraw does not
+ * restart it, and once the moment is over the banner is drawn still.
+ */
+const showCelebrationWhileFresh = (): void => {
+  const elapsedMs = Date.now() - page.celebratedAtMs;
+  if (page.celebratedAtMs === 0 || elapsedMs > CELEBRATION_MS) return;
+  const banner = document.querySelector<HTMLElement>('.all-clear');
+  if (!banner) return;
+  banner.style.setProperty('--elapsed', `${-elapsedMs}ms`);
+  banner.classList.add('is-celebrating');
+};
+
 const renderAll = (): void => {
   if (page.view === 'wizard' && page.wizard) {
     renderWizard({ context: wizardCtx, mountInto: app });
@@ -110,6 +131,7 @@ const renderAll = (): void => {
     if (graph) drawConfidenceMap({ ui, onSelect: (id) => select({ id }), reducedMotion: isReducedMotion });
   }
   applyEntrance();
+  showCelebrationWhileFresh();
   if (!page.wasSignalled && (ui.board || page.wizard)) {
     page.wasSignalled = true;
     requestAnimationFrame(() => desk.rendered());
@@ -188,6 +210,12 @@ const boardActions: BoardActions = {
     ui.mode = mode;
     renderAll();
   },
+  openBranchPr: () => runGuarded({ callback: async () => {
+    const { url, branch } = await desk.openBranchPullRequest();
+    ui.branchPr = { branch, url };
+    toast({ text: `Pull request opened: ${url}` });
+    renderAll();
+  } }),
   setTheme: ({ choice }) => runGuarded({ callback: async () => {
     ui.theme = await desk.setTheme({ choice });
     renderAll();
@@ -256,9 +284,20 @@ const runDemoAction = (): void => {
   window.setTimeout(action, 0);
 };
 
+/** The screenshot views that replace the real board with sample claims, and what builds each one. */
+const DEMO_BOARD_BUILDERS = new Map<string, (options: { board: Board }) => Board>([
+  ['board:graph', buildDemoGraphBoard],
+  ['board:clear', buildDemoClearBoard],
+]);
+
 const applyBoard = ({ board: fresh }: { board: Board }): void => {
   // `--view board:graph` adds sample claims, and every refresh of the board would otherwise remove them.
-  const board = demoParam === 'board:graph' ? buildDemoGraphBoard({ board: fresh }) : fresh;
+  const board = (DEMO_BOARD_BUILDERS.get(demoParam ?? '') ?? ((options: { board: Board }) => options.board))({ board: fresh });
+  const isSameRepo = page.clearRepo === board.repo.path;
+  const didJustClear = isSameRepo && page.needsBefore > 0 && isBoardClear({ board });
+  if (didJustClear) page.celebratedAtMs = Date.now();
+  page.clearRepo = board.repo.path;
+  page.needsBefore = board.queue.length;
   ui.board = board;
   page.connection = board.connection ?? page.connection;
   for (const run of (board.runs.fixes ?? []) as PublicRun[]) ui.runs.set(run.claimId, run);

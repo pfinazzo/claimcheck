@@ -132,6 +132,13 @@ export const buildDemoGraphBoard = ({ board }: { board: Board }): Board => {
   return { ...board, claims, queue };
 };
 
+/** A finished board for `--view board:clear`: the sample claims, all backed, on a pushed branch with a remote. */
+export const buildDemoClearBoard = ({ board }: { board: Board }): Board => {
+  const { flagConfidence, flagCatchRate } = board.config.app;
+  const claims = DEMO_CLAIMS.slice(0, 6).map((entry, index) => buildDemoClaim({ entry: { ...entry, confidence: Math.max(entry.confidence ?? 0, 0.9), catchRate: 1, verdict: 'SUPPORTED', status: 'open' }, index, flagConfidence, flagCatchRate }));
+  return { ...board, claims, queue: [], repo: { ...board.repo, branch: 'feature/checkout-fees', origin: 'https://github.com/dana/checkout-service.git', isBranchPushed: true } };
+};
+
 /** Canned proposals for `--view board:propose`, with the recommended one first as the real parser orders them. */
 export const buildDemoProposeRun = ({ claimId }: { claimId: string }): PublicRun => ({
   id: 'demo-propose',

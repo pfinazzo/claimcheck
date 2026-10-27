@@ -109,6 +109,8 @@ export type RepoInfo = {
   lockOk: boolean;
   specState: 'none' | 'draft' | 'frozen' | 'drifted';
   lastRunTs: string | null;
+  /** The current commit is already on origin under this branch's name, so a pull request can be opened from it. */
+  isBranchPushed: boolean;
 };
 
 export type CheckRun = {

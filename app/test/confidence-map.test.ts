@@ -23,7 +23,7 @@ const makeClaim = ({ id, over = {} }: { id: string; over?: Partial<Claim> }): Cl
 });
 
 const makeBoard = ({ claims, queue = [] }: { claims: readonly Claim[]; queue?: readonly string[] }): Board => ({
-  repo: { name: 'r', path: '/r', origin: null, branch: 'main', head: 'abc', hasClaimcheck: true, lockOk: true, specState: 'frozen', lastRunTs: null },
+  repo: { name: 'r', path: '/r', origin: null, branch: 'main', head: 'abc', hasClaimcheck: true, lockOk: true, specState: 'frozen', lastRunTs: null, isBranchPushed: false },
   config: { base: 'main', test_cmd: 't', ignore: [], checker: { provider: 'auto', model: 'm' }, app: { flagConfidence: 0.75, flagCatchRate: 0.8, python: null } },
   criteria: [], claims, queue, runs: { check: null, mutate: null }, ledgerCount: 0,
 });
