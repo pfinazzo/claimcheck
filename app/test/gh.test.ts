@@ -82,7 +82,7 @@ test('a Python without claimcheck is passed over, and when none has it the answe
 
 test('the order is: set path, claimcheck on PATH, [app].python, then the probes', async () => {
   const calls = createRecorder<string>();
-  const onPath = await resolveClaimcheck({ execFn: (file, argList) => (file === 'where' ? Promise.resolve({ stdout: 'C:\\bin\\claimcheck.exe\n' }) : makeProbeExec({ works: ['python'], calls })(file, argList)) });
+  const onPath = await resolveClaimcheck({ execFn: (file, argList) => (file === 'where' || file === 'which' ? Promise.resolve({ stdout: 'C:\\bin\\claimcheck.exe\n' }) : makeProbeExec({ works: ['python'], calls })(file, argList)) });
   assert.equal(onPath?.command, 'C:\\bin\\claimcheck.exe');
   const configured = await resolveClaimcheck({ python: 'C:\\py\\python.exe', execFn: makeProbeExec({ works: ['python'], calls }) });
   assert.equal(configured?.command, 'C:\\py\\python.exe');
