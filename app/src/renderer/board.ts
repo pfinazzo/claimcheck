@@ -7,6 +7,7 @@
 
 import type { PublicRun } from '../lib/fixer.ts';
 import { findPullRequestBlocker } from '../shared/pull-request.ts';
+import { THEME_CHOICES, THEME_HINTS, THEME_LABELS, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, Claim } from '../shared/types.ts';
 import { renderDetail, type DetailActions } from './detail.ts';
 import { makeElement, type Child } from './dom.ts';
@@ -22,6 +23,8 @@ export type BoardUi = {
   selectedId: string | null;
   runs: Map<string, PublicRun>;
   ghOk: boolean;
+  /** The look the person picked: light, dark, or follow the computer. */
+  theme: ThemeChoice;
   running: boolean;
   drawer: { open: boolean; status: string; lines: readonly string[] };
 };
@@ -29,6 +32,7 @@ export type BoardUi = {
 export type BoardActions = DetailActions & {
   select: (options: { id: string | null }) => void;
   setMode: (options: { mode: BoardMode }) => void;
+  setTheme: (options: { choice: ThemeChoice }) => void;
   /** Opens one claim in the list view. */
   showClaim: (options: { id: string }) => void;
   openRepo: () => void;
@@ -57,6 +61,20 @@ const WEAK_RATIO = 0.8;
 
 const renderButton = ({ label, onClick, cls = '', disabled = false }: { label: string; onClick: () => void; cls?: string; disabled?: boolean }): HTMLButtonElement =>
   makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, children: [label] });
+
+/** Light, Dark and Auto side by side, always visible in the top bar, one click each. */
+const renderThemeSwitch = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement =>
+  makeElement({
+    tag: 'div',
+    props: { class: 'tabs theme-switch', attrs: { role: 'group', 'aria-label': 'Colour theme' } },
+    children: THEME_CHOICES.map((choice) =>
+      makeElement({
+        tag: 'button',
+        props: { class: `tab${ui.theme === choice ? ' active' : ''}`, attrs: { type: 'button', 'aria-pressed': ui.theme === choice, title: THEME_HINTS.get(choice) ?? null }, on: { click: () => actions.setTheme({ choice }) } },
+        children: [THEME_LABELS.get(choice) ?? choice],
+      }),
+    ),
+  });
 
 const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HTMLElement => {
   const board = ui.board;
@@ -95,6 +113,7 @@ const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): 
           renderButton({ label: 'Connect GitHub', onClick: actions.connectGithub }),
           board ? renderButton({ label: ui.running ? 'Running…' : 'Run claimcheck', onClick: actions.runClaimcheck, cls: 'primary', disabled: ui.running }) : null,
           renderButton({ label: 'Open repo', onClick: actions.openRepo }),
+          renderThemeSwitch({ ui, actions }),
         ],
       }),
     ],

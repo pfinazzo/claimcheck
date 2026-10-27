@@ -404,6 +404,7 @@ textarea { resize: vertical; }
 .tab.active { color: var(--text); background: var(--glass-hover); box-shadow: var(--shadow); }
 /* Confidence map */
 .mode-tabs { margin: var(--space-3) var(--space-4) 0; }
+.theme-switch { margin: 0; }
 .graph-view { flex: 1; min-height: 0; overflow: auto; margin: var(--space-3) var(--space-4) var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
 .graph-top { display: grid; grid-template-columns: minmax(0, 1fr) var(--size-340); gap: var(--space-3); align-items: start; }
 .map-column { padding: var(--space-4) var(--space-5); }

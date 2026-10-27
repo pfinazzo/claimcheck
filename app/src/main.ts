@@ -21,6 +21,7 @@ import { resolveAppRoot } from './lib/paths.ts';
 import { toPlainMessage } from './lib/plain-error.ts';
 import { parseScreenshotArgs } from './lib/screenshot-args.ts';
 import type { InvokeChannel, Reply } from './shared/ipc.ts';
+import type { ThemeChoice } from './shared/theme.ts';
 
 const argv = process.argv.slice(1);
 const screenshot = parseScreenshotArgs({ argList: argv });
@@ -58,7 +59,7 @@ const createWindow = (): BrowserWindow => {
     minWidth: 720,
     minHeight: 520,
     title: 'claimcheck Desk',
-    backgroundColor: nativeTheme.shouldUseDarkColors ? '#070912' : '#f3f5fb',
+    backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUNDS.dark : WINDOW_BACKGROUNDS.light,
     show: !screenshot,
     autoHideMenuBar: true,
     useContentSize: true,
@@ -87,6 +88,19 @@ const extractErrorFields = ({ error }: { error: unknown }): { message: string; c
     code: typeof fields?.code === 'string' ? fields.code : null,
     details: fields?.details ?? null,
   };
+};
+
+const WINDOW_BACKGROUNDS = { dark: '#070912', light: '#f3f5fb' };
+
+/**
+ * Makes the whole window take the chosen look. Setting the native theme also flips the page's
+ * light-or-dark media query, so the style sheet, the backdrop and the 3D map all follow it.
+ * The window's own colour is changed too, so there is no flash of the other look while it repaints.
+ */
+const applyTheme = ({ choice }: { choice: ThemeChoice }): ThemeChoice => {
+  nativeTheme.themeSource = choice;
+  session.win?.setBackgroundColor(nativeTheme.shouldUseDarkColors ? WINDOW_BACKGROUNDS.dark : WINDOW_BACKGROUNDS.light);
+  return choice;
 };
 
 const wire = (): DeskApi => {
@@ -121,6 +135,8 @@ const wire = (): DeskApi => {
   };
   handle({ name: 'openRepo', callback: ({ path: repoPath }: { path?: string | null }) => desk.openRepo({ given: repoPath }) });
   handle({ name: 'recents', callback: () => desk.recents() });
+  handle({ name: 'getTheme', callback: () => desk.getTheme() });
+  handle({ name: 'setTheme', callback: async (payload: Parameters<typeof desk.setTheme>[0]) => applyTheme({ choice: await desk.setTheme(payload) }) });
   handle({ name: 'getBoard', callback: () => desk.getBoard() });
   handle({ name: 'getView', callback: () => desk.getView() });
   handle({ name: 'connect', callback: (payload: Parameters<typeof desk.connect>[0]) => desk.connect(payload) });
@@ -195,9 +211,10 @@ const openLastRepo = async ({ desk }: { desk: DeskApi }): Promise<void> => {
 
 const start = async (): Promise<void> => {
   await app.whenReady();
-  if (screenshot?.theme) nativeTheme.themeSource = screenshot.theme;
   const desk = wire();
   session.api = desk;
+  applyTheme({ choice: await desk.getTheme() });
+  if (screenshot?.theme) nativeTheme.themeSource = screenshot.theme;
   session.win = createWindow();
   if (!screenshot) {
     session.win.webContents.once('did-finish-load', () => void openLastRepo({ desk }));

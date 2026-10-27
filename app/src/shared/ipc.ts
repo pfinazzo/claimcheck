@@ -27,6 +27,8 @@ export type RunUpdate =
 export type DeskBridge = {
   openRepo: (payload?: { path?: string | null }) => Out<'openRepo'>;
   recents: () => Out<'recents'>;
+  getTheme: () => Out<'getTheme'>;
+  setTheme: (payload: In<'setTheme'>) => Out<'setTheme'>;
   getBoard: () => Out<'getBoard'>;
   githubStatus: () => Out<'githubStatus'>;
   githubSignIn: () => Out<'githubSignIn'>;
@@ -64,7 +66,7 @@ export type DeskBridge = {
 
 /** The names of the calls that go through ipcMain.handle, in the order the bridge lists them. */
 export const INVOKE_CHANNELS = [
-  'openRepo', 'recents', 'getBoard', 'getView', 'connect', 'testConnection', 'startPropose', 'startImplement', 'acceptRisk', 'copyPrompt',
+  'openRepo', 'recents', 'getTheme', 'setTheme', 'getBoard', 'getView', 'connect', 'testConnection', 'startPropose', 'startImplement', 'acceptRisk', 'copyPrompt',
   'runClaimcheck', 'openPullRequest', 'githubStatus', 'githubSignIn', 'inspectFix', 'openPath', 'trustRepo', 'getRun', 'ghReady', 'wizardLoad', 'wizardSave', 'wizardStart', 'wizardStatus',
   'wizardInit', 'wizardSaveTestCmd', 'wizardDraft', 'wizardFinish', 'wizardCancel', 'wizardSpec', 'wizardExit',
 ] as const;
