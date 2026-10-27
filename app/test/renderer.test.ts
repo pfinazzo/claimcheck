@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
 import type { PublicRun } from '../src/lib/fixer.ts';
+import type { PullRequestDetail, PullRequestSummary } from '../src/shared/github.ts';
+import type { GithubDetailLoad } from '../src/renderer/github-view.ts';
 import type { Board, Claim } from '../src/shared/types.ts';
 import { renderBoard, type BoardActions, type BoardUi } from '../src/renderer/board.ts';
 import { runDemoWizard } from '../src/renderer/demo.ts';
@@ -66,6 +68,10 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   setMode: ({ mode }) => calls.record(`mode:${mode}`),
   setTheme: ({ choice }) => calls.record(`theme:${choice}`),
   openBranchPr: () => calls.record('branch-pr'),
+  refreshGithub: () => calls.record('refresh'),
+  selectPull: ({ number }) => calls.record(`pull:${number}`),
+  selectIssue: ({ number }) => calls.record(`issue:${number}`),
+  setGithubFilter: ({ filter }) => calls.record(`filter:${filter}`),
   showClaim: ({ id }) => calls.record(`show:${id}`),
   connectGithub: () => calls.record('github'),
   inspect: (id) => calls.record(`inspect:${id}`),
@@ -74,8 +80,8 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   useApproach: skipAction, copyPrompt: skipAction, copyImplement: skipAction, copyText: skipAction, acceptRisk: skipAction, openPr: skipAction, openPath: skipAction, connect: skipAction,
 });
 
-const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system', branchPr = null }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme']; branchPr?: BoardUi['branchPr'] }): BoardUi => ({
-  board, mode, selectedId, runs, ghOk, theme, branchPr, running: false, drawer: { open: false, status: '', lines: [] },
+const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system', branchPr = null, github = {} }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme']; branchPr?: BoardUi['branchPr']; github?: Partial<BoardUi> }): BoardUi => ({
+  board, mode, selectedId, runs, ghOk, theme, branchPr, pulls: { state: 'idle' }, issues: { state: 'idle' }, githubFilter: 'all', selectedPull: null, selectedIssue: null, details: new Map(), ...github, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = ({ ui, actions = makeActions() }: { ui: BoardUi; actions?: BoardActions }): string => {
@@ -202,7 +208,7 @@ test('pressed and selected states are the words true and false, which is what sc
   const board = readBoard({ claims: [makeClaim(), makeClaim({ over: { id: 'c2' } })], queue: ['c1'] });
   draw({ ui: makeUi({ board, selectedId: 'c1' }) });
   const tabs = [...document.querySelectorAll('[role="tab"]')];
-  assert.deepEqual(tabs.map((tab) => tab.getAttribute('aria-selected')), ['true', 'false']);
+  assert.deepEqual(tabs.map((tab) => tab.getAttribute('aria-selected')), ['true', 'false', 'false', 'false']);
   const rows = [...document.querySelectorAll('.claim-row')];
   assert.deepEqual(rows.map((row) => row.getAttribute('aria-pressed')), rows.map((row) => (row.getAttribute('data-claim') === 'c1' ? 'true' : 'false')));
 });
@@ -220,7 +226,7 @@ test('the board offers a Claims tab and a Confidence map tab, and pressing one a
   const calls = createRecorder<string>();
   draw({ ui: makeUi({ board: makeMixedBoard(), selectedId: 'c1' }), actions: makeActions({ calls }) });
   const tabs = [...document.querySelectorAll('[role="tab"]')];
-  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Claims', 'Confidence map']);
+  assert.deepEqual(tabs.map((tab) => tab.textContent), ['Claims', 'Confidence map', 'Pull requests', 'Issues']);
   assert.equal(tabs[0]?.getAttribute('aria-selected'), 'true');
   (tabs[1] as HTMLElement).click();
   assert.deepEqual(calls.list(), ['mode:graph']);
@@ -479,4 +485,95 @@ test('a claim settled by hand while still flagged is not called backed', () => {
   assert.ok(!text.includes('Every claim is backed'));
   assert.ok(text.includes('Nothing is left to decide.'));
   assert.ok(text.includes('1 claim backed, 1 settled by hand but still flagged.'));
+});
+
+// ---- the pull request and issue tabs ----------------------------------------------------------------------------------------
+
+const buildPull = ({ number, over = {} }: { number: number; over?: Partial<PullRequestSummary> }): PullRequestSummary => ({
+  number, title: `Change ${number}`, url: `https://github.com/a/b/pull/${number}`, author: 'dana', isBot: false, isDraft: false, headBranch: `feature/${number}`, baseBranch: 'main', headSha: 'abc', isFromFork: false,
+  createdAtIso: '2026-10-20T00:00:00Z', updatedAtIso: '2026-10-26T00:00:00Z', additions: 10, deletions: 2, changedFiles: 3, labels: [], review: 'review-required',
+  checks: { state: 'passing', passing: 4, failing: 0, pending: 0, failingNames: [] }, merge: 'clean', linkedIssues: [], isMine: false, isReviewRequested: false, ...over,
+});
+
+const buildPullDetail = ({ number, over = {} }: { number: number; over?: Partial<PullRequestDetail> }): PullRequestDetail => ({
+  ...buildPull({ number }), body: 'Moves the fee rules.', files: [{ path: 'src/fees.py', additions: 8, deletions: 1 }], reviews: [{ author: 'lee', state: 'approved' }], commitCount: 2, commentCount: 0, carriesClaims: false, ...over,
+});
+
+const readyPulls = ({ items }: { items: readonly PullRequestSummary[] }): BoardUi['pulls'] => ({ state: 'ready', items, viewer: 'dana' });
+
+const drawGithub = ({ github, actions = makeActions(), mode = 'pulls' }: { github: Partial<BoardUi>; actions?: BoardActions; mode?: BoardUi['mode'] }): string =>
+  draw({ ui: makeUi({ board: readBoard({ claims: [], queue: [] }), mode, ghOk: true, github }), actions });
+
+test('the board always offers all four tabs, with the open counts once the lists are in', () => {
+  drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 1 }), buildPull({ number: 2 })] }) }, mode: 'list' });
+  const tabs = [...document.querySelectorAll('.mode-tabs .tab')].map((tab) => tab.textContent);
+  assert.deepEqual(tabs, ['Claims', 'Confidence map', 'Pull requests (2)', 'Issues']);
+});
+
+test('the pull request list shows who, which branches, and where the checks and review stand', () => {
+  const failing = buildPull({ number: 7, over: { isDraft: true, isReviewRequested: true, merge: 'conflicting', review: 'changes-requested', checks: { state: 'failing', passing: 3, failing: 2, pending: 0, failingNames: ['Lint'] } } });
+  const text = drawGithub({ github: { pulls: readyPulls({ items: [failing, buildPull({ number: 8 })] }) } });
+  for (const must of ['#7 Change 7', 'dana · feature/7 → main', 'Draft', 'Review requested', '2 failing', 'Changes requested', 'Conflicts', '#8 Change 8', 'Checks passing', 'Review needed']) {
+    assert.ok(text.includes(must), must);
+  }
+});
+
+test('the filters narrow the pull request list, and each says so when nothing matches', () => {
+  const pulls = readyPulls({ items: [buildPull({ number: 1, over: { isMine: true } }), buildPull({ number: 2, over: { isReviewRequested: true } }), buildPull({ number: 3 })] });
+  const rows = (): string[] => [...document.querySelectorAll('.gh-rows .claim-row')].map((row) => row.getAttribute('data-pull') ?? '');
+  drawGithub({ github: { pulls } });
+  assert.deepEqual(rows(), ['1', '2', '3']);
+  drawGithub({ github: { pulls, githubFilter: 'mine' } });
+  assert.deepEqual(rows(), ['1']);
+  drawGithub({ github: { pulls, githubFilter: 'review' } });
+  assert.deepEqual(rows(), ['2']);
+  assert.ok(drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 3 })] }), githubFilter: 'review' } }).includes('Nothing is waiting on your review.'));
+});
+
+test('clicking a pull request, a filter and Refresh call the page', () => {
+  const calls = createRecorder<string>();
+  drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 4 })] }) }, actions: makeActions({ calls }) });
+  (document.querySelector('.gh-rows .claim-row') as HTMLElement).click();
+  ([...document.querySelectorAll('.gh-toolbar button')].find((button) => button.textContent === 'Mine') as HTMLElement).click();
+  ([...document.querySelectorAll('.gh-toolbar button')].find((button) => button.textContent === 'Refresh') as HTMLElement).click();
+  assert.deepEqual(calls.list(), ['pull:4', 'filter:mine', 'refresh']);
+});
+
+test('while it loads, when it fails, and when it is signed out, the list says so and offers the next step', () => {
+  assert.ok(drawGithub({ github: { pulls: { state: 'loading' } } }).includes('Loading pull requests'));
+  const calls = createRecorder<string>();
+  const failed = draw({ ui: makeUi({ board: readBoard({ claims: [], queue: [] }), mode: 'pulls', ghOk: false, github: { pulls: { state: 'failed', message: 'The GitHub CLI is not signed in. Press Connect GitHub.' } } }), actions: makeActions({ calls }) });
+  assert.ok(failed.includes('The GitHub CLI is not signed in.'));
+  assert.ok([...document.querySelectorAll('.gh-state button')].some((button) => button.textContent === 'Try again'));
+  assert.ok([...document.querySelectorAll('.gh-state button')].some((button) => button.textContent === 'Connect GitHub'));
+});
+
+test('an opened pull request shows its checks, review, files, linked issues and a formatted description', () => {
+  const hostile = '<img src=x onerror=alert(1)>';
+  const detail = buildPullDetail({ number: 5, over: { body: `**Moves** the fee rules ${hostile}`, review: 'approved', linkedIssues: [{ number: 7, title: 'Slow checkout', url: 'https://github.com/a/b/issues/7' }], carriesClaims: true, labels: ['bug'] } });
+  const text = drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 5 })] }), selectedPull: 5, details: new Map([['pull:5', { state: 'pull', value: detail }]]) } });
+  for (const must of ['Checks', 'passing', 'Approved', 'lee approved', 'Can merge', '#7 Slow checkout', 'src/fees.py', 'Files changed (1)', 'carries its own claims file', 'bug']) {
+    assert.ok(text.includes(must), must);
+  }
+  assert.ok(text.includes('[image]'), 'a picture tag is named, not built');
+  assert.equal(document.querySelector('.gh-body img'), null, 'and never turned into an element');
+  assert.equal(document.querySelector('.gh-body strong')?.textContent, 'Moves', 'the Markdown is formatted, not shown with its stars');
+});
+
+test('a very long description is cut, and says where the rest is', () => {
+  const detail = buildPullDetail({ number: 5, over: { body: 'x'.repeat(20000) } });
+  drawGithub({ github: { pulls: readyPulls({ items: [buildPull({ number: 5 })] }), selectedPull: 5, details: new Map([['pull:5', { state: 'pull', value: detail }]]) } });
+  const shown = document.querySelector('.gh-body')?.textContent ?? '';
+  assert.ok(shown.length < 6200);
+  assert.ok(shown.endsWith('the rest is on GitHub.'));
+});
+
+test('the issues tab lists issues, and opened ones show their labels and who is assigned', () => {
+  const issue = { number: 12, title: 'Checkout is slow', url: 'https://github.com/a/b/issues/12', author: 'lee', isOpen: true, labels: ['bug', 'perf'], assignees: ['dana'], commentCount: 3, createdAtIso: '2026-10-01T00:00:00Z', updatedAtIso: '2026-10-26T00:00:00Z', isMine: true };
+  const details = new Map<string, GithubDetailLoad>([['issue:12', { state: 'issue', value: { ...issue, body: 'It takes ten seconds.' } }]]);
+  const text = drawGithub({ mode: 'issues', github: { issues: { state: 'ready', items: [issue], viewer: 'dana' }, selectedIssue: 12, details } });
+  for (const must of ['#12 Checkout is slow', 'lee', '3 comments', 'Yours', 'bug', 'perf', 'Assigned to dana.', 'It takes ten seconds.', 'View on GitHub']) {
+    assert.ok(text.includes(must), must);
+  }
+  assert.ok(!text.includes('Needs my review'), 'issues have no review filter');
 });

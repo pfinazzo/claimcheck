@@ -148,6 +148,10 @@ const wire = (): DeskApi => {
   handle({ name: 'runClaimcheck', callback: (payload: Parameters<typeof desk.runClaimcheck>[0]) => desk.runClaimcheck(payload) });
   handle({ name: 'openPullRequest', callback: (payload: Parameters<typeof desk.openPullRequest>[0]) => desk.openPullRequest(payload) });
   handle({ name: 'openBranchPullRequest', callback: () => desk.openBranchPullRequest() });
+  handle({ name: 'listPullRequests', callback: () => desk.listPullRequests() });
+  handle({ name: 'listIssues', callback: () => desk.listIssues() });
+  handle({ name: 'getPullRequest', callback: (payload: Parameters<typeof desk.getPullRequest>[0]) => desk.getPullRequest(payload) });
+  handle({ name: 'getIssue', callback: (payload: Parameters<typeof desk.getIssue>[0]) => desk.getIssue(payload) });
   handle({ name: 'githubStatus', callback: () => desk.githubStatus() });
   handle({ name: 'githubSignIn', callback: () => desk.githubSignIn() });
   handle({ name: 'inspectFix', callback: (payload: Parameters<typeof desk.inspectFix>[0]) => desk.inspectFix(payload) });

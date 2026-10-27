@@ -26,6 +26,7 @@
   ],
   "exclude": [
     "src/renderer/**",
-    "test/renderer.test.ts"
+    "test/renderer.test.ts",
+    "test/markdown.test.ts"
   ]
 }

@@ -5,6 +5,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 ## [Unreleased]
 
 ### Added
+- **Pull requests** and **Issues** tabs in Desk, read through the GitHub CLI for whichever repo is open. Each pull request shows who wrote it, its branches, size, whether the checks pass, its review state, whether it can merge, the issues it closes, and which are yours or waiting on your review. Opening one shows its files and its description, drawn as formatted Markdown with tables, task lists and code. The description is built from known parts only: HTML in it is dropped, pictures are named and never loaded, and only web links are kept. Works for any repo with a GitHub remote, whether or not it uses claimcheck yet.
 - An **all-clear banner** in Desk. When no claim needs a decision, the board shows a short celebration and an **Open pull request** button that opens a pull request from the branch you are on into the base branch. The description lists every claim with its three figures. A claim settled by hand while still flagged is called that, not "backed". The button explains itself when it cannot work: no remote, not signed in, on the base branch, or the branch not on GitHub yet. Desk never pushes for you.
 - A **Light / Dark / Auto** switch at the right end of Desk's top bar. It changes the whole window at once, including the backdrop and the 3D map, and Desk opens with the look you last picked. Auto follows the computer, as before.
 - A **Confidence map** tab in Desk: a 3D chart, drawn with Three.js, of every claim placed by its stated confidence, the share of planted bugs the tests caught, and the independent checker's verdict. Three red sheets mark the flag lines, a green box marks the backed region, and you can orbit, zoom and pan it. A table of all claims, flagged and backed, sits beside it. The README has a plain-English guide to reading it.
@@ -14,6 +15,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 - `npm run screenshot` views that open each dialog or tab with sample data: `board:trust`, `board:github`, `board:code`, `board:open`, `board:propose` and `board:graph`.
 
 ### Changed
+- The whole Desk page scrolls now, so the list and the opened item beside it get real height instead of what was left under the summary and banner. The summary strip and the all-clear banner show on the Claims and Confidence map tabs only.
 - Desk has a new look: glass panels over a Three.js backdrop (a wireframe grid rolling toward a lit horizon under a field of light), a stat strip, confidence bars on the claim list, evidence tiles on the detail, and a numbered step rail in the setup wizard. Light and dark follow the system, reduced motion draws one still frame, and a machine without WebGL gets the panels alone. The other screenshots in the README still show the previous look.
 - Open repo takes a pasted folder path as well as the folder picker, and shows each recent repo as its name over its path.
 
