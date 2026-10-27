@@ -9,12 +9,13 @@ import { mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { DEFAULT_MODEL, createKeyStore, propose, proposeWithStore, testConnection, type ApiClient } from '../src/lib/claude-api.ts';
+import { DEFAULT_MODEL, createKeyStore, requestProposals, requestProposalsWithStore, testConnection, type ApiClient } from '../src/lib/claude-api.ts';
+import { createRecorder } from './helpers.ts';
 
 const fakeSafeStorage = {
   isEncryptionAvailable: () => true,
-  encryptString: (s: string) => Buffer.from(Buffer.from(s, 'utf8').map((b) => b ^ 0x5a)),
-  decryptString: (buf: Buffer) => Buffer.from(buf.map((b) => b ^ 0x5a)).toString('utf8'),
+  encryptString: (text: string) => Buffer.from(Buffer.from(text, 'utf8').map((byte) => byte ^ 0x5a)),
+  decryptString: (buffer: Buffer) => Buffer.from(buffer.map((byte) => byte ^ 0x5a)).toString('utf8'),
 };
 
 test('AC 15: saved key is encrypted on disk, last4 only in meta, clear removes both', () => {
@@ -24,10 +25,10 @@ test('AC 15: saved key is encrypted on disk, last4 only in meta, clear removes b
   const key = 'sk-ant-api03-FAKEKEY-abcd';
   store.saveKey(key);
   assert.equal(store.hasKey(), true);
-  for (const f of readdirSync(dir)) {
-    const bytes = readFileSync(path.join(dir, f));
-    assert.ok(!bytes.includes(Buffer.from(key)), `${f} must not contain the key`);
-    assert.ok(!bytes.includes(Buffer.from('FAKEKEY')), `${f} must not contain the key body`);
+  for (const text of readdirSync(dir)) {
+    const bytes = readFileSync(path.join(dir, text));
+    assert.ok(!bytes.includes(Buffer.from(key)), `${text} must not contain the key`);
+    assert.ok(!bytes.includes(Buffer.from('FAKEKEY')), `${text} must not contain the key body`);
   }
   assert.equal(store.last4(), 'abcd');
   assert.equal(store.loadKey(), key);
@@ -37,19 +38,20 @@ test('AC 15: saved key is encrypted on disk, last4 only in meta, clear removes b
 });
 
 test('AC 15: propose calls messages.create with structured output and returns the text block', async () => {
-  const calls: Array<Record<string, unknown>> = [];
-  const client = {
+  const calls = createRecorder<Record<string, unknown>>();
+  const client: ApiClient = {
     messages: {
-      create: async (req: Record<string, unknown>) => {
-        calls.push(req);
-        return { stop_reason: 'end_turn', content: [{ type: 'text', text: '{"proposals":[]}' }] };
+      create: (req) => {
+        calls.record(req);
+        return Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"proposals":[]}' }] });
       },
     },
+    models: { list: () => Promise.resolve({ 'data': [] }) },
   };
   const schema = { type: 'object' };
-  const text = await propose({ system: 'SYS', user: 'USER', schema, client: client as unknown as ApiClient });
+  const text = await requestProposals({ system: 'SYS', user: 'USER', schema, client });
   assert.equal(text, '{"proposals":[]}');
-  const req = calls[0] ?? {};
+  const req = calls.list()[0] ?? {};
   assert.equal(req.model, DEFAULT_MODEL);
   assert.equal(req.max_tokens, 16000);
   assert.equal(req.system, 'SYS');
@@ -59,25 +61,28 @@ test('AC 15: propose calls messages.create with structured output and returns th
 });
 
 test('propose surfaces a refusal as an error', async () => {
-  const client = { messages: { create: async () => ({ stop_reason: 'refusal', stop_details: { explanation: 'nope' }, content: [] }) } };
-  await assert.rejects(propose({ system: 's', user: 'u', schema: {}, client: client as unknown as ApiClient }), /declined: nope/);
+  const client: ApiClient = {
+    messages: { create: () => Promise.resolve({ stop_reason: 'refusal', stop_details: { explanation: 'nope' }, content: [] }) },
+    models: { list: () => Promise.resolve({ 'data': [] }) },
+  };
+  await assert.rejects(requestProposals({ system: 's', user: 'u', schema: {}, client }), /declined: nope/);
 });
 
-test('testConnection and proposeWithStore go through the store and a client factory', async () => {
+test('testConnection and requestProposalsWithStore go through the store and a client factory', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'desk-keys-'));
   const store = createKeyStore({ safeStorage: fakeSafeStorage, dir });
   assert.deepEqual(await testConnection({ store }), { ok: false, error: 'No API key saved.' });
   store.saveKey('sk-test-1234');
-  const seenKeys: string[] = [];
-  const clientFactory = async (key: string): Promise<ApiClient> => {
-    seenKeys.push(key);
-    return {
-      models: { list: async () => ({ data: [{ id: 'claude-opus-5-5' }] }) },
-      messages: { create: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"ok":1}' }] }) },
-    } as unknown as ApiClient;
+  const seenKeys = createRecorder<string>();
+  const clientFactory = ({ key }: { key: string }): Promise<ApiClient> => {
+    seenKeys.record(key);
+    return Promise.resolve({
+      models: { list: () => Promise.resolve({ 'data': [{ id: 'claude-opus-5-5' }] }) },
+      messages: { create: () => Promise.resolve({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"ok":1}' }] }) },
+    });
   };
-  const res = await testConnection({ store, clientFactory });
-  assert.deepEqual(res, { ok: true, models: ['claude-opus-5-5'], last4: '1234' });
-  assert.equal(await proposeWithStore({ store, system: 's', user: 'u', schema: {}, clientFactory }), '{"ok":1}');
-  assert.deepEqual(seenKeys, ['sk-test-1234', 'sk-test-1234']);
+  const response = await testConnection({ store, clientFactory: ({ apiKey }) => clientFactory({ key: apiKey }) });
+  assert.deepEqual(response, { ok: true, models: ['claude-opus-5-5'], last4: '1234' });
+  assert.equal(await requestProposalsWithStore({ store, system: 's', user: 'u', schema: {}, clientFactory: ({ apiKey }) => clientFactory({ key: apiKey }) }), '{"ok":1}');
+  assert.deepEqual(seenKeys.list(), ['sk-test-1234', 'sk-test-1234']);
 });

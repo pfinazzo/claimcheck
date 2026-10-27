@@ -4,12 +4,14 @@ Standard library only. Everything degrades on its own: with no terminal, NO_COLO
 set, animations are replaced by their final frame and colors by plain text, so scripts and logs stay
 clean. Output, input and sleep are injectable so the whole thing can be tested without a console.
 
+
 @author Patrick Finazzo
 """
 
 from __future__ import annotations
 
 import atexit
+import ctypes
 import itertools
 import os
 import random
@@ -18,8 +20,9 @@ import shutil
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Callable, Iterator
+from typing import TextIO, TypedDict
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 CSI = "\x1b["
@@ -43,27 +46,41 @@ GLYPHS_ASCII = {
 
 
 def strip_ansi(s: str) -> str:
+    """The text without color and cursor escape codes, for measuring its width."""
     return ANSI.sub("", s)
 
 
-def enable_windows_vt() -> None:
+def _set_vt_mode(kernel, *, std: int) -> None:
+    """Add ENABLE_VIRTUAL_TERMINAL_PROCESSING to one standard handle's console mode, if it has one."""
+    handle = kernel.GetStdHandle(std)
+    mode = ctypes.c_uint32()
+    if kernel.GetConsoleMode(handle, ctypes.byref(mode)):
+        kernel.SetConsoleMode(handle, mode.value | 0x0004)
+
+
+def set_windows_vt() -> None:
     """Turn on ANSI escape handling in the classic Windows console. Harmless elsewhere."""
     if os.name != "nt":
         return
     try:
-        import ctypes
-
-        k = ctypes.windll.kernel32  # type: ignore[attr-defined]
-        for std in (-11, -12):  # stdout, stderr
-            h = k.GetStdHandle(std)
-            mode = ctypes.c_uint32()
-            if k.GetConsoleMode(h, ctypes.byref(mode)):
-                k.SetConsoleMode(h, mode.value | 0x0004)
-    except Exception:
-        pass
+        kernel = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        # -11 is stdout, -12 is stderr.
+        for std in (-11, -12):
+            _set_vt_mode(kernel, std=std)
+    except (AttributeError, OSError):
+        # An old console without these calls keeps its default mode. The text still prints;
+        # only the colors show up as escape codes.
+        return
 
 
-def detect(stream=None, env: dict | None = None) -> dict:
+def _pick_bar_color(frac: float) -> str:
+    """Green from 70% up, yellow from 40%, red below."""
+    if frac >= 0.7:
+        return "green"
+    return "yellow" if frac >= 0.4 else "red"
+
+
+def detect(stream=None, *, env: Mapping[str, str] | None = None) -> dict:
     """Which features this terminal gets: {"tty", "color", "animate", "unicode"}."""
     stream = stream if stream is not None else sys.stdout
     env = env if env is not None else os.environ
@@ -76,301 +93,397 @@ def detect(stream=None, env: dict | None = None) -> dict:
     return {"tty": tty, "color": color, "animate": animate, "unicode": unicode_ok}
 
 
-class Term:
-    def __init__(
-        self,
-        out=None,
-        inp: Callable[[str], str] | None = None,
-        *,
-        animate: bool | None = None,
-        color: bool | None = None,
-        unicode: bool | None = None,
-        sleep: Callable[[float], None] = time.sleep,
-        width: int | None = None,
-        seed: int | None = None,
-    ):
-        self.out = out if out is not None else sys.stdout
-        caps = detect(self.out)
-        self.color = caps["color"] if color is None else color
-        self.animate = (caps["animate"] if animate is None else animate) and self.color
-        self.unicode = caps["unicode"] if unicode is None else unicode
-        self.g = GLYPHS_UNICODE if self.unicode else GLYPHS_ASCII
-        self.inp = inp if inp is not None else input
-        self.sleep = sleep
-        self._width = width
-        self.rng = random.Random(seed)
-        self._cursor_hidden = False
-        atexit.register(self.restore)
+# A terminal and what it can do. Every drawing function takes one; `make_term` detects the rest.
+# `cursor_hidden` is the one field that changes: it records whether the cursor needs showing again.
+Term = TypedDict(
+    "Term",
+    {
+        "out": TextIO,
+        "read_input": Callable[[str], str],
+        "sleep": Callable[[float], None],
+        "color": bool,
+        "animate": bool,
+        "unicode": bool,
+        "glyphs": dict[str, str],
+        "fixed_width": int | None,
+        "rng": random.Random,
+        "cursor_hidden": bool,
+    },
+)
 
-    # -- basics --------------------------------------------------------
-    @property
-    def width(self) -> int:
-        return self._width or max(40, min(shutil.get_terminal_size((90, 24)).columns, 100))
 
-    def w(self, s: str) -> None:
-        try:
-            self.out.write(s)
-            self.out.flush()
-        except UnicodeEncodeError:
-            self.out.write(s.encode("ascii", "replace").decode("ascii"))
-            self.out.flush()
+def make_term(
+    out: TextIO | None = None,
+    *,
+    read_input: Callable[[str], str] | None = None,
+    animate: bool | None = None,
+    color: bool | None = None,
+    unicode: bool | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    width: int | None = None,
+    seed: int | None = None,
+) -> Term:
+    """A Term on `out` (stdout by default). Features left as None are detected from the terminal.
 
-    def p(self, s: str = "") -> None:
-        self.w(s + "\n")
+    The cursor is shown again at exit, whatever happens.
+    """
+    stream = out if out is not None else sys.stdout
+    caps = detect(stream)
+    has_color = caps["color"] if color is None else color
+    has_unicode = caps["unicode"] if unicode is None else unicode
+    term: Term = {
+        "out": stream,
+        "read_input": read_input if read_input is not None else input,
+        "sleep": sleep,
+        "color": has_color,
+        "animate": (caps["animate"] if animate is None else animate) and has_color,
+        "unicode": has_unicode,
+        "glyphs": GLYPHS_UNICODE if has_unicode else GLYPHS_ASCII,
+        "fixed_width": width,
+        "rng": random.Random(seed),
+        "cursor_hidden": False,
+    }
+    atexit.register(show_cursor, term)
+    return term
 
-    def c(self, text: str, *names: str) -> str:
-        if not self.color or not names:
-            return text
-        codes = []
-        for n in names:
-            if n.isdigit():
-                codes.append(f"38;5;{n}")
-            else:
-                codes.append(_STYLES[n])
-        return f"{CSI}{';'.join(codes)}m{text}{CSI}0m"
 
-    def hide_cursor(self) -> None:
-        if self.animate and not self._cursor_hidden:
-            self.w(HIDE_CURSOR)
-            self._cursor_hidden = True
+def compute_width(t: Term) -> int:
+    """The width to draw to: the fixed one if set, else the terminal's, kept between 40 and 100."""
+    return t["fixed_width"] or max(40, min(shutil.get_terminal_size((90, 24)).columns, 100))
 
-    def restore(self) -> None:
-        if self._cursor_hidden:
-            try:
-                self.w(SHOW_CURSOR)
-            except Exception:
-                pass
-            self._cursor_hidden = False
 
-    def nap(self, seconds: float) -> None:
-        if self.animate:
-            self.sleep(seconds)
+def write(t: Term, *, text: str) -> None:
+    """Write `s` as is, with no newline, and flush."""
+    try:
+        t["out"].write(text)
+        t["out"].flush()
+    except UnicodeEncodeError:
+        t["out"].write(text.encode("ascii", "replace").decode("ascii"))
+        t["out"].flush()
 
-    # -- text effects ----------------------------------------------------
-    def typewriter(self, text: str, *styles: str, delay: float = 0.014, end: str = "\n") -> None:
-        """Print text a character at a time. Without animation: the whole line at once."""
-        if not self.animate:
-            self.w(self.c(text, *styles) + end)
-            return
-        self.hide_cursor()
-        try:
-            for ch in text:
-                self.w(self.c(ch, *styles))
-                self.sleep(delay if ch not in ".,;:" else delay * 6)
-            self.w(end)
-        finally:
-            self.restore()
 
-    def shimmer(self, text: str, *, passes: int = 2, base: int = 244, delay: float = 0.012, indent: str = "") -> None:
-        """A bright highlight sweeps across the text. Ends on the settled, colored line."""
-        palette = [39, 45, 51, 87, 123, 159, 195, 231]
-        settled = self.gradient(text)
-        if not self.animate:
-            self.p(indent + settled)
-            return
-        self.hide_cursor()
-        try:
-            n = len(text)
-            for _ in range(passes):
-                for head in range(-len(palette), n + len(palette)):
-                    line = []
-                    for i, ch in enumerate(text):
-                        d = head - i
-                        line.append(self.c(ch, str(palette[d])) if 0 <= d < len(palette) else self.c(ch, str(base)))
-                    self.w("\r" + indent + "".join(line))
-                    self.sleep(delay)
-            self.w("\r" + CLEAR_LINE + indent + settled + "\n")
-        finally:
-            self.restore()
+def write_line(t: Term, *, text: str = "") -> None:
+    """Write `s` and a newline."""
+    write(t, text=text + "\n")
 
-    def gradient(self, text: str) -> str:
-        if not self.color:
-            return text
-        stops = [33, 39, 45, 51, 50, 49, 48, 47]
-        n = max(1, len(text) - 1)
-        return "".join(self.c(ch, str(stops[int(i / n * (len(stops) - 1))])) for i, ch in enumerate(text))
 
-    # -- bars ----------------------------------------------------------
-    def bar(self, frac: float, width: int = 24) -> str:
-        frac = max(0.0, min(1.0, frac))
-        full = int(frac * width)
-        if self.unicode:
-            partial_chars = " ▏▎▍▌▋▊▉"
-            partial = partial_chars[int((frac * width - full) * 8)] if full < width else ""
-            body = self.g["bar_full"] * full + partial.strip() + self.g["bar_empty"] * (width - full - (1 if partial.strip() else 0))
+def format_styled(t: Term, *, text: str, styles: tuple[str, ...] = ()) -> str:
+    """`text` wrapped in the named styles ("bold", "cyan", ...), or plain when the terminal has no color."""
+    if not t["color"] or not styles:
+        return text
+    codes = []
+    for style in styles:
+        if style.isdigit():
+            codes.append(f"38;5;{style}")
         else:
-            body = self.g["bar_full"] * full + self.g["bar_empty"] * (width - full)
-        color = "green" if frac >= 0.7 else "yellow" if frac >= 0.4 else "red"
-        return self.c(body[: max(full + 1, 0)], color) + self.c(body[max(full + 1, 0):], "grey") if self.color else body
+            codes.append(_STYLES[style])
+    return f"{CSI}{';'.join(codes)}m{text}{CSI}0m"
 
-    def animate_bar(self, label: str, to: float, *, width: int = 24, duration: float = 0.9, suffix: Callable[[float], str] | None = None) -> None:
-        """Fill a bar from 0 to `to` in place; the last frame stays on screen."""
-        def frame(v: float) -> str:
-            tail = suffix(v) if suffix else f"{v:.2f}"
-            return f"{label} {self.bar(v, width)} {tail}"
 
-        if not self.animate:
-            self.p(frame(to))
-            return
-        self.hide_cursor()
+def hide_cursor(t: Term) -> None:
+    """Hide the cursor while something animates; show_cursor brings it back."""
+    if t["animate"] and not t["cursor_hidden"]:
+        write(t, text=HIDE_CURSOR)
+        t["cursor_hidden"] = True
+
+
+def show_cursor(t: Term) -> None:
+    """Show the cursor again if it was hidden. Safe to call twice."""
+    if not t["cursor_hidden"]:
+        return
+    t["cursor_hidden"] = False
+    try:
+        write(t, text=SHOW_CURSOR)
+    except (OSError, ValueError):
+        # The terminal is already gone (a closed pipe or stream), so there is no cursor to show.
+        return
+
+
+def sleep_briefly(t: Term, *, seconds: float) -> None:
+    """Pause for `seconds`, but only when the terminal animates."""
+    if t["animate"]:
+        t["sleep"](seconds)
+
+# -- text effects ----------------------------------------------------
+def write_typed(t: Term, *, text: str, styles: tuple[str, ...] = (), delay: float = 0.014, end: str = "\n") -> None:
+    """Print text a character at a time. Without animation: the whole line at once."""
+    if not t["animate"]:
+        write(t, text=format_styled(t, text=text, styles=styles) + end)
+        return
+    hide_cursor(t)
+    try:
+        for char in text:
+            write(t, text=format_styled(t, text=char, styles=styles))
+            t["sleep"](delay if char not in ".,;:" else delay * 6)
+        write(t, text=end)
+    finally:
+        show_cursor(t)
+
+
+def show_shimmer(t: Term, *, text: str, passes: int = 2, base: int = 244, delay: float = 0.012, indent: str = "") -> None:
+    """A bright highlight sweeps across the text. Ends on the settled, colored line."""
+    palette = [39, 45, 51, 87, 123, 159, 195, 231]
+    settled = format_gradient(t, text=text)
+    if not t["animate"]:
+        write_line(t, text=indent + settled)
+        return
+    hide_cursor(t)
+    try:
+        heads = range(-len(palette), len(text) + len(palette))
+        for head in [*heads] * passes:
+            write(t, text="\r" + indent + _render_shimmer_frame(t, text=text, head=head, palette=palette, base=base))
+            t["sleep"](delay)
+        write(t, text="\r" + CLEAR_LINE + indent + settled + "\n")
+    finally:
+        show_cursor(t)
+
+
+def _render_shimmer_frame(t: Term, *, text: str, head: int, palette: list[int], base: int) -> str:
+    """The text with the highlight's bright end at position `head`, fading behind it."""
+    return "".join(
+        format_styled(t, text=char, styles=(str(palette[head - index]),)) if 0 <= head - index < len(palette) else format_styled(t, text=char, styles=(str(base),))
+        for index, char in enumerate(text)
+    )
+
+
+def format_gradient(t: Term, *, text: str) -> str:
+    """`text` shaded across a color gradient, or plain without color."""
+    if not t["color"]:
+        return text
+    stops = [33, 39, 45, 51, 50, 49, 48, 47]
+    count = max(1, len(text) - 1)
+    return "".join(format_styled(t, text=char, styles=(str(stops[int(index / count * (len(stops) - 1))]),)) for index, char in enumerate(text))
+
+# -- bars ----------------------------------------------------------
+def render_bar(t: Term, *, frac: float, width: int = 24) -> str:
+    """A progress bar `width` cells wide, filled to `frac` (0 to 1)."""
+    frac = max(0.0, min(1.0, frac))
+    full = int(frac * width)
+    if t["unicode"]:
+        partial_chars = " ▏▎▍▌▋▊▉"
+        partial = partial_chars[int((frac * width - full) * 8)] if full < width else ""
+        body = t["glyphs"]["bar_full"] * full + partial.strip() + t["glyphs"]["bar_empty"] * (width - full - (1 if partial.strip() else 0))
+    else:
+        body = t["glyphs"]["bar_full"] * full + t["glyphs"]["bar_empty"] * (width - full)
+    color = _pick_bar_color(frac)
+    return format_styled(t, text=body[: max(full + 1, 0)], styles=(color,)) + format_styled(t, text=body[max(full + 1, 0):], styles=("grey",)) if t["color"] else body
+
+
+def show_bar_filling(t: Term, *, label: str, to: float, width: int = 24, duration: float = 0.9, suffix: Callable[[float], str] | None = None) -> None:
+    """Fill a bar from 0 to `to` in place; the last frame stays on screen."""
+    def render_frame(v: float) -> str:
+        tail = suffix(v) if suffix else f"{v:.2f}"
+        return f"{label} {render_bar(t, frac=v, width=width)} {tail}"
+
+    if not t["animate"]:
+        write_line(t, text=render_frame(to))
+        return
+    hide_cursor(t)
+    try:
+        steps = max(8, int(duration / 0.03))
+        for index in range(steps + 1):
+            progress = index / steps
+            # Ease out.
+            value = to * (1 - (1 - progress) ** 3)
+            write(t, text="\r" + CLEAR_LINE + render_frame(value))
+            t["sleep"](duration / steps)
+        write(t, text="\n")
+    finally:
+        show_cursor(t)
+
+# -- spinner ---------------------------------------------------------
+@contextmanager
+def show_spinner(t: Term, *, label: str, keep: bool = True) -> Iterator[Spin]:
+    """A line that spins while work happens. `keep=False` erases it afterwards (waiting, not a result)."""
+    spin: Spin = {
+        "term": t,
+        "label": label,
+        "keep": keep,
+        "result": None,
+        "detail": "",
+        "stop": threading.Event(),
+        "thread": None,
+        "lock": threading.Lock(),
+    }
+    _start_spin(spin)
+    try:
+        yield spin
+    except BaseException:
+        _stop_spin(spin, ok=False)
+        raise
+    else:
+        _stop_spin(spin, ok=spin["result"] is not False)
+
+
+def show_decode(t: Term, *, label: str, final: str, duration: float = 1.1) -> None:
+    """Random hex settles, left to right, into the real value. Used for hashes."""
+    hexchars = "0123456789abcdef"
+    if not t["animate"]:
+        write_line(t, text=f"{label} {format_styled(t, text=final, styles=('cyan',))}")
+        return
+    hide_cursor(t)
+    try:
+        steps = max(10, int(duration / 0.03))
+        for index in range(steps + 1):
+            locked = int(len(final) * index / steps)
+            noise = "".join(t["rng"].choice(hexchars) for _ in range(len(final) - locked))
+            write(t, text="\r" + CLEAR_LINE + f"{label} " + format_styled(t, text=final[:locked], styles=("cyan", "bold")) + format_styled(t, text=noise, styles=("grey",)))
+            t["sleep"](duration / steps)
+        write(t, text="\n")
+    finally:
+        show_cursor(t)
+
+# -- layout ----------------------------------------------------------
+def draw_box(t: Term, *, lines: list[str], title: str = "", style: str = "cyan", indent: str = "  ") -> None:
+    """Draw `lines` inside a box, with an optional title in the top edge."""
+    inner = max([len(strip_ansi(line_text)) for line_text in lines] + [len(title) + 2, 20])
+    glob = t["glyphs"]
+    # the rule between the corners is inner + 2 wide; the title takes " title " out of it
+    top = glob["tl"] + glob["h"] + (f" {title} " if title else glob["h"]) + glob["h"] * (inner + 2 - 1 - (len(title) + 2 if title else 1)) + glob["tr"]
+    write_line(t, text=indent + format_styled(t, text=top, styles=(style,)))
+    for line_text in lines:
+        pad = " " * (inner - len(strip_ansi(line_text)))
+        write_line(t, text=indent + format_styled(t, text=glob["v"], styles=(style,)) + " " + line_text + pad + " " + format_styled(t, text=glob["v"], styles=(style,)))
+    write_line(t, text=indent + format_styled(t, text=glob["bl"] + glob["h"] * (inner + 2) + glob["br"], styles=(style,)))
+
+
+def draw_rule(t: Term, *, label: str = "") -> None:
+    """Draw a horizontal rule across the width, with an optional label in it."""
+    glob = t["glyphs"]["h"]
+    text = f" {label} " if label else ""
+    write_line(t, text=format_styled(t, text=glob * 2 + text + glob * max(2, compute_width(t) - len(text) - 2), styles=("grey",)))
+
+
+def show_step(t: Term, *, number: int, total: int, title: str) -> None:
+    """Print a step heading: progress dots for step `n` of `total`, then the title."""
+    write_line(t)
+    write_line(t, text=format_styled(t, text=f"{number}/{total}", styles=("grey",)) + "  " + format_styled(t, text=title, styles=("bold", "white")))
+
+
+def render_dots(t: Term, *, count: int, total: int) -> str:
+    """Progress dots: `n` filled out of `total`."""
+    return " ".join(format_styled(t, text=t["glyphs"]["dot"], styles=("cyan",)) if index < count else format_styled(t, text=t["glyphs"]["ring"], styles=("grey",)) for index in range(total))
+
+# -- input -----------------------------------------------------------
+def ask(t: Term, *, prompt: str) -> str:
+    """Ask for a line of input with `prompt` and return what was typed."""
+    show_cursor(t)
+    return t["read_input"](prompt)
+
+
+def wait_for_continue(t: Term, *, more: str | None = None, skip_label: str | None = None) -> str:
+    """Progressive disclosure gate. Returns "next" or "skip". `m` reveals the extra text."""
+    hints = [f"Enter {t['glyphs']['arrow']} continue"]
+    if more:
+        hints.append("m for more")
+    if skip_label:
+        hints.append(f"s to {skip_label}")
+    shown_more = False
+    while True:
         try:
-            steps = max(8, int(duration / 0.03))
-            for i in range(steps + 1):
-                t = i / steps
-                v = to * (1 - (1 - t) ** 3)  # ease out
-                self.w("\r" + CLEAR_LINE + frame(v))
-                self.sleep(duration / steps)
-            self.w("\n")
-        finally:
-            self.restore()
-
-    # -- spinner ---------------------------------------------------------
-    @contextmanager
-    def spinner(self, label: str, *, keep: bool = True) -> Iterator["_Spin"]:
-        """A line that spins while work happens. `keep=False` erases it afterwards (waiting, not a result)."""
-        spin = _Spin(self, label, keep=keep)
-        spin.start()
-        try:
-            yield spin
-        except BaseException:
-            spin.stop(ok=False)
-            raise
-        else:
-            spin.stop(ok=spin.result is not False)
-
-    def decode(self, label: str, final: str, *, duration: float = 1.1) -> None:
-        """Random hex settles, left to right, into the real value. Used for hashes."""
-        hexchars = "0123456789abcdef"
-        if not self.animate:
-            self.p(f"{label} {self.c(final, 'cyan')}")
-            return
-        self.hide_cursor()
-        try:
-            steps = max(10, int(duration / 0.03))
-            for i in range(steps + 1):
-                locked = int(len(final) * i / steps)
-                noise = "".join(self.rng.choice(hexchars) for _ in range(len(final) - locked))
-                self.w("\r" + CLEAR_LINE + f"{label} " + self.c(final[:locked], "cyan", "bold") + self.c(noise, "grey"))
-                self.sleep(duration / steps)
-            self.w("\n")
-        finally:
-            self.restore()
-
-    # -- layout ----------------------------------------------------------
-    def box(self, lines: list[str], *, title: str = "", style: str = "cyan", indent: str = "  ") -> None:
-        inner = max([len(strip_ansi(l)) for l in lines] + [len(title) + 2, 20])
-        g = self.g
-        # the rule between the corners is inner + 2 wide; the title takes " title " out of it
-        top = g["tl"] + g["h"] + (f" {title} " if title else g["h"]) + g["h"] * (inner + 2 - 1 - (len(title) + 2 if title else 1)) + g["tr"]
-        self.p(indent + self.c(top, style))
-        for l in lines:
-            pad = " " * (inner - len(strip_ansi(l)))
-            self.p(indent + self.c(g["v"], style) + " " + l + pad + " " + self.c(g["v"], style))
-        self.p(indent + self.c(g["bl"] + g["h"] * (inner + 2) + g["br"], style))
-
-    def rule(self, label: str = "") -> None:
-        g = self.g["h"]
-        text = f" {label} " if label else ""
-        self.p(self.c(g * 2 + text + g * max(2, self.width - len(text) - 2), "grey"))
-
-    def step(self, n: int, total: int, title: str) -> None:
-        self.p()
-        self.p(self.c(f"{n}/{total}", "grey") + "  " + self.c(title, "bold", "white"))
-
-    def dots(self, n: int, total: int) -> str:
-        return " ".join(self.c(self.g["dot"], "cyan") if i < n else self.c(self.g["ring"], "grey") for i in range(total))
-
-    # -- input -----------------------------------------------------------
-    def ask(self, prompt: str) -> str:
-        self.restore()
-        return self.inp(prompt)
-
-    def pause(self, *, more: str | None = None, skip_label: str | None = None) -> str:
-        """Progressive disclosure gate. Returns "next" or "skip". `m` reveals the extra text."""
-        hints = [f"Enter {self.g['arrow']} continue"]
-        if more:
-            hints.append("m for more")
-        if skip_label:
-            hints.append(f"s to {skip_label}")
-        shown_more = False
-        while True:
-            try:
-                raw = self.ask(self.c(f"  {self.g['next']} " + "  ·  ".join(hints) + " ", "grey")).strip().lower()
-            except EOFError:
-                return "next"
-            if raw in ("", "n", "next"):
-                return "next"
-            if raw in ("s", "skip") and skip_label:
-                return "skip"
-            if raw in ("m", "more") and more and not shown_more:
-                shown_more = True
-                hints = [h for h in hints if h != "m for more"]
-                for line in more.splitlines():
-                    self.p("    " + self.c(line, "grey"))
-                self.p()
-            else:
-                self.p(self.c("    (press Enter to go on)", "grey"))
-
-    def yes_no(self, question: str, *, default: bool = True) -> bool:
-        suffix = "[Y/n]" if default else "[y/N]"
-        try:
-            raw = self.ask(f"  {self.c('?', 'cyan', 'bold')} {question} {self.c(suffix, 'grey')} ").strip().lower()
+            raw = ask(t, prompt=format_styled(t, text=f"  {t['glyphs']['next']} " + "  ·  ".join(hints) + " ", styles=("grey",))).strip().lower()
         except EOFError:
-            return default
-        if raw == "":
-            return default
-        return raw[0] == "y"
+            return "next"
+        if raw in ("", "n", "next"):
+            return "next"
+        if raw in ("s", "skip") and skip_label:
+            return "skip"
+        if raw in ("m", "more") and more and not shown_more:
+            shown_more = True
+            hints = [hint for hint in hints if hint != "m for more"]
+            _show_more(t, more=more)
+        else:
+            write_line(t, text=format_styled(t, text="    (press Enter to go on)", styles=("grey",)))
 
 
-class _Spin:
-    """One line that spins while work happens, then settles to a check or a cross."""
+def _show_more(t: Term, *, more: str) -> None:
+    """The extra text `m` reveals, indented and grey, then a blank line."""
+    for line in more.splitlines():
+        write_line(t, text="    " + format_styled(t, text=line, styles=("grey",)))
+    write_line(t)
 
-    def __init__(self, term: Term, label: str, keep: bool = True):
-        self.t, self.label, self.result, self.keep = term, label, None, keep
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._lock = threading.Lock()
-        self.detail = ""
 
-    def start(self) -> None:
-        if not self.t.animate:
-            self.t.p(f"  {self.t.g['next']} {self.label} ...")
-            return
-        self.t.hide_cursor()
-        frames = itertools.cycle(self.t.g["spin"])
+def ask_yes_no(t: Term, *, question: str, default: bool = True) -> bool:
+    """Ask a yes/no question; Enter takes `default`."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        raw = ask(t, prompt=f"  {format_styled(t, text='?', styles=('cyan', 'bold'))} {question} {format_styled(t, text=suffix, styles=('grey',))} ").strip().lower()
+    except EOFError:
+        return default
+    if raw == "":
+        return default
+    return raw[0] == "y"
 
-        def run() -> None:
-            while not self._stop.is_set():
-                with self._lock:
-                    self.t.w("\r" + CLEAR_LINE + f"  {self.t.c(next(frames), 'cyan')} {self.label}" + (self.t.c(f"  {self.detail}", "grey") if self.detail else ""))
-                time.sleep(0.08)
 
-        self._thread = threading.Thread(target=run, daemon=True)
-        self._thread.start()
+# One line that spins while work happens, then settles to a check or a cross.
+# `result` is None until the work calls set_spin_result; the lock guards label and detail,
+# which the spinning thread reads while the work updates them.
+Spin = TypedDict(
+    "Spin",
+    {
+        "term": Term,
+        "label": str,
+        "keep": bool,
+        "result": bool | None,
+        "detail": str,
+        "stop": threading.Event,
+        "thread": threading.Thread | None,
+        "lock": threading.Lock,
+    },
+)
 
-    def update(self, label: str | None = None, detail: str | None = None) -> None:
-        with self._lock:
-            if label is not None:
-                self.label = label
-            if detail is not None:
-                self.detail = detail
 
-    def ok(self, note: str = "") -> None:
-        self.result, self.detail = True, note
+def _start_spin(spin: Spin) -> None:
+    """Print the line, and if the terminal animates, spin it on a background thread."""
+    t = spin["term"]
+    if not t["animate"]:
+        write_line(t, text=f"  {t['glyphs']['next']} {spin['label']} ...")
+        return
+    hide_cursor(t)
+    frames = itertools.cycle(t["glyphs"]["spin"])
 
-    def fail(self, note: str = "") -> None:
-        self.result, self.detail = False, note
+    def run() -> None:
+        while not spin["stop"].is_set():
+            with spin["lock"]:
+                detail = format_styled(t, text=f"  {spin['detail']}", styles=("grey",)) if spin["detail"] else ""
+                write(t, text="\r" + CLEAR_LINE + f"  {format_styled(t, text=next(frames), styles=('cyan',))} {spin['label']}" + detail)
+            time.sleep(0.08)
 
-    def stop(self, *, ok: bool) -> None:
-        if self._thread:
-            self._stop.set()
-            self._thread.join(timeout=1)
-        if not self.keep and ok:
-            if self._thread:
-                self.t.w("\r" + CLEAR_LINE)  # transient: leave no trace of the wait
-            self.t.restore()
-            return
-        mark = self.t.c(self.t.g["ok"], "green", "bold") if ok else self.t.c(self.t.g["bad"], "red", "bold")
-        tail = self.t.c(f"  {self.detail}", "grey") if self.detail else ""
-        self.t.w(("\r" + CLEAR_LINE if self._thread else "") + f"  {mark} {self.label}{tail}\n")
-        self.t.restore()
+    thread = threading.Thread(target=run, daemon=True)
+    spin["thread"] = thread
+    thread.start()
+
+
+def update_spin(spin: Spin, *, label: str | None = None, detail: str | None = None) -> None:
+    """Change what the spinning line says while it spins."""
+    with spin["lock"]:
+        if label is not None:
+            spin["label"] = label
+        if detail is not None:
+            spin["detail"] = detail
+
+
+def set_spin_result(spin: Spin, *, ok: bool, note: str = "") -> None:
+    """Record how the work went, so the line settles to a check (ok) or a cross, with `note` after it."""
+    spin["result"], spin["detail"] = ok, note
+
+
+def _stop_spin(spin: Spin, *, ok: bool) -> None:
+    """Stop spinning and settle the line, or erase it if it was only a wait."""
+    t, thread = spin["term"], spin["thread"]
+    if thread:
+        spin["stop"].set()
+        thread.join(timeout=1)
+    if not spin["keep"] and ok:
+        if thread:
+            # Transient: leave no trace of the wait.
+            write(t, text="\r" + CLEAR_LINE)
+        show_cursor(t)
+        return
+    if ok:
+        mark = format_styled(t, text=t["glyphs"]["ok"], styles=("green", "bold"))
+    else:
+        mark = format_styled(t, text=t["glyphs"]["bad"], styles=("red", "bold"))
+    tail = format_styled(t, text=f"  {spin['detail']}", styles=("grey",)) if spin["detail"] else ""
+    write(t, text=("\r" + CLEAR_LINE if thread else "") + f"  {mark} {spin['label']}{tail}\n")
+    show_cursor(t)

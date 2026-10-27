@@ -9,11 +9,12 @@ import type { DeskBridge } from '../shared/ipc.ts';
 import { toBridgeFailure } from '../shared/ipc.ts';
 import type { CcInit, ConnectionSummary } from '../shared/types.ts';
 import {
-  BEATS, STEPS, STEP_LABELS, addCriterion, applyStepResponse, blockingProblems, buildFinishRequest, buildStepRequest, canContinue, goBack, goNext, localWarnings,
-  removeCriterion, roundNumber, setAnswer, setGoal, setOutOfScope, skipIntro, specPreview, stepNumber, updateCriterion, type WizardState,
+  BEATS, STEPS, STEP_LABELS, addCriterion, applyStepResponse, collectBlockingProblems, buildFinishRequest, buildStepRequest, canContinue, goBack, goNext, collectLocalWarnings,
+  removeCriterion, toRoundNumber, setAnswer, setGoal, setOutOfScope, skipIntro, buildSpecPreview, toStepNumber, updateCriterion, type WizardState,
 } from '../shared/wizard-state.ts';
-import { h, type Child } from './dom.ts';
-import { shortHash } from './format.ts';
+import { makeElement, type Child } from './dom.ts';
+import { formatShortHash } from './format.ts';
+import { toText } from '../shared/text.ts';
 
 export type WizardCtx = {
   desk: DeskBridge;
@@ -22,7 +23,7 @@ export type WizardCtx = {
   set: (next: WizardState, options?: { render?: boolean }) => void;
   connection: () => ConnectionSummary | null;
   refreshConnection: () => Promise<void>;
-  toast: (text: string, bad?: boolean) => void;
+  toast: (options: { text: string; bad?: boolean }) => void;
   openConnect: () => void;
   /** Leaves the wizard for the board. */
   exit: () => void;
@@ -33,413 +34,381 @@ type Local = {
   busy: 'init' | 'draft' | 'finish' | 'connect' | null;
   error: string | null;
   step: string;
-  animation: number[];
+  animation: readonly number[];
 };
 
 const local: Local = { busy: null, error: null, step: '', animation: [] };
 
-const msg = (e: unknown): string => toBridgeFailure(e).message;
-const btn = (label: string, onClick: () => void, cls = '', disabled = false): HTMLButtonElement =>
-  h('button', { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, label);
-const more = (...body: Child[]): HTMLElement => h('details', { class: 'more' }, h('summary', {}, 'More detail'), ...body);
-const para = (...c: Child[]): HTMLElement => h('p', {}, ...c);
+const renderMessage = ({ error }: { error: unknown }): string => toBridgeFailure({ error }).message;
+const renderButton = ({ label, onClick, cls = '', disabled = false }: { label: string; onClick: () => void; cls?: string; disabled?: boolean }): HTMLButtonElement =>
+  makeElement({ tag: 'button', props: { class: `btn ${cls}`.trim(), attrs: { type: 'button', disabled }, on: { click: onClick } }, children: [label] });
+const renderMore = (...body: Child[]): HTMLElement => makeElement({ tag: 'details', props: { class: 'more' }, children: [makeElement({ tag: 'summary', props: {}, children: ['More detail'] }), ...body] });
+const renderParagraph = (...list: Child[]): HTMLElement => makeElement({ tag: 'p', props: {}, children: [...list] });
 
-const clearTimers = (): void => {
-  for (const t of local.animation) window.clearTimeout(t);
+const cancelTimers = (): void => {
+  for (const timerId of local.animation) window.clearTimeout(timerId);
   local.animation = [];
 };
 
 /** Runs `fn` after `ms`, unless the person has moved on. Reduced motion runs everything at once. */
-const later = (ctx: WizardCtx, ms: number, fn: () => void): void => {
-  if (ctx.reducedMotion) {
-    fn();
+const runLater = ({ context, millis, callback }: { context: WizardCtx; millis: number; callback: () => void }): void => {
+  if (context.reducedMotion) {
+    callback();
     return;
   }
-  local.animation.push(window.setTimeout(fn, ms));
+  local.animation = [...local.animation, window.setTimeout(callback, millis)];
 };
 
 // ---- welcome ----------------------------------------------------------------
 
-const claimCard = (): HTMLElement =>
-  h('div', { class: 'sample panel' }, h('p', { class: 'muted' }, 'What the agent said'), h('p', {}, h('strong', {}, 'shipping_fee returns 0 for orders of $50 or more')), h('p', { class: 'muted' }, 'Stated confidence 0.92'));
+const renderClaimCard = (): HTMLElement =>
+  makeElement({ tag: 'div', props: { class: 'sample' }, children: [makeElement({ tag: 'p', props: { class: 'muted' }, children: ['What the agent said'] }), makeElement({ tag: 'p', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['shipping_fee returns 0 for orders of $50 or more'] })] }), makeElement({ tag: 'p', props: { class: 'muted' }, children: ['Stated confidence 0.92'] })] });
 
-const plantedBugDemo = (ctx: WizardCtx): HTMLElement => {
-  const op = h('span', { class: 'op' }, '>=');
-  const status = h('p', { class: 'demo-status' }, '2 tests pass');
-  const test = h('p', { class: 'demo-test hidden' }, 'def test_exactly_fifty(): assert shipping_fee(50) == 0');
-  const root = h('div', { class: 'demo', data: { stage: '0' }, attrs: { 'aria-live': 'polite' } }, h('pre', { class: 'code' }, 'def shipping_fee(total):\n    if total ', op, ' 50:\n        return 0\n    return 5'), status, test);
-  const stage = (n: number): void => {
-    root.dataset.stage = String(n);
+const plantedBugDemo = ({ context }: { context: WizardCtx }): HTMLElement => {
+  const operation = makeElement({ tag: 'span', props: { class: 'op' }, children: ['>='] });
+  const status = makeElement({ tag: 'p', props: { class: 'demo-status' }, children: ['2 tests pass'] });
+  const test = makeElement({ tag: 'p', props: { class: 'demo-test hidden' }, children: ['def test_exactly_fifty(): assert shipping_fee(50) == 0'] });
+  const root = makeElement({ tag: 'div', props: { class: 'demo', dataset: { stage: '0' }, attrs: { 'aria-live': 'polite' } }, children: [makeElement({ tag: 'pre', props: { class: 'code' }, children: ['def shipping_fee(total):\n    if total ', operation, ' 50:\n        return 0\n    return 5'] }), status, test] });
+  const stage = ({ count }: { count: number }): void => {
+    root.dataset.stage = String(count);
   };
-  later(ctx, 1200, () => {
-    op.textContent = '>';
-    op.className = 'op changed';
+  runLater({ context, millis: 1200, callback: () => {
+    operation.textContent = '>';
+    operation.className = 'op changed';
     status.textContent = '2 tests still pass. The planted bug survived: nobody noticed.';
-    stage(1);
-  });
-  later(ctx, 3400, () => {
+    stage({ count: 1 });
+  } });
+  runLater({ context, millis: 3400, callback: () => {
     test.className = 'demo-test';
-    stage(2);
-  });
-  later(ctx, 4400, () => {
+    stage({ count: 2 });
+  } });
+  runLater({ context, millis: 4400, callback: () => {
     status.textContent = '1 test fails. The same bug is now caught.';
-    stage(3);
-  });
+    stage({ count: 3 });
+  } });
   return root;
 };
 
-const welcome = (ctx: WizardCtx, s: WizardState): Child[] => {
-  if (s.beat === 0) {
+const renderWelcome = ({ context, wizardState }: { context: WizardCtx; wizardState: WizardState }): Child[] => {
+  if (wizardState.beat === 0) {
     return [
-      h('h2', {}, 'A confident claim is not a checked claim'),
-      para('A coding agent tells you its change works, in the same tone whether it is right or wrong.'),
-      claimCard(),
-      para('The tests pass. Does that make the claim true?'),
-      more(para('A green test run only shows that the tests you have do not complain. If none of them checks an order of exactly $50, a bug at that boundary ships anyway. claimcheck measures how much your tests would notice, and writes it down.')),
+      makeElement({ tag: 'h2', props: {}, children: ['A confident claim is not a checked claim'] }),
+      renderParagraph('A coding agent tells you its change works, in the same tone whether it is right or wrong.'),
+      renderClaimCard(),
+      renderParagraph('The tests pass. Does that make the claim true?'),
+      renderMore(renderParagraph('A green test run only shows that the tests you have do not complain. If none of them checks an order of exactly $50, a bug at that boundary ships anyway. claimcheck measures how much your tests would notice, and writes it down.')),
     ];
   }
-  if (s.beat === 1) {
+  if (wizardState.beat === 1) {
     return [
-      h('h2', {}, 'Three checks the author cannot influence'),
-      h(
-        'ol',
-        { class: 'reveal' },
-        h('li', {}, h('strong', {}, 'Frozen criteria. '), 'The acceptance criteria are written and locked before the code exists.'),
-        h('li', {}, h('strong', {}, 'A second opinion. '), "A separate model checks each claim and never sees the author's confidence."),
-        h('li', {}, h('strong', {}, 'Planted bugs. '), 'claimcheck breaks the new code on purpose and reruns your tests.'),
-      ),
-      more(para('Every run writes one line per claim to .claimcheck/ledger.jsonl. Over time that file is the record of how far to trust each author, human or AI.')),
+      makeElement({ tag: 'h2', props: {}, children: ['Three checks the author cannot influence'] }),
+      makeElement({ tag: 'ol', props: { class: 'reveal' }, children: [makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Frozen criteria. '] }), 'The acceptance criteria are written and locked before the code exists.'] }), makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['A second opinion. '] }), "A separate model checks each claim and never sees the author's confidence."] }), makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Planted bugs. '] }), 'claimcheck breaks the new code on purpose and reruns your tests.'] })] }),
+      renderMore(renderParagraph('Every run writes one line per claim to .claimcheck/ledger.jsonl. Over time that file is the record of how far to trust each author, human or AI.')),
     ];
   }
   return [
-    h('h2', {}, 'What a planted bug shows'),
-    para('One small change to the code, then the tests run again.'),
-    plantedBugDemo(ctx),
-    para(h('strong', {}, 'The share of planted bugs your tests catch is shown next to the confidence the author stated.')),
-    more(para('Four kinds of change are planted: a flipped sign, an off-by-one, swapped arguments, and a shifted boundary. Only lines the change added are touched, and your files are always put back.')),
+    makeElement({ tag: 'h2', props: {}, children: ['What a planted bug shows'] }),
+    renderParagraph('One small change to the code, then the tests run again.'),
+    plantedBugDemo({ context }),
+    renderParagraph(makeElement({ tag: 'strong', props: {}, children: ['The share of planted bugs your tests catch is shown next to the confidence the author stated.'] })),
+    renderMore(renderParagraph('Four kinds of change are planted: a flipped sign, an off-by-one, swapped arguments, and a shifted boundary. Only lines the change added are touched, and your files are always put back.')),
   ];
+};
+
+/**
+ * Marks the wizard busy while `work` runs and redraws before and after. A failure is shown on the
+ * step (that is the handling: the user sees it and can retry), described by `describeError`.
+ */
+const runBusy = async ({ busy, rerender, work, describeError = (error) => renderMessage({ error }) }: { busy: NonNullable<Local['busy']>; rerender: () => void; work: () => Promise<void>; describeError?: (error: unknown) => string | null }): Promise<void> => {
+  local.busy = busy;
+  local.error = null;
+  rerender();
+  try {
+    await work();
+  } catch (error) {
+    local.error = describeError(error);
+  } finally {
+    local.busy = null;
+    rerender();
+  }
 };
 
 // ---- setup -----------------------------------------------------------------
 
-const checklist = (init: CcInit): HTMLElement => {
-  const row = (name: string, note: string, warn = false): HTMLElement => h('li', { class: warn ? 'warn' : '' }, h('strong', {}, `${name} `), h('span', { class: 'muted' }, note));
-  const rows: HTMLElement[] = [];
-  rows.push(row('Secrets', init.secrets.created ? '.gitignore created, and .env and key files are ignored' : init.secrets.added.length ? `added ${init.secrets.added.length} lines so .env and key files are ignored` : '.env and key files are already ignored'));
-  for (const t of init.secrets.tracked) rows.push(row(t, 'is already committed. Ignoring it does not remove it: run git rm --cached on it.', true));
-  rows.push(row('Config', init.config === 'created' ? '.claimcheck/config.toml written' : '.claimcheck/config.toml already existed'));
-  rows.push(row('Commit hook', init.hook.status === 'installed' ? 'installed where git looks for it' : 'already in place'));
-  rows.push(row('.gitignore', init.gitignore_added.length ? `added ${init.gitignore_added.length} lines for scratch output` : 'already set'));
-  rows.push(row('Agent instructions', init.agent_docs.length ? init.agent_docs.map((d) => `${d.path} (${d.action})`).join(', ') : 'no CLAUDE.md or AGENTS.md found, so nothing to update'));
-  if (init.ci) rows.push(row('CI workflow', `${init.ci.path} (${init.ci.action})`));
-  return h('ul', { class: 'checklist' }, ...rows);
+/** What setup did to .gitignore: created it, added lines, or nothing needed. */
+const describeSecrets = ({ secrets }: { secrets: CcInit['secrets'] }): string => {
+  if (secrets.created) return '.gitignore created, and .env and key files are ignored';
+  if (secrets.added.length) return `added ${secrets.added.length} lines so .env and key files are ignored`;
+  return '.env and key files are already ignored';
 };
 
-const setup = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] => {
-  const init = s.setup.init;
-  const out: HTMLElement[] = [h('h2', {}, 'Set up this repository'), para('Desk makes the changes below. Nothing is committed yet.')];
+const checklist = ({ init }: { init: CcInit }): HTMLElement => {
+  const renderStatusRow = ({ name, note, warn = false }: { name: string; note: string; warn?: boolean }): HTMLElement => makeElement({ tag: 'li', props: { class: warn ? 'warn' : '' }, children: [makeElement({ tag: 'strong', props: {}, children: [`${name} `] }), makeElement({ tag: 'span', props: { class: 'muted' }, children: [note] })] });
+  const rows: HTMLElement[] = [
+    renderStatusRow({ name: 'Secrets', note: describeSecrets({ secrets: init.secrets }) }),
+    ...init.secrets.tracked.map((trackedPath) => renderStatusRow({ name: trackedPath, note: 'is already committed. Ignoring it does not remove it: run git rm --cached on it.', warn: true })),
+    renderStatusRow({ name: 'Config', note: init.config === 'created' ? '.claimcheck/config.toml written' : '.claimcheck/config.toml already existed' }),
+    renderStatusRow({ name: 'Commit hook', note: init.hook.status === 'installed' ? 'installed where git looks for it' : 'already in place' }),
+    renderStatusRow({ name: '.gitignore', note: init.gitignore_added.length ? `added ${init.gitignore_added.length} lines for scratch output` : 'already set' }),
+    renderStatusRow({ name: 'Agent instructions', note: init.agent_docs.length ? init.agent_docs.map((entry) => `${entry.path} (${entry.action})`).join(', ') : 'no CLAUDE.md or AGENTS.md found, so nothing to update' }),
+    ...(init.ci ? [renderStatusRow({ name: 'CI workflow', note: `${init.ci.path} (${init.ci.action})` })] : []),
+  ];
+  return makeElement({ tag: 'ul', props: { class: 'checklist' }, children: rows });
+};
+
+const setup = ({ context, wizardState, rerender }: { context: WizardCtx; wizardState: WizardState; rerender: () => void }): Child[] => {
+  const init = wizardState.setup.init;
+  const heading: HTMLElement[] = [makeElement({ tag: 'h2', props: {}, children: ['Set up this repository'] }), renderParagraph('Desk makes the changes below. Nothing is committed yet.')];
   if (!init) {
-    const ci = h('input', { attrs: { type: 'checkbox', checked: s.setup.ci, id: 'ci' }, on: { change: (e) => ctx.set({ ...ctx.state(), setup: { ...ctx.state().setup, ci: (e.target as HTMLInputElement).checked } }, { render: false }) } });
-    out.push(
-      h('label', { class: 'check' }, ci, ' Also add a GitHub Actions workflow that runs claimcheck on pull requests'),
-      btn(local.busy === 'init' ? 'Setting up…' : 'Set up this repo', () => {
-        local.busy = 'init';
-        local.error = null;
-        rerender();
-        ctx.desk
-          .wizardInit({ ci: ctx.state().setup.ci })
-          .then((r) => ctx.set({ ...ctx.state(), setup: { ...ctx.state().setup, init: r, testCmd: ctx.state().setup.testCmd || r.stack.test_cmd } }))
-          .catch((e) => {
-            local.error = msg(e);
-          })
-          .finally(() => {
-            local.busy = null;
-            rerender();
-          });
-      }, 'primary', local.busy === 'init'),
-    );
-  } else {
-    const next = h('button', { class: 'btn primary', attrs: { type: 'button', disabled: !canContinue(s) } });
-    const input = h('input', {
-      attrs: { type: 'text', value: s.setup.testCmd, 'aria-label': 'Test command' },
-      on: {
-        input: (e) => {
-          const value = (e.target as HTMLInputElement).value;
-          ctx.set({ ...ctx.state(), setup: { ...ctx.state().setup, testCmd: value } }, { render: false });
-          next.disabled = value.trim().length === 0;
-        },
-      },
-    });
-    void next;
-    out.push(
-      checklist(init),
-      h('label', { class: 'field' }, h('span', {}, `Test command${init.stack.name ? ` (detected ${init.stack.name})` : ' (nothing detected: type yours)'}`), input),
-      more(para('The commit hook refuses a commit that changes code without a claims file that covers it. The agent notes sit between two marker comments, so running setup again updates them in place and never duplicates them.')),
-    );
+    const ciCheckbox = makeElement({ tag: 'input', props: { attrs: { type: 'checkbox', checked: wizardState.setup.ci, id: 'ci' }, on: { change: (event) => context.set({ ...context.state(), setup: { ...context.state().setup, ci: (event.target as HTMLInputElement).checked } }, { render: false }) } } });
+    return [
+      ...heading,
+      makeElement({ tag: 'label', props: { class: 'check' }, children: [ciCheckbox, ' Also add a GitHub Actions workflow that runs claimcheck on pull requests'] }),
+      renderButton({ label: local.busy === 'init' ? 'Setting up…' : 'Set up this repo', onClick: () => {
+        void runBusy({
+          busy: 'init',
+          rerender,
+          work: async () => {
+            const ccInit = await context.desk.wizardInit({ ci: context.state().setup.ci });
+            context.set({ ...context.state(), setup: { ...context.state().setup, init: ccInit, testCmd: context.state().setup.testCmd || ccInit.stack.test_cmd } });
+          },
+        });
+      }, cls: 'primary', disabled: local.busy === 'init' }),
+    ];
   }
-  return out;
+  const next = makeElement({ tag: 'button', props: { class: 'btn primary', attrs: { type: 'button', disabled: !canContinue({ state: wizardState }) } } });
+  const input = makeElement({ tag: 'input', props: {
+    attrs: { type: 'text', value: wizardState.setup.testCmd, 'aria-label': 'Test command' },
+    on: {
+      input: (event) => {
+        const value = (event.target as HTMLInputElement).value;
+        context.set({ ...context.state(), setup: { ...context.state().setup, testCmd: value } }, { render: false });
+        next.disabled = value.trim().length === 0;
+      },
+    },
+  } });
+  void next;
+  return [
+    ...heading,
+    checklist({ init }),
+    makeElement({ tag: 'label', props: { class: 'field' }, children: [makeElement({ tag: 'span', props: {}, children: [`Test command${init.stack.name ? ` (detected ${init.stack.name})` : ' (nothing detected: type yours)'}`] }), input] }),
+    renderMore(renderParagraph('The commit hook refuses a commit that changes code without a claims file that covers it. The agent notes sit between two marker comments, so running setup again updates them in place and never duplicates them.')),
+  ];
 };
 
 // ---- connect ---------------------------------------------------------------
 
-export const isConnected = (c: ConnectionSummary | null): boolean => Boolean(c) && ((c?.mode === 'cli' && c.cliOk === true) || (c?.mode === 'api' && c.apiOk === true));
+export const isConnected = ({ connection }: { connection: ConnectionSummary | null }): boolean => Boolean(connection) && ((connection?.mode === 'cli' && connection.cliOk === true) || (connection?.mode === 'api' && connection.apiOk === true));
 
-const connect = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] => {
-  const c = ctx.connection();
-  const ok = isConnected(c);
+/** One line on the connection: connected, installed but not checked, or nothing yet. */
+const describeConnection = ({ ok, cliPath }: { ok: boolean; cliPath: string | null | undefined }): string => {
+  if (ok) return 'Connected.';
+  return cliPath ? 'Claude Code is installed. Check that it is signed in.' : 'No connection yet.';
+};
+
+const connect = ({ context, wizardState, rerender }: { context: WizardCtx; wizardState: WizardState; rerender: () => void }): Child[] => {
+  const connection = context.connection();
+  const isOk = isConnected({ connection: connection });
   return [
-    h('h2', {}, 'Connect Claude'),
-    para('Claude writes the spec with you and later checks each claim. You can use your Claude Code sign-in or an API key.'),
-    h('p', { class: ok ? 'good' : 'muted' }, ok ? 'Connected.' : c?.cliPath ? 'Claude Code is installed. Check that it is signed in.' : 'No connection yet.'),
-    h(
-      'div',
-      { class: 'row' },
-      btn(local.busy === 'connect' ? 'Checking…' : 'Check my Claude Code sign-in', () => {
-        local.busy = 'connect';
-        local.error = null;
-        rerender();
-        ctx.desk
-          .testConnection({ mode: 'cli' })
-          .then(async (r) => {
-            if (!r.ok) local.error = `${String(r.error ?? 'It did not work.')}${r.needsSignIn ? ' Press Connect Claude to sign in.' : ''}`;
-            await ctx.refreshConnection();
-          })
-          .catch((e) => {
-            local.error = msg(e);
-          })
-          .finally(() => {
-            local.busy = null;
-            rerender();
-          });
-      }, 'primary', local.busy === 'connect'),
-      btn('Use an API key…', ctx.openConnect),
-      btn(s.connectSkipped ? 'Skipping for now' : 'Skip for now', () => ctx.set({ ...s, connectSkipped: !s.connectSkipped })),
-    ),
-    more(para('Claude sees your goal, your answers and the repo\'s file names (never .env or key files). Checking a claim later also sends the diff under test, with secrets removed. If you skip this, you can still write the spec by hand and freeze it in a terminal.')),
+    makeElement({ tag: 'h2', props: {}, children: ['Connect Claude'] }),
+    renderParagraph('Claude writes the spec with you and later checks each claim. You can use your Claude Code sign-in or an API key.'),
+    makeElement({ tag: 'p', props: { class: isOk ? 'good' : 'muted' }, children: [describeConnection({ ok: isOk, cliPath: connection?.cliPath })] }),
+    makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: local.busy === 'connect' ? 'Checking…' : 'Check my Claude Code sign-in', onClick: () => {
+        void runBusy({
+          busy: 'connect',
+          rerender,
+          work: async () => {
+            const rec = await context.desk.testConnection({ mode: 'cli' });
+            if (!rec.ok) local.error = `${toText({ value: rec.error, fallback: 'It did not work.' })}${rec.needsSignIn ? ' Press Connect Claude to sign in.' : ''}`;
+            await context.refreshConnection();
+          },
+        });
+      }, cls: 'primary', disabled: local.busy === 'connect' }), renderButton({ label: 'Use an API key…', onClick: context.openConnect }), renderButton({ label: wizardState.connectSkipped ? 'Skipping for now' : 'Skip for now', onClick: () => context.set({ ...wizardState, connectSkipped: !wizardState.connectSkipped }) })] }),
+    renderMore(renderParagraph('Claude sees your goal, your answers and the repo\'s file names (never .env or key files). Checking a claim later also sends the diff under test, with secrets removed. If you skip this, you can still write the spec by hand and freeze it in a terminal.')),
   ];
 };
 
 // ---- spec ------------------------------------------------------------------
 
-const requestStep = (ctx: WizardCtx, sendAnswers: boolean, rerender: () => void): void => {
-  const s = ctx.state();
-  local.busy = 'draft';
-  local.error = null;
-  rerender();
-  ctx.desk
-    .wizardDraft({ request: buildStepRequest(s, { sendAnswers }) })
-    .then((r) => ctx.set(applyStepResponse(ctx.state(), r, { sentAnswers: sendAnswers })))
-    .catch((e) => {
-      local.error = msg(e) === 'Cancelled.' ? null : msg(e);
-    })
-    .finally(() => {
-      local.busy = null;
-      rerender();
-    });
+const requestStep = ({ context, sendAnswers, rerender }: { context: WizardCtx; sendAnswers: boolean; rerender: () => void }): void => {
+  const wizardState = context.state();
+  void runBusy({
+    busy: 'draft',
+    rerender,
+    work: async () => {
+      const ccStep = await context.desk.wizardDraft({ request: buildStepRequest({ state: wizardState, sendAnswers }) });
+      context.set(applyStepResponse({ state: context.state(), response: ccStep, sentAnswers: sendAnswers }));
+    },
+    // Cancelling is the user's own choice, not an error to show.
+    describeError: (error) => (renderMessage({ error }) === 'Cancelled.' ? null : renderMessage({ error })),
+  });
 };
 
-const thinking = (ctx: WizardCtx): HTMLElement => h('div', { class: 'working row' }, 'Claude is thinking…', btn('Cancel', () => void ctx.desk.wizardCancel()));
+const renderThinking = ({ context }: { context: WizardCtx }): HTMLElement => makeElement({ tag: 'div', props: { class: 'working row' }, children: ['Claude is thinking…', renderButton({ label: 'Cancel', onClick: () => void context.desk.wizardCancel() })] });
 
-const criteriaEditor = (ctx: WizardCtx, s: WizardState): HTMLElement => {
-  const warns = localWarnings(s.draft.criteria);
-  return h(
-    'div',
-    { class: 'criteria' },
-    h('h3', {}, 'Criteria'),
-    ...s.draft.criteria.map((c, i) => {
-      const notes = [...c.lint.map((l) => l.message), ...(warns[i] ?? [])];
-      return h(
-        'div',
-        { class: 'criterion', data: { index: i } },
-        h('span', { class: 'num' }, `${i + 1}.`),
-        h('div', {},
-          h('textarea', { attrs: { rows: 2, 'aria-label': `Criterion ${i + 1}` }, on: { input: (e) => ctx.set(updateCriterion(ctx.state(), i, { text: (e.target as HTMLTextAreaElement).value }), { render: false }) } }, c.text),
-          h('input', { attrs: { type: 'text', value: c.check, placeholder: 'How a test or an observation checks it', 'aria-label': `How criterion ${i + 1} is checked` }, on: { input: (e) => ctx.set(updateCriterion(ctx.state(), i, { check: (e.target as HTMLInputElement).value }), { render: false }) } }),
-          notes.length ? h('ul', { class: 'notes' }, ...[...new Set(notes)].map((n) => h('li', {}, n))) : null,
-        ),
-        btn('Delete', () => ctx.set(removeCriterion(ctx.state(), i)), 'ghost'),
-      );
-    }),
-    btn('Add a criterion', () => ctx.set(addCriterion(ctx.state()))),
-    h('label', { class: 'field' }, h('span', {}, 'Out of scope (one per line)'), h('textarea', { attrs: { rows: 3 }, on: { input: (e) => ctx.set(setOutOfScope(ctx.state(), (e.target as HTMLTextAreaElement).value), { render: false }) } }, s.draft.out_of_scope.join('\n'))),
-  );
+const renderCriteriaEditor = ({ context, wizardState }: { context: WizardCtx; wizardState: WizardState }): HTMLElement => {
+  const warns = collectLocalWarnings({ criteria: wizardState.draft.criteria });
+  return makeElement({ tag: 'div', props: { class: 'criteria' }, children: [makeElement({ tag: 'h3', props: {}, children: ['Criteria'] }), ...wizardState.draft.criteria.map((wizardCriterion, index) => {
+      const notes = [...wizardCriterion.lint.map((line) => line.message), ...(warns[index] ?? [])];
+      return makeElement({ tag: 'div', props: { class: 'criterion', dataset: { index: index } }, children: [makeElement({ tag: 'span', props: { class: 'num' }, children: [`${index + 1}.`] }), makeElement({ tag: 'div', props: {}, children: [makeElement({ tag: 'textarea', props: { attrs: { rows: 2, 'aria-label': `Criterion ${index + 1}` }, on: { input: (event) => context.set(updateCriterion({ state: context.state(), index, patch: { text: (event.target as HTMLTextAreaElement).value } }), { render: false }) } }, children: [wizardCriterion.text] }), makeElement({ tag: 'input', props: { attrs: { type: 'text', value: wizardCriterion.check, placeholder: 'How a test or an observation checks it', 'aria-label': `How criterion ${index + 1} is checked` }, on: { input: (event) => context.set(updateCriterion({ state: context.state(), index, patch: { check: (event.target as HTMLInputElement).value } }), { render: false }) } } }), notes.length ? makeElement({ tag: 'ul', props: { class: 'notes' }, children: [...[...new Set(notes)].map((note) => makeElement({ tag: 'li', props: {}, children: [note] }))] }) : null] }), renderButton({ label: 'Delete', onClick: () => context.set(removeCriterion({ state: context.state(), index })), cls: 'ghost' })] });
+    }), renderButton({ label: 'Add a criterion', onClick: () => context.set(addCriterion({ state: context.state() })) }), makeElement({ tag: 'label', props: { class: 'field' }, children: [makeElement({ tag: 'span', props: {}, children: ['Out of scope (one per line)'] }), makeElement({ tag: 'textarea', props: { attrs: { rows: 3 }, on: { input: (event) => context.set(setOutOfScope({ state: context.state(), value: (event.target as HTMLTextAreaElement).value }), { render: false }) } }, children: [wizardState.draft.out_of_scope.join('\n')] })] })] });
 };
 
-const spec = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] => {
-  if (s.connectSkipped) {
+const renderSpec = ({ context, wizardState, rerender }: { context: WizardCtx; wizardState: WizardState; rerender: () => void }): Child[] => {
+  if (wizardState.connectSkipped) {
     return [
-      h('h2', {}, 'Write the spec by hand'),
-      para('Without Claude, write the criteria yourself in .claimcheck/spec.md, one per line like "- [ ] 1. An order of exactly $50 ships free.", then freeze them in a terminal:'),
-      h('pre', { class: 'code' }, 'claimcheck spec freeze'),
-      para('You can come back and connect Claude any time. "Write a spec" on the board starts this step again.'),
+      makeElement({ tag: 'h2', props: {}, children: ['Write the spec by hand'] }),
+      renderParagraph('Without Claude, write the criteria yourself in .claimcheck/spec.md, one per line like "- [ ] 1. An order of exactly $50 ships free.", then freeze them in a terminal:'),
+      makeElement({ tag: 'pre', props: { class: 'code' }, children: ['claimcheck spec freeze'] }),
+      renderParagraph('You can come back and connect Claude any time. "Write a spec" on the board starts this step again.'),
     ];
   }
-  if (!s.started) {
+  if (!wizardState.started) {
     return [
-      h('h2', {}, 'What do you want built?'),
-      para('A sentence or two is enough. Claude asks what it needs to know, and you answer in plain words.'),
-      h('textarea', { class: 'goal', attrs: { rows: 4, placeholder: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', 'aria-label': 'What you want built' }, on: { input: (e) => ctx.set(setGoal(ctx.state(), (e.target as HTMLTextAreaElement).value), { render: false }) } }, s.goal),
-      local.busy === 'draft' ? thinking(ctx) : btn('Start', () => requestStep(ctx, false, rerender), 'primary', s.goal.trim().length === 0),
-      more(para('Nothing is frozen until you say so. You can edit any criterion, and Claude keeps your wording.')),
+      makeElement({ tag: 'h2', props: {}, children: ['What do you want built?'] }),
+      renderParagraph('A sentence or two is enough. Claude asks what it needs to know, and you answer in plain words.'),
+      makeElement({ tag: 'textarea', props: { class: 'goal', attrs: { rows: 4, placeholder: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', 'aria-label': 'What you want built' }, on: { input: (event) => context.set(setGoal({ state: context.state(), goal: (event.target as HTMLTextAreaElement).value }), { render: false }) } }, children: [wizardState.goal] }),
+      local.busy === 'draft' ? renderThinking({ context }) : renderButton({ label: 'Start', onClick: () => requestStep({ context, sendAnswers: false, rerender }), cls: 'primary', disabled: wizardState.goal.trim().length === 0 }),
+      renderMore(renderParagraph('Nothing is frozen until you say so. You can edit any criterion, and Claude keeps your wording.')),
     ];
   }
-  const cur = s.current;
-  const problems = blockingProblems(s);
-  const left = h(
-    'div',
-    { class: 'questions' },
-    h('h3', {}, `Claude asks (round ${roundNumber(s)})`),
-    cur && cur.questions.length
-      ? h('div', {}, ...cur.questions.map((q, i) => h('div', { class: 'question' }, h('p', {}, h('strong', {}, `${i + 1}. ${q.text}`)), q.why ? h('p', { class: 'muted' }, `Why: ${q.why}`) : null, h('textarea', { attrs: { rows: 2, placeholder: 'Leave blank to let Claude decide', 'aria-label': `Answer to question ${i + 1}` }, on: { input: (e) => ctx.set(setAnswer(ctx.state(), i, (e.target as HTMLTextAreaElement).value), { render: false }) } }, cur.answers[i] ?? ''))))
-      : para('Claude has no questions left.'),
-    s.draft.concerns.length ? h('div', {}, h('h4', {}, 'Claude flags'), h('ul', {}, ...s.draft.concerns.map((c) => h('li', {}, c)))) : null,
-  );
+  const cur = wizardState.current;
+  const problems = collectBlockingProblems({ state: wizardState });
+  const questionsPanel = makeElement({ tag: 'div', props: { class: 'questions' }, children: [makeElement({ tag: 'h3', props: {}, children: [`Claude asks (round ${toRoundNumber({ state: wizardState })})`] }), cur && cur.questions.length
+      ? makeElement({ tag: 'div', props: {}, children: [...cur.questions.map((question, index) => makeElement({ tag: 'div', props: { class: 'question' }, children: [makeElement({ tag: 'p', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: [`${index + 1}. ${question.text}`] })] }), question.why ? makeElement({ tag: 'p', props: { class: 'muted' }, children: [`Why: ${question.why}`] }) : null, makeElement({ tag: 'textarea', props: { attrs: { rows: 2, placeholder: 'Leave blank to let Claude decide', 'aria-label': `Answer to question ${index + 1}` }, on: { input: (event) => context.set(setAnswer({ state: context.state(), index, value: (event.target as HTMLTextAreaElement).value }), { render: false }) } }, children: [cur.answers[index] ?? ''] })] }))] })
+      : renderParagraph('Claude has no questions left.'), wizardState.draft.concerns.length ? makeElement({ tag: 'div', props: {}, children: [makeElement({ tag: 'h4', props: {}, children: ['Claude flags'] }), makeElement({ tag: 'ul', props: {}, children: [...wizardState.draft.concerns.map((text) => makeElement({ tag: 'li', props: {}, children: [text] }))] })] }) : null] });
   return [
-    h('h2', {}, 'Write the spec'),
-    local.busy === 'draft' ? thinking(ctx) : null,
-    h('div', { class: 'spec-grid' }, left, criteriaEditor(ctx, s)),
-    h(
-      'div',
-      { class: 'row' },
-      cur && cur.questions.length ? btn('Send answers', () => requestStep(ctx, true, rerender), '', local.busy === 'draft') : btn('Ask Claude to look again', () => requestStep(ctx, true, rerender), '', local.busy === 'draft'),
-      btn('Done, review the spec', () => ctx.set(goNext(ctx.state())), 'primary', local.busy === 'draft' || problems.length > 0),
-    ),
-    problems.length ? h('p', { class: 'muted' }, problems.join(' ')) : null,
+    makeElement({ tag: 'h2', props: {}, children: ['Write the spec'] }),
+    local.busy === 'draft' ? renderThinking({ context }) : null,
+    makeElement({ tag: 'div', props: { class: 'spec-grid' }, children: [questionsPanel, renderCriteriaEditor({ context, wizardState })] }),
+    makeElement({ tag: 'div', props: { class: 'row' }, children: [cur && cur.questions.length ? renderButton({ label: 'Send answers', onClick: () => requestStep({ context, sendAnswers: true, rerender }), cls: '', disabled: local.busy === 'draft' }) : renderButton({ label: 'Ask Claude to look again', onClick: () => requestStep({ context, sendAnswers: true, rerender }), cls: '', disabled: local.busy === 'draft' }), renderButton({ label: 'Done, review the spec', onClick: () => context.set(goNext({ state: context.state() })), cls: 'primary', disabled: local.busy === 'draft' || problems.length > 0 })] }),
+    problems.length ? makeElement({ tag: 'p', props: { class: 'muted' }, children: [problems.join(' ')] }) : null,
   ];
 };
 
 // ---- freeze ----------------------------------------------------------------
 
-const decode = (el: HTMLElement, final: string, ctx: WizardCtx): void => {
-  if (ctx.reducedMotion) {
-    el.textContent = final;
+const showDecode = ({ element, final, context }: { element: HTMLElement; final: string; context: WizardCtx }): void => {
+  if (context.reducedMotion) {
+    element.textContent = final;
     return;
   }
   const hex = '0123456789abcdef';
   const steps = 24;
-  let i = 0;
+  let index = 0;
   const tick = (): void => {
-    const locked = Math.floor((final.length * i) / steps);
+    const locked = Math.floor((final.length * index) / steps);
     let noise = '';
-    for (let k = locked; k < final.length; k += 1) noise += hex[Math.floor(Math.random() * 16)];
-    el.textContent = final.slice(0, locked) + noise;
-    i += 1;
-    if (i <= steps) local.animation.push(window.setTimeout(tick, 40));
-    else el.textContent = final;
+    for (let key = locked; key < final.length; key += 1) noise += hex[Math.floor(Math.random() * 16)];
+    element.textContent = final.slice(0, locked) + noise;
+    index += 1;
+    if (index <= steps) local.animation = [...local.animation, window.setTimeout(tick, 40)];
+    else element.textContent = final;
   };
   tick();
 };
 
-const freeze = (ctx: WizardCtx, s: WizardState, rerender: () => void): Child[] => {
-  const result = s.freeze.result;
-  if (result) {
-    const hash = h('code', { class: 'hash' }, '');
-    window.setTimeout(() => decode(hash, result.lock_sha256 ?? '', ctx), 0);
+const freeze = ({ context, wizardState, rerender }: { context: WizardCtx; wizardState: WizardState; rerender: () => void }): Child[] => {
+  const outcome = wizardState.freeze.outcome;
+  if (outcome) {
+    const hash = makeElement({ tag: 'code', props: { class: 'hash' }, children: [''] });
+    window.setTimeout(() => showDecode({ element: hash, final: outcome.lock_sha256 ?? '', context }), 0);
     return [
-      h('h2', {}, result.frozen ? 'The criteria are frozen' : 'The spec was written'),
-      h('ul', { class: 'checklist' },
-        h('li', {}, h('strong', {}, 'Criteria '), `${result.criteria}`),
-        result.frozen ? h('li', {}, h('strong', {}, 'Lock '), hash) : null,
-        result.branch ? h('li', {}, h('strong', {}, 'Branch '), h('code', {}, result.branch)) : null,
-        result.commit ? h('li', {}, h('strong', {}, 'Commit '), h('code', {}, shortHash(result.commit))) : null),
-      para('Nothing was pushed.'),
+      makeElement({ tag: 'h2', props: {}, children: [outcome.frozen ? 'The criteria are frozen' : 'The spec was written'] }),
+      makeElement({ tag: 'ul', props: { class: 'checklist' }, children: [makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Criteria '] }), `${outcome.criteria}`] }), outcome.frozen ? makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Lock '] }), hash] }) : null, outcome.branch ? makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Branch '] }), makeElement({ tag: 'code', props: {}, children: [outcome.branch] })] }) : null, outcome.commit ? makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'strong', props: {}, children: ['Commit '] }), makeElement({ tag: 'code', props: {}, children: [formatShortHash({ height: outcome.commit })] })] }) : null] }),
+      renderParagraph('Nothing was pushed.'),
     ];
   }
-  if (!s.draft.criteria.length) {
-    return [h('h2', {}, 'Nothing to freeze yet'), para('There are no criteria. Go back and write them, or freeze a hand-written spec in a terminal with'), h('pre', { class: 'code' }, 'claimcheck spec freeze')];
+  if (!wizardState.draft.criteria.length) {
+    return [makeElement({ tag: 'h2', props: {}, children: ['Nothing to freeze yet'] }), renderParagraph('There are no criteria. Go back and write them, or freeze a hand-written spec in a terminal with'), makeElement({ tag: 'pre', props: { class: 'code' }, children: ['claimcheck spec freeze'] })];
   }
   return [
-    h('h2', {}, 'Freeze the spec'),
-    para('This is the spec as it will be written. Once it is frozen, it cannot change without everyone seeing it.'),
-    h('pre', { class: 'code' }, specPreview(s)),
-    h('label', { class: 'check' }, h('input', { attrs: { type: 'checkbox', checked: s.freeze.makeBranch }, on: { change: (e) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, makeBranch: (e.target as HTMLInputElement).checked } }) } }), ' Commit it on a new task branch'),
-    s.freeze.makeBranch ? h('label', { class: 'field' }, h('span', {}, 'Branch name (optional)'), h('input', { attrs: { type: 'text', value: s.freeze.branch, placeholder: 'task/add-free-shipping' }, on: { input: (e) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, branch: (e.target as HTMLInputElement).value } }, { render: false }) } })) : null,
-    btn(local.busy === 'finish' ? 'Freezing…' : 'Freeze and commit', () => {
-      local.busy = 'finish';
-      local.error = null;
-      rerender();
-      const cur = ctx.state();
-      ctx.desk
-        .wizardFinish({ request: buildFinishRequest(cur), freeze: true, makeBranch: cur.freeze.makeBranch, branch: cur.freeze.branch })
-        .then((r) => ctx.set({ ...ctx.state(), freeze: { ...ctx.state().freeze, result: r } }))
-        .catch((e) => {
-          local.error = msg(e);
-        })
-        .finally(() => {
-          local.busy = null;
-          rerender();
-        });
-    }, 'primary', local.busy === 'finish'),
+    makeElement({ tag: 'h2', props: {}, children: ['Freeze the spec'] }),
+    renderParagraph('This is the spec as it will be written. Once it is frozen, it cannot change without everyone seeing it.'),
+    makeElement({ tag: 'pre', props: { class: 'code' }, children: [buildSpecPreview({ state: wizardState })] }),
+    makeElement({ tag: 'label', props: { class: 'check' }, children: [makeElement({ tag: 'input', props: { attrs: { type: 'checkbox', checked: wizardState.freeze.makeBranch }, on: { change: (event) => context.set({ ...context.state(), freeze: { ...context.state().freeze, makeBranch: (event.target as HTMLInputElement).checked } }) } } }), ' Commit it on a new task branch'] }),
+    wizardState.freeze.makeBranch ? makeElement({ tag: 'label', props: { class: 'field' }, children: [makeElement({ tag: 'span', props: {}, children: ['Branch name (optional)'] }), makeElement({ tag: 'input', props: { attrs: { type: 'text', value: wizardState.freeze.branch, placeholder: 'task/add-free-shipping' }, on: { input: (event) => context.set({ ...context.state(), freeze: { ...context.state().freeze, branch: (event.target as HTMLInputElement).value } }, { render: false }) } } })] }) : null,
+    renderButton({ label: local.busy === 'finish' ? 'Freezing…' : 'Freeze and commit', onClick: () => {
+      const cur = context.state();
+      void runBusy({
+        busy: 'finish',
+        rerender,
+        work: async () => {
+          const ccFinish = await context.desk.wizardFinish({ request: buildFinishRequest({ state: cur }), freeze: true, makeBranch: cur.freeze.makeBranch, branch: cur.freeze.branch });
+          context.set({ ...context.state(), freeze: { ...context.state().freeze, outcome: ccFinish } });
+        },
+      });
+    }, cls: 'primary', disabled: local.busy === 'finish' }),
   ];
 };
 
-const done = (ctx: WizardCtx, s: WizardState): Child[] => {
-  const r = s.freeze.result;
+const renderDone = ({ context, wizardState }: { context: WizardCtx; wizardState: WizardState }): Child[] => {
+  const freezeOutcome = wizardState.freeze.outcome;
   return [
-    h('h2', {}, "You're set up"),
-    h('ol', {}, h('li', {}, r?.branch ? `Have your coding agent build it on ${r.branch}. It finds the claimcheck rules in its own instructions file.` : 'Have your coding agent build the change. It finds the claimcheck rules in its own instructions file.'), h('li', {}, 'When it is done, press Run claimcheck on the board.'), h('li', {}, 'Come back here for anything that needs a decision.')),
-    btn('Open the board', ctx.exit, 'primary'),
+    makeElement({ tag: 'h2', props: {}, children: ["You're set up"] }),
+    makeElement({ tag: 'ol', props: {}, children: [makeElement({ tag: 'li', props: {}, children: [freezeOutcome?.branch ? `Have your coding agent build it on ${freezeOutcome.branch}. It finds the claimcheck rules in its own instructions file.` : 'Have your coding agent build the change. It finds the claimcheck rules in its own instructions file.'] }), makeElement({ tag: 'li', props: {}, children: ['When it is done, press Run claimcheck on the board.'] }), makeElement({ tag: 'li', props: {}, children: ['Come back here for anything that needs a decision.'] })] }),
+    renderButton({ label: 'Open the board', onClick: context.exit, cls: 'primary' }),
   ];
 };
 
 // ---- the whole wizard ---------------------------------------------------------
 
-export const renderWizard = (ctx: WizardCtx, mountInto: HTMLElement): void => {
-  const s = ctx.state();
-  if (local.step !== s.step + s.beat) {
-    clearTimers();
-    local.step = s.step + s.beat;
+/** The progress list's class for one step: the current one, one already done, or one still ahead. */
+const toStepClass = ({ isCurrent, isPast }: { isCurrent: boolean; isPast: boolean }): string => {
+  if (isCurrent) return 'current';
+  return isPast ? 'past' : '';
+};
+
+/** Saves the test command the user typed over the detected one, then moves on; a failure stays on this step. */
+const saveTestCmdThenNext = async ({ context: context, testCmd, rerender }: { context: WizardCtx; testCmd: string; rerender: () => void }): Promise<void> => {
+  try {
+    await context.desk.wizardSaveTestCmd({ testCmd });
+  } catch (error) {
+    local.error = renderMessage({ error });
+    rerender();
+    return;
+  }
+  context.set(goNext({ state: context.state() }));
+};
+
+export const renderWizard = ({ context, mountInto }: { context: WizardCtx; mountInto: HTMLElement }): void => {
+  const wizardState = context.state();
+  if (local.step !== wizardState.step + wizardState.beat) {
+    cancelTimers();
+    local.step = wizardState.step + wizardState.beat;
     local.error = null;
   }
-  const rerender = (): void => renderWizard(ctx, mountInto);
-  const body: Child[] =
-    s.step === 'welcome' ? welcome(ctx, s) : s.step === 'setup' ? setup(ctx, s, rerender) : s.step === 'connect' ? connect(ctx, s, rerender) : s.step === 'spec' ? spec(ctx, s, rerender) : s.step === 'freeze' ? freeze(ctx, s, rerender) : done(ctx, s);
+  const rerender = (): void => renderWizard({ context, mountInto });
+  const renderStep: Record<WizardState['step'], () => Child[]> = {
+    welcome: () => renderWelcome({ context, wizardState }),
+    setup: () => setup({ context, wizardState, rerender }),
+    connect: () => connect({ context, wizardState, rerender }),
+    spec: () => renderSpec({ context, wizardState, rerender }),
+    freeze: () => freeze({ context, wizardState, rerender }),
+    done: () => renderDone({ context, wizardState }),
+  };
+  const body = renderStep[wizardState.step]();
 
-  const back = goBack(s);
+  const back = goBack({ state: wizardState });
   const advance = (): void => {
-    if (s.step === 'setup') {
-      const init = s.setup.init;
-      const typed = ctx.state().setup.testCmd.trim();
+    if (wizardState.step === 'setup') {
+      const init = wizardState.setup.init;
+      const typed = context.state().setup.testCmd.trim();
       if (init && typed && typed !== init.stack.test_cmd) {
-        ctx.desk.wizardSaveTestCmd({ testCmd: typed }).then(() => ctx.set(goNext(ctx.state()))).catch((e) => {
-          local.error = msg(e);
-          rerender();
-        });
+        void saveTestCmdThenNext({ context: context, testCmd: typed, rerender });
         return;
       }
     }
-    ctx.set(goNext(ctx.state()));
+    context.set(goNext({ state: context.state() }));
   };
-  const canNext = s.step === 'spec' || s.step === 'freeze' || s.step === 'done' ? false : canContinue(s, { busy: local.busy !== null, connected: isConnected(ctx.connection()) });
-  const freezeDone = s.step === 'freeze' && Boolean(s.freeze.result);
-  const specSkipped = s.step === 'spec' && s.connectSkipped;
+  const canNext = wizardState.step === 'spec' || wizardState.step === 'freeze' || wizardState.step === 'done' ? false : canContinue({ state: wizardState, context: { busy: local.busy !== null, connected: isConnected({ connection: context.connection() }) } });
+  const isFreezeDone = wizardState.step === 'freeze' && Boolean(wizardState.freeze.outcome);
+  const isSpecSkipped = wizardState.step === 'spec' && wizardState.connectSkipped;
 
-  const nav = h(
-    'div',
-    { class: 'wizard-nav' },
-    back || s.step === 'spec' ? btn('Back', () => (back ? ctx.set(back) : ctx.exit())) : h('span'),
-    h(
-      'div',
-      { class: 'row' },
-      s.step === 'welcome' ? btn('Skip the intro', () => ctx.set(skipIntro(s)), 'ghost') : null,
-      s.step === 'welcome' || s.step === 'setup' || s.step === 'connect' ? btn(s.step === 'welcome' && s.beat < BEATS - 1 ? 'Next' : 'Continue', advance, 'primary', !canNext) : null,
-      specSkipped || freezeDone ? btn('Continue', () => ctx.set(goNext(ctx.state())), 'primary') : null,
-    ),
-  );
+  const nav = makeElement({ tag: 'div', props: { class: 'wizard-nav' }, children: [back || wizardState.step === 'spec' ? renderButton({ label: 'Back', onClick: () => (back ? context.set(back) : context.exit()) }) : makeElement({ tag: 'span' }), makeElement({ tag: 'div', props: { class: 'row' }, children: [wizardState.step === 'welcome' ? renderButton({ label: 'Skip the intro', onClick: () => context.set(skipIntro({ state: wizardState })), cls: 'ghost' }) : null, wizardState.step === 'welcome' || wizardState.step === 'setup' || wizardState.step === 'connect' ? renderButton({ label: wizardState.step === 'welcome' && wizardState.beat < BEATS - 1 ? 'Next' : 'Continue', onClick: advance, cls: 'primary', disabled: !canNext }) : null, isSpecSkipped || isFreezeDone ? renderButton({ label: 'Continue', onClick: () => context.set(goNext({ state: context.state() })), cls: 'primary' }) : null] })] });
 
-  const steps = h('ol', { class: 'steps', attrs: { 'aria-label': 'Progress' } }, ...STEPS.map((id, i) => h('li', { class: id === s.step ? 'current' : i < stepNumber(s) - 1 ? 'past' : '' }, STEP_LABELS[id])));
-  const root = h(
-    'div',
-    { class: 'wizard-wrap' },
-    h(
-      'div',
-      { class: 'wizard panel' },
-      h('p', { class: 'step-count' }, `Step ${stepNumber(s)} of ${STEPS.length}`),
-      steps,
-      h('div', { class: 'wizard-body' }, ...body, local.error ? h('p', { class: 'error', attrs: { role: 'alert' } }, local.error) : null),
-      nav,
-    ),
-  );
+  const steps = makeElement({ tag: 'ol', props: { class: 'steps', attrs: { 'aria-label': 'Progress' } }, children: [...STEPS.map((id, index) => makeElement({ tag: 'li', props: { class: toStepClass({ isCurrent: id === wizardState.step, isPast: index < toStepNumber({ state: wizardState }) - 1 }) }, children: [STEP_LABELS[id]] }))] });
+  const root = makeElement({ tag: 'div', props: { class: 'wizard' }, children: [makeElement({ tag: 'p', props: { class: 'muted' }, children: [`Step ${toStepNumber({ state: wizardState })} of ${STEPS.length}`] }), steps, makeElement({ tag: 'div', props: { class: 'wizard-body' }, children: [...body, local.error ? makeElement({ tag: 'p', props: { class: 'error', attrs: { role: 'alert' } }, children: [local.error] }) : null] }), nav] });
   while (mountInto.firstChild) mountInto.removeChild(mountInto.firstChild);
   mountInto.appendChild(root);
 };

@@ -14,14 +14,20 @@ Python 3.11+. Desk needs Node 22 (`.nvmrc`, CI).
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,claude]"
+ruff check                       # lint, zero errors
+mypy                             # src/ and tests/, zero errors
 python -m pytest -q              # about 100 seconds
 claimcheck verify-ledger         # CI runs this after the tests
 
 cd app && npm ci
 npm run typecheck                # both tsconfigs, zero errors
+npm run lint                     # ESLint, zero errors or warnings
 npm run build                    # main, preload and renderer into dist/
-npm test                         # typecheck, build, then node --test
+npm test                         # typecheck, lint, build, then node --test
 ```
+
+Lint runs beside pytest, never inside it. `claimcheck run` uses pytest to catch planted bugs, and a lint failure would count as a catch.
+The lint rules live in `pyproject.toml` (`[tool.ruff]`, `[tool.mypy]`) and `app/eslint.config.ts`. Never turn a rule off to get green; a line where a rule truly cannot apply gets an inline disable with a comment above it saying why. In Python the named-params convention is enforced by ruff's PLR0917 with `max-positional-args = 1`: one positional argument, everything after it keyword-only.
 
 CI runs the Desk tests under `xvfb-run -a` with `ELECTRON_DISABLE_SANDBOX=1`, because one test opens a real Electron window.
 

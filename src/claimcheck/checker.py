@@ -6,15 +6,10 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
+from typing import Any
 
-from . import ClaimsError, ProviderError
-from . import claims as CL
-from . import config as C
-from . import gitio, redact
-from . import providers
-from . import spec as S
+from . import ProviderError, claims, config, gitio, providers, redact, spec
 from .spec import Criterion
 
 VERDICTS = ("SUPPORTED", "REFUTED", "UNVERIFIABLE")
@@ -56,29 +51,23 @@ For every claim id return exactly one verdict:
 UNVERIFIABLE). Be literal and skeptical. Reply with JSON only."""
 
 
-def _redacted(claims: object) -> list[dict]:
+def _to_redacted(source: claims.ClaimsFile | list[claims.Claim] | list[dict] | None) -> list[dict]:
     """Accept a ClaimsFile, a list of Claim, or already-redacted dicts; never leak confidence / verified_by."""
-    if isinstance(claims, CL.ClaimsFile):
-        return CL.redact(claims)
-    out: list[dict] = []
-    for c in claims or []:  # type: ignore[union-attr]
-        if isinstance(c, CL.Claim):
-            out.append(CL.redact(CL.ClaimsFile(1, "", "", [c]))[0])
-        elif isinstance(c, dict):
-            out.append({k: c[k] for k in ("id", "claim", "criteria", "files", "kill_condition") if k in c})
-    return out
+    if isinstance(source, dict):
+        return claims.redact(source)
+    return claims.redact_claims([char for char in source or [] if isinstance(char, dict)])
 
 
-def build_prompt(criteria: list[Criterion], diff_text: str, claims: object) -> tuple[str, str]:
+def build_prompt(criteria: list[Criterion], *, diff_text: str, claims: claims.ClaimsFile | list[claims.Claim] | list[dict] | None) -> tuple[str, str]:
     """Pure: (system, user). Redacts the claims itself, so confidence / verified_by never reach the model."""
-    claims = _redacted(claims)
-    crit_lines = "\n".join(f"{c.id}. {c.text}" for c in criteria)
+    redacted_claims = _to_redacted(claims)
+    crit_lines = "\n".join(f"{criterion['id']}. {criterion['text']}" for criterion in criteria)
     user = (
         "## Frozen acceptance criteria\n"
         f"{crit_lines}\n\n"
         "## Claims\n"
         "```json\n"
-        f"{json.dumps(claims, indent=2, ensure_ascii=False)}\n"
+        f"{json.dumps(redacted_claims, indent=2, ensure_ascii=False)}\n"
         "```\n\n"
         "## Diff\n"
         "```diff\n"
@@ -89,7 +78,7 @@ def build_prompt(criteria: list[Criterion], diff_text: str, claims: object) -> t
     return SYSTEM_PROMPT, user
 
 
-def validate_verdicts(obj: object, claim_ids: set[str]) -> list[str]:
+def validate_verdicts(obj: object, *, claim_ids: set[str]) -> list[str]:
     """Hand-written check of the VERDICT_SCHEMA shape plus id coverage."""
     errs: list[str] = []
     if not isinstance(obj, dict) or set(obj.keys()) != {"verdicts"}:
@@ -98,143 +87,158 @@ def validate_verdicts(obj: object, claim_ids: set[str]) -> list[str]:
     if not isinstance(vs, list):
         return ["'verdicts' must be a list"]
     seen: set[str] = set()
-    for i, v in enumerate(vs):
-        if not isinstance(v, dict):
-            errs.append(f"verdicts[{i}] must be an object")
+    for index, value in enumerate(vs):
+        errs.extend(_collect_verdict_errors(index, verdict=value, claim_ids=claim_ids))
+        verdict_id = value.get("id") if isinstance(value, dict) and set(value.keys()) == VERDICT_KEYS else None
+        if not isinstance(verdict_id, str):
             continue
-        if set(v.keys()) != {"id", "verdict", "reason", "evidence"}:
-            errs.append(f"verdicts[{i}] has wrong keys: {sorted(v.keys())}")
-            continue
-        if not isinstance(v["id"], str) or v["id"] not in claim_ids:
-            errs.append(f"verdicts[{i}] unknown id {v['id']!r}")
-        if v["verdict"] not in VERDICTS:
-            errs.append(f"verdicts[{i}] bad verdict {v['verdict']!r}")
-        if not isinstance(v["reason"], str):
-            errs.append(f"verdicts[{i}] reason must be a string")
-        if not isinstance(v["evidence"], list) or any(not isinstance(e, str) for e in v["evidence"]):
-            errs.append(f"verdicts[{i}] evidence must be a list of strings")
-        if isinstance(v.get("id"), str):
-            if v["id"] in seen:
-                errs.append(f"verdicts[{i}] duplicate verdict for {v['id']!r}")
-            seen.add(v["id"])
+        if verdict_id in seen:
+            errs.append(f"verdicts[{index}] duplicate verdict for {verdict_id!r}")
+        seen.add(verdict_id)
     missing = sorted(claim_ids - seen)
     if missing:
         errs.append(f"missing verdicts for {missing}")
     return errs
 
 
-def _salvage(raw: str, claim_ids: set[str]) -> dict[str, dict]:
-    """Best-effort: keep individually valid verdicts from an otherwise invalid reply."""
-    out: dict[str, dict] = {}
+VERDICT_KEYS = {"id", "verdict", "reason", "evidence"}
+
+
+def _collect_verdict_errors(i: int, *, verdict: Any, claim_ids: set[str]) -> list[str]:
+    """What is wrong with one verdict object, on its own (duplicates are checked by the caller)."""
+    if not isinstance(verdict, dict):
+        return [f"verdicts[{i}] must be an object"]
+    if set(verdict.keys()) != VERDICT_KEYS:
+        return [f"verdicts[{i}] has wrong keys: {sorted(verdict.keys())}"]
+    checks = [
+        (not isinstance(verdict["id"], str) or verdict["id"] not in claim_ids, f"verdicts[{i}] unknown id {verdict['id']!r}"),
+        (verdict["verdict"] not in VERDICTS, f"verdicts[{i}] bad verdict {verdict['verdict']!r}"),
+        (not isinstance(verdict["reason"], str), f"verdicts[{i}] reason must be a string"),
+        (
+            not isinstance(verdict["evidence"], list) or any(not isinstance(error, str) for error in verdict["evidence"]),
+            f"verdicts[{i}] evidence must be a list of strings",
+        ),
+    ]
+    return [message for failed, message in checks if failed]
+
+
+def _parse_json_or_none(raw: str) -> Any:
+    """The parsed reply, or None when the model did not answer in JSON. ask() then retries."""
     try:
-        obj = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError:
-        return out
-    vs = obj.get("verdicts") if isinstance(obj, dict) else None
+        return None
+
+
+def _extract_salvageable(raw: str, *, claim_ids: set[str]) -> dict[str, dict]:
+    """Best-effort: keep individually valid verdicts from an otherwise invalid reply."""
+    verdicts_by_id: dict[str, dict] = {}
+    parsed = _parse_json_or_none(raw)
+    vs = parsed.get("verdicts") if isinstance(parsed, dict) else None
     if not isinstance(vs, list):
-        return out
-    for v in vs:
+        return verdicts_by_id
+    for value in vs:
         if (
-            isinstance(v, dict)
-            and isinstance(v.get("id"), str)
-            and v["id"] in claim_ids
-            and v.get("verdict") in VERDICTS
-            and isinstance(v.get("reason"), str)
-            and isinstance(v.get("evidence"), list)
-            and all(isinstance(e, str) for e in v["evidence"])
+            isinstance(value, dict)
+            and isinstance(value.get("id"), str)
+            and value["id"] in claim_ids
+            and value.get("verdict") in VERDICTS
+            and isinstance(value.get("reason"), str)
+            and isinstance(value.get("evidence"), list)
+            and all(isinstance(error, str) for error in value["evidence"])
         ):
-            mine = {"id": v["id"], "verdict": v["verdict"], "reason": v["reason"], "evidence": v["evidence"]}
-            out[v["id"]] = _worse(out.get(v["id"]), mine)
-    return out
+            mine = {"id": value["id"], "verdict": value["verdict"], "reason": value["reason"], "evidence": value["evidence"]}
+            verdicts_by_id[value["id"]] = _pick_worse(verdicts_by_id.get(value["id"]), other=mine)
+    return verdicts_by_id
 
 
 _SEVERITY = {"REFUTED": 2, "UNVERIFIABLE": 1, "SUPPORTED": 0}
 
 
-def _worse(a: dict | None, b: dict) -> dict:
+def _pick_worse(a: dict | None, *, other: dict) -> dict:
     """Of two verdicts for one claim keep the harsher one. A refutation is never quietly overwritten."""
     if a is None:
-        return b
-    return a if _SEVERITY[a["verdict"]] >= _SEVERITY[b["verdict"]] else b
+        return other
+    return a if _SEVERITY[a["verdict"]] >= _SEVERITY[other["verdict"]] else other
 
 
-def ask(provider: providers.Provider, system: str, user: str, claim_ids: list[str]) -> list[dict]:
+def ask(provider: providers.Provider, *, system: str, user: str, claim_ids: list[str]) -> list[dict]:
     """Call the provider, retry once on an invalid reply, then fill gaps with UNVERIFIABLE."""
     ids = set(claim_ids)
     salvaged: dict[str, dict] = {}
     for _attempt in range(2):
-        raw = provider.complete(system, user, schema=VERDICT_SCHEMA)
-        try:
-            obj = json.loads(raw)
-        except json.JSONDecodeError:
+        raw = providers.ask_model(provider, system=system, user=user, schema=VERDICT_SCHEMA)
+        parsed = _parse_json_or_none(raw)
+        if parsed is None:
             continue
-        if not validate_verdicts(obj, ids):
-            by_id = {v["id"]: v for v in obj["verdicts"]}
-            return [by_id[i] for i in claim_ids]
+        if not validate_verdicts(parsed, claim_ids=ids):
+            by_id = {each_verdict["id"]: each_verdict for each_verdict in parsed["verdicts"]}
+            return [by_id[claim_id] for claim_id in claim_ids]
         # Keep what was usable from this reply: a REFUTED in a flawed first reply must survive a
         # second reply that is also flawed.
-        for cid, v in _salvage(raw, ids).items():
-            salvaged[cid] = _worse(salvaged.get(cid), v)
+        for cid, value in _extract_salvageable(raw, claim_ids=ids).items():
+            salvaged[cid] = _pick_worse(salvaged.get(cid), other=value)
     return [
         salvaged.get(
-            i, {"id": i, "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
+            claim_id, {"id": claim_id, "verdict": "UNVERIFIABLE", "reason": "provider output unparseable", "evidence": []}
         )
-        for i in claim_ids
+        for claim_id in claim_ids
     ]
 
 
 def run_check(
     repo: Path,
-    cfg: C.Config,
-    *,
+    *, settings: config.Config,
     base: str | None = None,
     provider_name: str | None = None,
     model: str | None = None,
     worktree: bool = False,
     criteria: list[Criterion] | None = None,
-    claims_file: CL.ClaimsFile | None = None,
+    claims_file: claims.ClaimsFile | None = None,
 ) -> tuple[dict, int]:
     """Returns (result, exit_code). Raises SpecError / ClaimsError / ProviderError."""
-    base = base or cfg.base
-    provider_name = provider_name or cfg.checker_provider
-    model = model or cfg.checker_model
+    base = base or settings["base"]
+    provider_name = provider_name or settings["checker_provider"]
+    model = model or settings["checker_model"]
 
-    raw_diff = gitio.require_diff(repo, base, worktree)  # before any spec, claims or provider work
+    # Before any spec, claims or provider work.
+    raw_diff = gitio.ensure_diff(repo, base=base, worktree=worktree)
 
     if criteria is None:
-        S.enforce_open_diff_rules(repo, cfg, base)
-        criteria = S.verify(repo)
-    lock = S.read_lock(repo)
+        spec.check_open_diff_rules(repo, settings=settings, base=base)
+        criteria = spec.validate_spec(repo)
+    lock = spec.read_lock(repo)
     if claims_file is None:
-        claims_file = CL.load_file(CL.claims_path(repo), S.lock_ids(lock))
+        claims_file = claims.load_file(claims.resolve_claims_path(repo), lock_ids=spec.list_lock_ids(lock))
 
     # Whatever leaves this process is filtered first: secret files withheld, secret-looking values
     # redacted, size capped. What was held back is recorded in the result (never its content).
     diff, sent = redact.filter_diff(raw_diff)
-    system, user = build_prompt(criteria, diff, claims_file)
-    claim_ids = [c.id for c in claims_file.claims]
+    system, user = build_prompt(criteria, diff_text=diff, claims=claims_file)
+    claim_ids = [claim["id"] for claim in claims_file["claims"]]
 
     try:
         provider = providers.load(provider_name, model=model)
-        verdicts = ask(provider, system, user, claim_ids) if claim_ids else []
-    except ValueError as e:
-        raise ProviderError(str(e))
-    except Exception as e:  # SDK errors, network, import errors
-        raise ProviderError(f"{type(e).__name__}: {e}")
+        verdicts = ask(provider, system=system, user=user, claim_ids=claim_ids) if claim_ids else []
+    except ValueError as error:
+        raise ProviderError(str(error)) from error
+    # SDK errors, network, import errors.
+    except Exception as error:
+        raise ProviderError(f"{type(error).__name__}: {error}") from error
 
-    result = {
-        "run_id": C.new_run_id(),
-        "ts": C.utc_now_iso(),
-        "base": gitio.rev_parse(repo, base),
-        "head": "worktree" if worktree else gitio.head_sha(repo),
-        "spec_lock": C.sha256_bytes(S.lock_path(repo).read_bytes()),
+    outcome = {
+        "run_id": config.make_run_id(),
+        "ts": config.format_utc_now(),
+        "base": gitio.resolve_ref(repo, ref=base),
+        "head": "worktree" if worktree else gitio.read_head_sha(repo),
+        "spec_lock": config.hash_bytes(spec.resolve_lock_path(repo).read_bytes()),
         "provider": provider_name,
         "model": None if provider_name == "stub" else model,
         "verdicts": verdicts,
-        "sent": sent.as_dict(),
+        "sent": dict(sent),
     }
-    runs = C.cc_dir(repo) / C.RUNS_DIR
+    runs = config.resolve_cc_dir(repo) / config.RUNS_DIR
     runs.mkdir(parents=True, exist_ok=True)
-    (runs / f"{result['run_id']}-check.json").write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    code = 2 if any(v["verdict"] == "REFUTED" for v in verdicts) else 0
-    return result, code
+    (runs / f"{outcome['run_id']}-check.json").write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    code = 2 if any(each_verdict["verdict"] == "REFUTED" for each_verdict in verdicts) else 0
+    return outcome, code

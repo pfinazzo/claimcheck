@@ -10,14 +10,17 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-let cached: string | null = null;
+// The app root, found once and then reused.
+const cache: { cached: string | null } = {
+  cached: null,
+};
 
-export const appRoot = (from: string = import.meta.url): string => {
-  if (cached) return cached;
+export const resolveAppRoot = ({ from = import.meta.url }: { from?: string } = {}): string => {
+  if (cache.cached) return cache.cached;
   let dir = path.dirname(fileURLToPath(from));
-  for (let i = 0; i < 6; i += 1) {
+  for (let index = 0; index < 6; index += 1) {
     if (existsSync(path.join(dir, 'package.json')) && existsSync(path.join(dir, 'prompts'))) {
-      cached = dir;
+      cache.cached = dir;
       return dir;
     }
     dir = path.dirname(dir);

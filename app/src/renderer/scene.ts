@@ -25,24 +25,12 @@ type Palette = {
   blending: THREE.Blending;
 };
 
-const PALETTES: Record<'light' | 'dark', Palette> = {
-  dark: {
-    near: new THREE.Color('#7c8cff'),
-    far: new THREE.Color('#3ad0c0'),
-    pointAlpha: 0.85,
-    gridAlpha: 0.32,
-    horizonAlpha: 0.5,
-    blending: THREE.AdditiveBlending,
-  },
-  light: {
-    near: new THREE.Color('#4f5fe8'),
-    far: new THREE.Color('#1fa89a'),
-    pointAlpha: 0.5,
-    gridAlpha: 0.16,
-    horizonAlpha: 0.18,
-    blending: THREE.NormalBlending,
-  },
-};
+const PALETTES = new Map<'light' | 'dark', Palette>([
+  ['dark', { near: new THREE.Color('#7c8cff'), far: new THREE.Color('#3ad0c0'), pointAlpha: 0.85, gridAlpha: 0.32, horizonAlpha: 0.5, blending: THREE.AdditiveBlending }],
+  ['light', { near: new THREE.Color('#4f5fe8'), far: new THREE.Color('#1fa89a'), pointAlpha: 0.5, gridAlpha: 0.16, horizonAlpha: 0.18, blending: THREE.NormalBlending }],
+]);
+
+const FALLBACK_PALETTE = PALETTES.get('dark') as Palette;
 
 const GRID_COLUMNS = 48;
 const GRID_ROWS = 60;
@@ -51,10 +39,13 @@ const GRID_DEPTH = 110;
 const GRID_SEGMENTS = 4;
 const POINT_COLUMNS = 64;
 const POINT_ROWS = 64;
+const POINT_COUNT = POINT_COLUMNS * POINT_ROWS;
 const MAX_PIXEL_RATIO = 2;
 const PARALLAX_X = 1.1;
 const PARALLAX_Y = 0.5;
 const EASE = 0.045;
+const MAX_FRAME_SECONDS = 0.1;
+const SCROLL_SPEED = 1.6;
 
 /** The wave every vertex rides, shared by the grid and the points so they stay in step. */
 const WAVE_GLSL = `
@@ -157,7 +148,7 @@ const buildGlowTexture = (): THREE.CanvasTexture => {
   return texture;
 };
 
-const gridUniforms = (palette: Palette): Record<string, THREE.IUniform> => ({
+const buildGridUniforms = ({ palette }: { palette: Palette }): Record<string, THREE.IUniform> => ({
   uTime: { value: 0 },
   uScroll: { value: 0 },
   uNear: { value: palette.near.clone() },
@@ -165,38 +156,31 @@ const gridUniforms = (palette: Palette): Record<string, THREE.IUniform> => ({
   uAlpha: { value: palette.gridAlpha },
 });
 
-/** Grid lines along x and along z, each subdivided so the wave bends them. */
-const buildGrid = (palette: Palette): THREE.LineSegments<THREE.BufferGeometry, THREE.ShaderMaterial> => {
-  const vertices: number[] = [];
-  const pushSegment = (ax: number, az: number, bx: number, bz: number): void => {
-    for (let s = 0; s < GRID_SEGMENTS; s += 1) {
-      const t0 = s / GRID_SEGMENTS;
-      const t1 = (s + 1) / GRID_SEGMENTS;
-      vertices.push(ax + (bx - ax) * t0, 0, az + (bz - az) * t0, ax + (bx - ax) * t1, 0, az + (bz - az) * t1);
-    }
-  };
-  for (let row = 0; row <= GRID_ROWS; row += 1) {
-    const z = (row / GRID_ROWS - 0.5) * GRID_DEPTH;
-    for (let column = 0; column < GRID_COLUMNS; column += 1) {
-      const x0 = (column / GRID_COLUMNS - 0.5) * GRID_WIDTH;
-      const x1 = ((column + 1) / GRID_COLUMNS - 0.5) * GRID_WIDTH;
-      pushSegment(x0, z, x1, z);
-    }
-  }
-  for (let column = 0; column <= GRID_COLUMNS; column += 1) {
-    const x = (column / GRID_COLUMNS - 0.5) * GRID_WIDTH;
-    for (let row = 0; row < GRID_ROWS; row += 1) {
-      const z0 = (row / GRID_ROWS - 0.5) * GRID_DEPTH;
-      const z1 = ((row + 1) / GRID_ROWS - 0.5) * GRID_DEPTH;
-      pushSegment(x, z0, x, z1);
-    }
-  }
+/** One straight line on the floor, cut into short pieces so the wave can bend it. Returns x, y, z for each end of each piece. */
+const splitLine = ({ startX, startZ, endX, endZ }: { startX: number; startZ: number; endX: number; endZ: number }): number[] =>
+  Array.from({ length: GRID_SEGMENTS }, (_, piece) => {
+    const from = piece / GRID_SEGMENTS;
+    const to = (piece + 1) / GRID_SEGMENTS;
+    return [startX + (endX - startX) * from, 0, startZ + (endZ - startZ) * from, startX + (endX - startX) * to, 0, startZ + (endZ - startZ) * to];
+  }).flat();
+
+const toGridX = ({ column }: { column: number }): number => (column / GRID_COLUMNS - 0.5) * GRID_WIDTH;
+const toGridZ = ({ row }: { row: number }): number => (row / GRID_ROWS - 0.5) * GRID_DEPTH;
+
+/** Grid lines along x and along z. */
+const buildGridVertices = (): number[] => {
+  const lines = Array.from({ length: GRID_ROWS + 1 }, (_, row) => Array.from({ length: GRID_COLUMNS }, (_unused, column) => splitLine({ startX: toGridX({ column }), startZ: toGridZ({ row }), endX: toGridX({ column: column + 1 }), endZ: toGridZ({ row }) })).flat());
+  const across = Array.from({ length: GRID_COLUMNS + 1 }, (_, column) => Array.from({ length: GRID_ROWS }, (_unused, row) => splitLine({ startX: toGridX({ column }), startZ: toGridZ({ row }), endX: toGridX({ column }), endZ: toGridZ({ row: row + 1 }) })).flat());
+  return [...lines.flat(), ...across.flat()];
+};
+
+const buildGrid = ({ palette }: { palette: Palette }): THREE.LineSegments<THREE.BufferGeometry, THREE.ShaderMaterial> => {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buildGridVertices()), 3));
   const material = new THREE.ShaderMaterial({
     vertexShader: GRID_VERTEX_SHADER,
     fragmentShader: GRID_FRAGMENT_SHADER,
-    uniforms: gridUniforms(palette),
+    uniforms: buildGridUniforms({ palette }),
     transparent: true,
     depthWrite: false,
     blending: palette.blending,
@@ -207,18 +191,18 @@ const buildGrid = (palette: Palette): THREE.LineSegments<THREE.BufferGeometry, T
 };
 
 const buildPoints = ({ palette, pixelRatio }: { palette: Palette; pixelRatio: number }): THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial> => {
-  const count = POINT_COLUMNS * POINT_ROWS;
-  const positions = new Float32Array(count * 3);
-  const seeds = new Float32Array(count);
-  for (let row = 0; row < POINT_ROWS; row += 1) {
-    for (let column = 0; column < POINT_COLUMNS; column += 1) {
-      const at = row * POINT_COLUMNS + column;
-      positions[at * 3] = (column / (POINT_COLUMNS - 1) - 0.5) * GRID_WIDTH + (hashToUnit({ id: `x${at}`, salt: 3 }) - 0.5) * 1.4;
-      positions[at * 3 + 1] = hashToUnit({ id: `y${at}`, salt: 7 }) * 6;
-      positions[at * 3 + 2] = (row / (POINT_ROWS - 1) - 0.5) * GRID_DEPTH + (hashToUnit({ id: `z${at}`, salt: 5 }) - 0.5) * 1.4;
-      seeds[at] = hashToUnit({ id: `s${at}`, salt: 11 });
-    }
-  }
+  const positions = Float32Array.from(
+    Array.from({ length: POINT_COUNT }, (_, at) => {
+      const row = Math.floor(at / POINT_COLUMNS);
+      const column = at % POINT_COLUMNS;
+      return [
+        (column / (POINT_COLUMNS - 1) - 0.5) * GRID_WIDTH + (hashToUnit({ id: `x${at}`, salt: 3 }) - 0.5) * 1.4,
+        hashToUnit({ id: `y${at}`, salt: 7 }) * 6,
+        (row / (POINT_ROWS - 1) - 0.5) * GRID_DEPTH + (hashToUnit({ id: `z${at}`, salt: 5 }) - 0.5) * 1.4,
+      ];
+    }).flat(),
+  );
+  const seeds = Float32Array.from({ length: POINT_COUNT }, (_, at) => hashToUnit({ id: `s${at}`, salt: 11 }));
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
@@ -241,20 +225,22 @@ const buildPoints = ({ palette, pixelRatio }: { palette: Palette; pixelRatio: nu
   return points;
 };
 
-const setUniform = (material: THREE.ShaderMaterial, name: string, value: number): void => {
+const setUniform = ({ material, name, value }: { material: THREE.ShaderMaterial; name: string; value: number }): void => {
   const uniform = material.uniforms[name];
   if (uniform) uniform.value = value;
 };
 
+const makeRenderer = ({ canvas }: { canvas: HTMLCanvasElement }): THREE.WebGLRenderer | null => {
+  try {
+    return new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+  } catch {
+    return null;
+  }
+};
+
 /** Builds the scene on `canvas`. Returns null when WebGL is unavailable, and the page carries on without it. */
 export const createScene = ({ canvas, reducedMotion, theme }: { canvas: HTMLCanvasElement; reducedMotion: boolean; theme: 'light' | 'dark' }): Scene | null => {
-  const renderer = (() => {
-    try {
-      return new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true, powerPreference: 'low-power' });
-    } catch {
-      return null;
-    }
-  })();
+  const renderer = makeRenderer({ canvas });
   if (!renderer) return null;
 
   const pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
@@ -269,23 +255,22 @@ export const createScene = ({ canvas, reducedMotion, theme }: { canvas: HTMLCanv
   camera.position.copy(cameraHome);
   camera.lookAt(cameraTarget);
 
-  let palette = PALETTES[theme];
-  let grid = buildGrid(palette);
-  let points = buildPoints({ palette, pixelRatio });
-  scene.add(grid, points);
+  // The parts that change with the light or dark setting live in one holder, so a theme change swaps them in place.
+  const parts = { palette: PALETTES.get(theme) ?? FALLBACK_PALETTE, grid: buildGrid({ palette: PALETTES.get(theme) ?? FALLBACK_PALETTE }), points: buildPoints({ palette: PALETTES.get(theme) ?? FALLBACK_PALETTE, pixelRatio }) };
+  scene.add(parts.grid, parts.points);
 
   const glowTexture = buildGlowTexture();
-  const horizon = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture, color: palette.near, transparent: true, opacity: palette.horizonAlpha, blending: palette.blending, depthWrite: false }));
+  const horizon = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture, color: parts.palette.near, transparent: true, opacity: parts.palette.horizonAlpha, blending: parts.palette.blending, depthWrite: false }));
   horizon.position.set(0, -1, -48);
   horizon.scale.set(90, 34, 1);
   scene.add(horizon);
 
   const pointer = new THREE.Vector2(0, 0);
   const pointerEased = new THREE.Vector2(0, 0);
-  let frame = 0;
-  let disposed = false;
-  let needsStill = true;
   const clock = new THREE.Clock();
+  let frame = 0;
+  let isDisposed = false;
+  let isStillNeeded = true;
 
   const resize = (): void => {
     const width = canvas.clientWidth || window.innerWidth;
@@ -293,14 +278,14 @@ export const createScene = ({ canvas, reducedMotion, theme }: { canvas: HTMLCanv
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
-    needsStill = true;
+    isStillNeeded = true;
   };
 
-  const step = (elapsed: number, delta: number): void => {
+  const step = ({ elapsed, delta }: { elapsed: number; delta: number }): void => {
     const ease = reducedMotion ? 1 : Math.min(1, EASE * (delta * 60));
-    setUniform(grid.material, 'uTime', elapsed);
-    setUniform(grid.material, 'uScroll', elapsed * 1.6);
-    setUniform(points.material, 'uTime', elapsed);
+    setUniform({ material: parts.grid.material, name: 'uTime', value: elapsed });
+    setUniform({ material: parts.grid.material, name: 'uScroll', value: elapsed * SCROLL_SPEED });
+    setUniform({ material: parts.points.material, name: 'uTime', value: elapsed });
     pointerEased.lerp(pointer, ease);
     camera.position.set(cameraHome.x + pointerEased.x * PARALLAX_X, cameraHome.y - pointerEased.y * PARALLAX_Y, cameraHome.z);
     camera.lookAt(cameraTarget);
@@ -308,57 +293,60 @@ export const createScene = ({ canvas, reducedMotion, theme }: { canvas: HTMLCanv
   };
 
   const loop = (): void => {
-    if (disposed) return;
+    if (isDisposed) return;
     frame = window.requestAnimationFrame(loop);
     if (document.hidden) return;
-    if (reducedMotion && !needsStill) return;
-    needsStill = false;
-    const delta = Math.min(clock.getDelta(), 0.1);
-    step(clock.elapsedTime, delta);
+    if (reducedMotion && !isStillNeeded) return;
+    isStillNeeded = false;
+    const delta = Math.min(clock.getDelta(), MAX_FRAME_SECONDS);
+    step({ elapsed: clock.elapsedTime, delta });
   };
 
-  const setTheme = (next: 'light' | 'dark'): void => {
-    palette = PALETTES[next];
-    scene.remove(grid, points);
-    grid.geometry.dispose();
-    grid.material.dispose();
-    points.geometry.dispose();
-    points.material.dispose();
-    grid = buildGrid(palette);
-    points = buildPoints({ palette, pixelRatio });
-    scene.add(grid, points);
-    horizon.material.color.set(palette.near);
-    horizon.material.opacity = palette.horizonAlpha;
-    horizon.material.blending = palette.blending;
+  const applyTheme = ({ next }: { next: 'light' | 'dark' }): void => {
+    parts.palette = PALETTES.get(next) ?? FALLBACK_PALETTE;
+    scene.remove(parts.grid, parts.points);
+    parts.grid.geometry.dispose();
+    parts.grid.material.dispose();
+    parts.points.geometry.dispose();
+    parts.points.material.dispose();
+    parts.grid = buildGrid({ palette: parts.palette });
+    parts.points = buildPoints({ palette: parts.palette, pixelRatio });
+    scene.add(parts.grid, parts.points);
+    horizon.material.color.set(parts.palette.near);
+    horizon.material.opacity = parts.palette.horizonAlpha;
+    horizon.material.blending = parts.palette.blending;
     horizon.material.needsUpdate = true;
-    needsStill = true;
+    isStillNeeded = true;
   };
 
-  const onPointerMove = (event: PointerEvent): void => {
-    pointer.set((event.clientX / window.innerWidth) * 2 - 1, (event.clientY / window.innerHeight) * 2 - 1);
-    needsStill = true;
+  const listeners = {
+    pointerMove: (event: PointerEvent): void => {
+      pointer.set((event.clientX / window.innerWidth) * 2 - 1, (event.clientY / window.innerHeight) * 2 - 1);
+      isStillNeeded = true;
+    },
+    pointerLeave: (): void => {
+      pointer.set(0, 0);
+    },
+    resize,
   };
-  const onLeave = (): void => {
-    pointer.set(0, 0);
-  };
-  window.addEventListener('pointermove', onPointerMove);
-  window.addEventListener('pointerleave', onLeave);
-  window.addEventListener('resize', resize);
+  window.addEventListener('pointermove', listeners.pointerMove);
+  window.addEventListener('pointerleave', listeners.pointerLeave);
+  window.addEventListener('resize', listeners.resize);
   resize();
   loop();
 
   return {
-    setTheme,
+    setTheme: (next) => applyTheme({ next }),
     dispose: () => {
-      disposed = true;
+      isDisposed = true;
       window.cancelAnimationFrame(frame);
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerleave', onLeave);
-      window.removeEventListener('resize', resize);
-      grid.geometry.dispose();
-      grid.material.dispose();
-      points.geometry.dispose();
-      points.material.dispose();
+      window.removeEventListener('pointermove', listeners.pointerMove);
+      window.removeEventListener('pointerleave', listeners.pointerLeave);
+      window.removeEventListener('resize', listeners.resize);
+      parts.grid.geometry.dispose();
+      parts.grid.material.dispose();
+      parts.points.geometry.dispose();
+      parts.points.material.dispose();
       horizon.material.dispose();
       glowTexture.dispose();
       renderer.dispose();

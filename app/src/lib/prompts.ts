@@ -10,10 +10,11 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import type { Proposal, PromptContext } from '../shared/types.ts';
-import { appRoot } from './paths.ts';
+import { resolveAppRoot } from './paths.ts';
 import { redactText } from './redact.ts';
+import { toText } from '../shared/text.ts';
 
-const promptsDir = (): string => path.join(appRoot(), 'prompts');
+const resolvePromptsDir = (): string => path.join(resolveAppRoot(), 'prompts');
 
 export const CLOSING_SENTENCE =
   'Do not change any code yet. Propose three to four genuinely different ways to resolve this, each with pros, cons, effort (small, medium or large) and the files it touches, and wait for me to choose.';
@@ -65,8 +66,8 @@ export const BLOCKED_TOOLS = [
   'Bash(pip install *)', 'Bash(pip3 install *)', 'Bash(uv add *)', 'Bash(cargo add *)',
   'Bash(cat *)', 'Bash(sed *)', 'Bash(grep *)', 'Bash(rg *)', 'Bash(find *)',
   'WebFetch', 'WebSearch',
-  ...SECRET_PATHS.flatMap((g) => [`Read(${g})`, `Edit(${g})`, `Write(${g})`]),
-  ...PROTECTED_WRITES.flatMap((g) => [`Edit(${g})`, `Write(${g})`]),
+  ...SECRET_PATHS.flatMap((filePath) => [`Read(${filePath})`, `Edit(${filePath})`, `Write(${filePath})`]),
+  ...PROTECTED_WRITES.flatMap((filePath) => [`Edit(${filePath})`, `Write(${filePath})`]),
 ];
 
 export const PROPOSALS_SCHEMA = {
@@ -97,22 +98,22 @@ export const PROPOSALS_SCHEMA = {
   additionalProperties: false,
 };
 
-const readTemplate = (name: string): string => readFileSync(path.join(promptsDir(), name), 'utf8');
+const readTemplate = ({ name }: { name: string }): string => readFileSync(path.join(resolvePromptsDir(), name), 'utf8');
 
-const fill = (template: string, values: Record<string, unknown>): string => template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => String(values[key] ?? ''));
+const makeFill = ({ template, values }: { template: string; values: Record<string, unknown> }): string => template.replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => toText({ value: values[key] }));
 
-const bullet = (items: string[] | undefined, empty = '(none)'): string => (items?.length ? items.map((i) => `- ${i}`).join('\n') : empty);
+const formatBullet = ({ items, empty = '(none)' }: { items: readonly string[] | undefined; empty?: string }): string => (items?.length ? items.map((entry) => `- ${entry}`).join('\n') : empty);
 
 /** The claim written out, shared by the propose and implement prompts. */
-export const describeClaim = (ctx: PromptContext): string => {
-  const { claim } = ctx;
+export const describeClaim = ({ context }: { context: PromptContext }): string => {
+  const { claim } = context;
   const verdict = claim.verdict
     ? `${claim.verdict.verdict} — ${claim.verdict.reason || '(no reason given)'}`
     : 'no independent check has run yet';
-  const evidence = bullet(claim.verdict?.evidence ?? [], '(none quoted)');
-  const survivors = (claim.mutation?.mutants ?? []).filter((m) => m.outcome === 'survived');
+  const evidence = formatBullet({ items: claim.verdict?.evidence ?? [], empty: '(none quoted)' });
+  const survivors = (claim.mutation?.mutants ?? []).filter((mutant) => mutant.outcome === 'survived');
   const mutantLines = survivors.length
-    ? survivors.map((m) => `- ${m.file}:${m.line_no}  ${m.original.trim()}  →  ${m.mutated.trim()}  (${m.cls})`).join('\n')
+    ? survivors.map((mutant) => `- ${mutant.file}:${mutant.line_no}  ${mutant.original.trim()}  →  ${mutant.mutated.trim()}  (${mutant.cls})`).join('\n')
     : '(none survived)';
   const rate = claim.mutation?.catchRate;
   const catchLine = claim.mutation
@@ -121,7 +122,7 @@ export const describeClaim = (ctx: PromptContext): string => {
   return [
     `Claim: ${claim.claim}`,
     `Stated confidence: ${claim.confidence}`,
-    `Spec criteria it supports:\n${bullet(claim.criteria.map((c) => `${c.id}. ${c.text}`))}`,
+    `Spec criteria it supports:\n${formatBullet({ items: claim.criteria.map((criterion) => `${criterion.id}. ${criterion.text}`) })}`,
     `Independent checker verdict: ${verdict}`,
     `Checker evidence (verbatim diff lines):\n${evidence}`,
     `Planted-bug results: ${catchLine}`,
@@ -132,25 +133,25 @@ export const describeClaim = (ctx: PromptContext): string => {
   ].join('\n\n');
 };
 
-const header = (ctx: PromptContext): string =>
+const renderHeader = ({ context }: { context: PromptContext }): string =>
   [
-    `Repository: ${ctx.repo.origin || '(no origin)'}`,
-    `On this computer it is at: ${ctx.repo.path} (branch ${ctx.repo.branch} at ${String(ctx.repo.head ?? '').slice(0, 7)}). Work in that folder. Every path below is relative to it.`,
+    `Repository: ${context.repo.origin || '(no origin)'}`,
+    `On this computer it is at: ${context.repo.path} (branch ${context.repo.branch} at ${String(context.repo.head ?? '').slice(0, 7)}). Work in that folder. Every path below is relative to it.`,
   ].join('\n');
 
 const NO_GOAL_RECORDED = 'No goal was recorded for this change. Infer it from the frozen acceptance criteria in .claimcheck/spec.md and from the claim itself.';
 
 /** The person's own words about what they want built, or a line telling Claude to infer it. */
-const describeGoal = (ctx: PromptContext): string => ctx.goal?.trim() || NO_GOAL_RECORDED;
+const describeGoal = ({ context }: { context: PromptContext }): string => context.goal?.trim() || NO_GOAL_RECORDED;
 
 /** AC 17. */
-export const proposePrompt = (ctx: PromptContext): string =>
-  redactText(`${header(ctx)}\n\n${fill(readTemplate('propose.md'), { claim: describeClaim(ctx), goal: describeGoal(ctx), test_cmd: ctx.config.test_cmd })}\n\n${CLOSING_SENTENCE}`).text;
+export const buildProposePrompt = ({ context }: { context: PromptContext }): string =>
+  redactText({ input: `${renderHeader({ context })}\n\n${makeFill({ template: readTemplate({ name: 'propose.md' }), values: { claim: describeClaim({ context }), goal: describeGoal({ context }), test_cmd: context.config.test_cmd } })}\n\n${CLOSING_SENTENCE}` }).text;
 
 /** The build prompt for a chosen approach. */
-export const implementPrompt = (ctx: PromptContext, proposal: Proposal, rejected: Proposal[] = []): string =>
-  redactText(`${header(ctx)}\n\n${fill(readTemplate('implement.md'), {
-    claim: describeClaim(ctx),
+export const buildImplementPrompt = ({ context, proposal, rejected = [] }: { context: PromptContext; proposal: Proposal; rejected?: readonly Proposal[] }): string =>
+  redactText({ input: `${renderHeader({ context })}\n\n${makeFill({ template: readTemplate({ name: 'implement.md' }), values: {
+    claim: describeClaim({ context }),
     proposal: [
       `Title: ${proposal.title}`,
       `Summary: ${proposal.summary}`,
@@ -158,7 +159,7 @@ export const implementPrompt = (ctx: PromptContext, proposal: Proposal, rejected
       `Cons: ${proposal.cons.join('; ')}`,
       `Files it expects to touch: ${proposal.touches.join(', ')}`,
     ].join('\n'),
-    rejected: rejected.length ? rejected.map((p) => `- ${p.title}: ${p.cons.join('; ')}`).join('\n') : '(none)',
-    test_cmd: ctx.config.test_cmd,
-    kill_condition: ctx.claim.killCondition,
-  })}`).text;
+    rejected: rejected.length ? rejected.map((proposal) => `- ${proposal.title}: ${proposal.cons.join('; ')}`).join('\n') : '(none)',
+    test_cmd: context.config.test_cmd,
+    kill_condition: context.claim.killCondition,
+  } })}` }).text;

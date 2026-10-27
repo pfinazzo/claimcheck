@@ -21,6 +21,7 @@ _SETUP = {
 
 
 def render(stack_name: str | None) -> str:
+    """The GitHub Actions workflow text, with the install step for the detected stack."""
     setup = _SETUP.get(stack_name or "", "      # Install your project's dependencies and test tools here.\n")
     return f"""\
 # Written by `claimcheck init --ci github`. Edit freely.
@@ -45,7 +46,7 @@ jobs:
 """
 
 
-def install_github(repo: Path, stack_name: str | None) -> tuple[str, str]:
+def install_github(repo: Path, *, stack_name: str | None) -> tuple[str, str]:
     """Returns (relative path, action). Never overwrites an existing workflow."""
     path = repo / WORKFLOW_PATH
     if path.exists():

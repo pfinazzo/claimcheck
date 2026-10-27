@@ -12,18 +12,18 @@ import path from 'node:path';
 export const DEBOUNCE_MS = 250;
 const IGNORED = ['worktrees', 'mutate-backup'];
 
-const isIgnored = (filename: string | Buffer | null | undefined): boolean => {
+const isIgnored = ({ filename }: { filename: string | Buffer | null | undefined }): boolean => {
   const first = String(filename ?? '').replace(/\\/g, '/').split('/')[0];
   return IGNORED.includes(first ?? '');
 };
 
 /** Returns `{ close }`. `onChange()` fires after the burst settles. */
-export const watch = (repoPath: string, onChange: () => void, { debounceMs = DEBOUNCE_MS }: { debounceMs?: number } = {}): { close: () => void } => {
+export const watch = ({ repoPath, onChange, debounceMs = DEBOUNCE_MS }: Partial<{ debounceMs?: number }> & { repoPath: string; onChange: () => void }): { close: () => void } => {
   const dir = path.join(repoPath, '.claimcheck');
   let timer: NodeJS.Timeout | null = null;
-  let closed = false;
+  let isClosed = false;
   const schedule = (): void => {
-    if (closed) return;
+    if (isClosed) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
@@ -33,7 +33,7 @@ export const watch = (repoPath: string, onChange: () => void, { debounceMs = DEB
   let watcher: fs.FSWatcher | null = null;
   try {
     watcher = fs.watch(dir, { recursive: true }, (_event, filename) => {
-      if (isIgnored(filename)) return;
+      if (isIgnored({ filename })) return;
       schedule();
     });
     watcher.on('error', () => {});
@@ -42,7 +42,7 @@ export const watch = (repoPath: string, onChange: () => void, { debounceMs = DEB
   }
   return {
     close(): void {
-      closed = true;
+      isClosed = true;
       if (timer) clearTimeout(timer);
       watcher?.close();
     },

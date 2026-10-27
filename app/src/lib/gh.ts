@@ -1,21 +1,22 @@
 /**
- * The only two things the app asks the GitHub CLI for: is it signed in, and
+ * What the app asks the GitHub CLI for: is it installed and signed in, start its sign-in, and
  * open one pull request from a fix branch.
  *
  * @author Patrick Finazzo
  */
 
-import { execFile, spawn as nodeSpawn, type SpawnOptions } from 'node:child_process';
+import { execFile, spawn, type SpawnOptions } from 'node:child_process';
 import { promisify } from 'node:util';
 import { toPlainMessage } from './plain-error.ts';
+import { GH_TIMEOUT_MS } from './timeouts.ts';
 
-const execFileP = promisify(execFile);
+const runExecFile = promisify(execFile);
 
-type ExecFn = (file: string, args: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer; stderr?: string | Buffer }>;
+type ExecFn = (file: string, argList: string[], options?: Record<string, unknown>) => Promise<{ stdout: string | Buffer; stderr?: string | Buffer }>;
 
-export const ghReady = async ({ execFn = execFileP as unknown as ExecFn }: { execFn?: ExecFn } = {}): Promise<boolean> => {
+export const isGhReady = async ({ execFn = runExecFile }: { execFn?: ExecFn } = {}): Promise<boolean> => {
   try {
-    await execFn('gh', ['auth', 'status'], { windowsHide: true });
+    await execFn('gh', ['auth', 'status'], { windowsHide: true, timeout: GH_TIMEOUT_MS });
     return true;
   } catch {
     return false;
@@ -31,14 +32,14 @@ export type GitHubStatus = {
 };
 
 /** What the Connect GitHub dialog shows: is gh there, and is it signed in, and as whom. */
-export const githubStatus = async ({ execFn = execFileP as unknown as ExecFn }: { execFn?: ExecFn } = {}): Promise<GitHubStatus> => {
+export const fetchGithubStatus = async ({ execFn = runExecFile }: { execFn?: ExecFn } = {}): Promise<GitHubStatus> => {
   try {
-    await execFn('gh', ['--version'], { windowsHide: true });
+    await execFn('gh', ['--version'], { windowsHide: true, timeout: GH_TIMEOUT_MS });
   } catch {
     return { isInstalled: false, isSignedIn: false, account: null };
   }
   try {
-    const { stdout, stderr } = await execFn('gh', ['auth', 'status'], { windowsHide: true });
+    const { stdout, stderr } = await execFn('gh', ['auth', 'status'], { windowsHide: true, timeout: GH_TIMEOUT_MS });
     const account = /account\s+(\S+)/.exec(`${String(stdout)}\n${String(stderr ?? '')}`)?.[1] ?? null;
     return { isInstalled: true, isSignedIn: true, account };
   } catch {
@@ -46,31 +47,44 @@ export const githubStatus = async ({ execFn = execFileP as unknown as ExecFn }: 
   }
 };
 
-type SpawnFn = (command: string, args: readonly string[], options: SpawnOptions) => { unref?: () => void };
+type SpawnFn = (command: string, argList: readonly string[], options: SpawnOptions) => { unref?: () => void };
+
+type SignInLaunch = { command: string; argList: readonly string[]; options: SpawnOptions };
 
 const GITHUB_SIGN_IN = 'gh auth login --web --git-protocol https';
+const DETACHED: SpawnOptions = { detached: true, stdio: 'ignore' };
+
+const SIGN_IN_LAUNCHES = new Map<NodeJS.Platform, SignInLaunch>([
+  ['win32', { command: 'cmd.exe', argList: ['/d', '/s', '/c', `start "GitHub sign-in" cmd /k "${GITHUB_SIGN_IN}"`], options: { ...DETACHED, windowsHide: false, windowsVerbatimArguments: true } }],
+  ['darwin', { command: 'osascript', argList: ['-e', `tell application "Terminal" to do script "${GITHUB_SIGN_IN}"`], options: DETACHED }],
+]);
+
+const OTHER_SIGN_IN_LAUNCH: SignInLaunch = { command: 'x-terminal-emulator', argList: ['-e', GITHUB_SIGN_IN], options: DETACHED };
 
 /**
  * Opens a terminal window running gh's own browser sign-in. Desk never sees the password or the
  * token: gh asks GitHub in the browser and stores the result in its own keychain entry.
  */
-export const githubSignIn = ({ spawnFn = nodeSpawn as unknown as SpawnFn, platform = process.platform }: { spawnFn?: SpawnFn; platform?: NodeJS.Platform } = {}): void => {
-  if (platform === 'win32') {
-    spawnFn('cmd.exe', ['/d', '/s', '/c', `start "GitHub sign-in" cmd /k "${GITHUB_SIGN_IN}"`], { detached: true, stdio: 'ignore', windowsHide: false, windowsVerbatimArguments: true }).unref?.();
-  } else if (platform === 'darwin') {
-    spawnFn('osascript', ['-e', `tell application "Terminal" to do script "${GITHUB_SIGN_IN}"`], { detached: true, stdio: 'ignore' }).unref?.();
-  } else {
-    spawnFn('x-terminal-emulator', ['-e', GITHUB_SIGN_IN], { detached: true, stdio: 'ignore' }).unref?.();
-  }
+export const startGithubSignIn = ({ spawnFn = spawn, platform = process.platform }: { spawnFn?: SpawnFn; platform?: NodeJS.Platform } = {}): void => {
+  const launch = SIGN_IN_LAUNCHES.get(platform) ?? OTHER_SIGN_IN_LAUNCH;
+  spawnFn(launch.command, launch.argList, launch.options).unref?.();
 };
 
 export type PrBodyInput = {
-  claim: { id: string; claim: string; flags: string[] };
+  claim: { id: string; claim: string; flags: readonly string[] };
   proposal: { title: string; summary: string };
   run: { tests?: { ok?: boolean }; killCondition?: { ok?: boolean | string } };
 };
 
-export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
+const KILL_CHECK_TEXT = new Map<unknown, string>([
+  [true, 'pass'],
+  ['manual', 'manual check'],
+]);
+
+/** The kill-condition result as PR text: pass, manual check, or (anything else) fail. */
+const describeKillCheck = ({ ok }: { ok: unknown }): string => KILL_CHECK_TEXT.get(ok) ?? 'fail';
+
+export const buildPrBody = ({ claim, proposal, run }: PrBodyInput): string =>
   [
     `## claimcheck fix: ${claim.id}`,
     '',
@@ -78,7 +92,7 @@ export const prBody = ({ claim, proposal, run }: PrBodyInput): string =>
     `**Flagged for:** ${claim.flags.join(', ') || 'manual'}`,
     `**Approach:** ${proposal.title} — ${proposal.summary}`,
     '',
-    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${run.killCondition?.ok === true ? 'pass' : run.killCondition?.ok === 'manual' ? 'manual check' : 'fail'}.`,
+    `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${describeKillCheck({ ok: run.killCondition?.ok })}.`,
     '',
     'Built by Claude Code from claimcheck Desk\'s "Fix this" button. Review it like any other pull request before merging.',
   ].join('\n');
@@ -102,16 +116,17 @@ const GH_REFUSALS: readonly { when: RegExp; say: string }[] = [
   { when: /pushed to a remote|push the current branch|you must first push/i, say: 'The fix branch is not on GitHub yet. Push it, then try again.' },
 ];
 
-const toPullRequestFailure = (error: unknown): Error => {
-  const reason = toPlainMessage(error);
-  const refusal = GH_REFUSALS.find((r) => r.when.test(reason));
+const toPullRequestFailure = ({ error }: { error: unknown }): Error => {
+  const reason = toPlainMessage({ error });
+  const refusal = GH_REFUSALS.find((candidate) => candidate.when.test(reason));
   return new Error(refusal?.say || `GitHub did not open the pull request: ${reason}`, { cause: error });
 };
 
-export const openPullRequest = async ({ cwd, base, head, title, body, execFn = execFileP as unknown as ExecFn }: PrInput): Promise<string> => {
-  const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true }).catch((error: unknown) => {
-    throw toPullRequestFailure(error);
-  });
-  const url = String(stdout).split(/\r?\n/).map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) ?? String(stdout).trim();
-  return url;
+export const openPullRequest = async ({ cwd, base, head, title, body, execFn = runExecFile }: PrInput): Promise<string> => {
+  try {
+    const { stdout } = await execFn('gh', ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body], { cwd, windowsHide: true, timeout: GH_TIMEOUT_MS });
+    return String(stdout).split(/\r?\n/).map((line) => line.trim()).find((line) => /^https?:\/\//.test(line)) ?? String(stdout).trim();
+  } catch (error) {
+    throw toPullRequestFailure({ error });
+  }
 };

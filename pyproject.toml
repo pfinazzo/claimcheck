@@ -23,7 +23,7 @@ Repository = "https://github.com/pfinazzo/claimcheck"
 
 [project.optional-dependencies]
 claude = ["anthropic>=1.0"]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.14", "mypy>=1.18", "types-PyYAML>=6.0"]
 
 [project.scripts]
 claimcheck = "claimcheck.cli:main"
@@ -33,3 +33,37 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# The coding conventions a linter can check live here, so a break fails CI instead of review.
+# Lint runs beside pytest, never inside it: `claimcheck run` uses pytest as its catch test, and a
+# lint failure would count as a caught planted bug.
+[tool.ruff]
+src = ["src", "tests"]
+target-version = "py311"
+output-format = "concise"
+
+[tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
+select = ["E", "F", "W", "I", "B", "BLE", "S110", "S112", "SIM", "UP", "PIE", "C4", "N", "ERA", "D103", "PLR1702", "PLR0917", "PLC0415"]
+# E501: line length is left to the reader; no convention sets one.
+# SIM105: contextlib.suppress still swallows the error, which the conventions forbid.
+# UP013: the conventions want functional-syntax TypedDicts, because a class statement is reserved for exceptions.
+ignore = ["E501", "SIM105", "UP013"]
+
+[tool.ruff.lint.per-file-ignores]
+# A pytest test's name is its documentation; helpers and fixtures in tests still get docstrings.
+"tests/test_*.py" = ["D103"]
+
+[tool.ruff.lint.pylint]
+# The conventions allow two levels of nesting inside a function; deeper logic gets its own function.
+max-nested-blocks = 2
+# One positional argument at most; everything after it is passed by name so call sites read on their own.
+max-positional-args = 1
+
+[tool.mypy]
+files = ["src", "tests"]
+mypy_path = "src:tests"
+explicit_package_bases = true
+check_untyped_defs = true
+warn_unused_ignores = true

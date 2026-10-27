@@ -11,10 +11,11 @@
 import type { createDeskApi, ViewPayload } from '../lib/desk-api.ts';
 import type { PublicRun } from '../lib/fixer.ts';
 import type { Board } from './types.ts';
+import { toText } from './text.ts';
 
 type FullApi = ReturnType<typeof createDeskApi>;
 /** Only the callable members: the api object also carries state and the fixer. */
-type Api = { [K in keyof FullApi as FullApi[K] extends (...args: never[]) => unknown ? K : never]: FullApi[K] };
+type Api = { [K in keyof FullApi as FullApi[K] extends (...argList: never[]) => unknown ? K : never]: FullApi[K] };
 type Out<K extends keyof Api> = Promise<Awaited<ReturnType<Api[K]>>>;
 type In<K extends keyof Api> = Parameters<Api[K]>[0];
 
@@ -79,12 +80,13 @@ export type Reply<T> = { ok: true; value: T } | { ok: false; error: string; code
  */
 export type BridgeFailure = { bridge: 'failure'; message: string; code: string | null; details: unknown };
 
+// A type guard must name the value it narrows, so it takes it positionally.
+// eslint-disable-next-line no-restricted-syntax
 const isBridgeFailure = (value: unknown): value is BridgeFailure =>
   typeof value === 'object' && value !== null && (value as { bridge?: unknown }).bridge === 'failure' && typeof (value as { message?: unknown }).message === 'string';
 
 /** Reads any rejection the page can see as one shape: a bridge failure, an Error, or anything else as text. */
-export const toBridgeFailure = (error: unknown): BridgeFailure => {
+export const toBridgeFailure = ({ error }: { error: unknown }): BridgeFailure => {
   if (isBridgeFailure(error)) return error;
-  if (error instanceof Error) return { bridge: 'failure', message: error.message, code: null, details: null };
-  return { bridge: 'failure', message: String(error), code: null, details: null };
+  return { bridge: 'failure', message: error instanceof Error ? error.message : toText({ value: error }), code: null, details: null };
 };

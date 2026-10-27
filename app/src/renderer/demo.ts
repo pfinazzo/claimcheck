@@ -80,57 +80,60 @@ const PLANTED_BUGS_PER_CLAIM = 10;
 const DEMO_BUG_KINDS = ['boundary', 'sign_flip', 'off_by_one', 'swap_args'] as const;
 
 /** Planted bugs for a sample claim: the share the tests caught matches the claim's catch rate exactly. */
-const demoMutants = ({ index, catchRate }: { index: number; catchRate: number }): Mutant[] =>
-  Array.from({ length: PLANTED_BUGS_PER_CLAIM }, (_, n) => ({
+const buildDemoMutants = ({ index, catchRate }: { index: number; catchRate: number }): Mutant[] =>
+  Array.from({ length: PLANTED_BUGS_PER_CLAIM }, (_, piece) => ({
     file: 'src/checkout.py',
-    line_no: index * 20 + n + 1,
-    cls: DEMO_BUG_KINDS[n % DEMO_BUG_KINDS.length] ?? 'boundary',
+    line_no: index * 20 + piece + 1,
+    cls: DEMO_BUG_KINDS[piece % DEMO_BUG_KINDS.length] ?? 'boundary',
     original: 'total >= limit',
     mutated: 'total > limit',
-    outcome: n < Math.round(catchRate * PLANTED_BUGS_PER_CLAIM) ? 'killed' : 'survived',
+    outcome: piece < Math.round(catchRate * PLANTED_BUGS_PER_CLAIM) ? 'killed' : 'survived',
   }));
 
-const demoClaimOf = ({ c, index, flagConfidence, flagCatchRate }: { c: DemoClaim; index: number; flagConfidence: number; flagCatchRate: number }): Claim => {
+const buildDemoClaim = ({ entry, index, flagConfidence, flagCatchRate }: { entry: DemoClaim; index: number; flagConfidence: number; flagCatchRate: number }): Claim => {
   // The same rules the board uses (flagsOf in lib/store.ts): a claim is flagged unless every check is satisfied.
   const flags = [
-    ...(c.confidence === null || c.confidence < flagConfidence ? ['low-confidence'] : []),
-    ...(c.verdict === 'REFUTED' ? ['refuted'] : []),
-    ...(c.verdict !== 'SUPPORTED' && c.verdict !== 'REFUTED' ? ['unverified'] : []),
-    ...(c.catchRate !== null && c.catchRate < flagCatchRate ? ['weak-tests'] : []),
-    ...(c.catchRate === null ? ['no-mutants'] : []),
+    ...(entry.confidence === null || entry.confidence < flagConfidence ? ['low-confidence'] : []),
+    ...(entry.verdict === 'REFUTED' ? ['refuted'] : []),
+    ...(entry.verdict !== 'SUPPORTED' && entry.verdict !== 'REFUTED' ? ['unverified'] : []),
+    ...(entry.catchRate !== null && entry.catchRate < flagCatchRate ? ['weak-tests'] : []),
+    ...(entry.catchRate === null ? ['no-mutants'] : []),
   ];
-  const mutants = c.catchRate === null ? [] : demoMutants({ index, catchRate: c.catchRate });
-  const killed = mutants.filter((m) => m.outcome === 'killed').length;
+  const mutants = entry.catchRate === null ? [] : buildDemoMutants({ index, catchRate: entry.catchRate });
+  const killed = mutants.filter((mutant) => mutant.outcome === 'killed').length;
   return {
-    id: c.id,
-    claim: c.claim,
-    confidence: c.confidence,
+    id: entry.id,
+    claim: entry.claim,
+    confidence: entry.confidence,
     criteria: [],
     files: ['src/checkout.py'],
     killCondition: 'test: tests/test_checkout.py',
     verifiedBy: [],
-    verdict: c.verdict ? { id: c.id, verdict: c.verdict, reason: '', evidence: [], provider: 'claude', model: null, ts: '2026-10-26T00:00:00Z', runId: 'demo' } : null,
-    mutation: c.catchRate === null ? null : { total: mutants.length, killed, survived: mutants.length - killed, timeout: 0, catchRate: killed / mutants.length, mutants, ts: '2026-10-26T00:00:00Z', runId: 'demo' },
-    status: c.status ?? 'open',
+    verdict: entry.verdict ? { id: entry.id, verdict: entry.verdict, reason: '', evidence: [], provider: 'claude', model: null, ts: '2026-10-26T00:00:00Z', runId: 'demo' } : null,
+    mutation: entry.catchRate === null ? null : { total: mutants.length, killed, survived: mutants.length - killed, timeout: 0, catchRate: killed / mutants.length, mutants, ts: '2026-10-26T00:00:00Z', runId: 'demo' },
+    status: entry.status ?? 'open',
     reopened: false,
     note: '',
     fix: null,
     history: [],
-    risk: 1 - (c.confidence ?? 0.5) * (c.catchRate ?? 0.5),
+    risk: 1 - (entry.confidence ?? 0.5) * (entry.catchRate ?? 0.5),
     flags,
   };
 };
 
 /** The board with a coherent set of sample claims for one project, for `--view board:graph`, so the map has something to show. */
-export const demoGraphBoard = (board: Board): Board => {
+export const buildDemoGraphBoard = ({ board }: { board: Board }): Board => {
   const { flagConfidence, flagCatchRate } = board.config.app;
-  const claims = DEMO_CLAIMS.map((c, index) => demoClaimOf({ c, index, flagConfidence, flagCatchRate }));
-  const queue = claims.filter((c) => c.flags.length > 0 && c.status === 'open').sort((a, b) => b.risk - a.risk).map((c) => c.id);
+  const claims = DEMO_CLAIMS.map((entry, index) => buildDemoClaim({ entry, index, flagConfidence, flagCatchRate }));
+  const queue = claims
+    .filter((claim) => claim.flags.length > 0 && claim.status === 'open')
+    .toSorted((first, second) => second.risk - first.risk)
+    .map((claim) => claim.id);
   return { ...board, claims, queue };
 };
 
 /** Canned proposals for `--view board:propose`, with the recommended one first as the real parser orders them. */
-export const demoProposeRun = (claimId: string): PublicRun => ({
+export const buildDemoProposeRun = ({ claimId }: { claimId: string }): PublicRun => ({
   id: 'demo-propose',
   kind: 'propose',
   claimId,
@@ -166,7 +169,7 @@ export const DEMO_FIX = {
 };
 
 /** The wizard as it looks at step N (1 to 6). Welcome has three beats: 1 is the first, the others come from the URL. */
-export const demoWizard = (step: number, beat = 0): WizardState => {
+export const runDemoWizard = ({ step, beat = 0 }: { step: number; beat?: number }): WizardState => {
   const base = initialWizard({ entry: 'first-run', repo: 'C:/work/checkout-service' });
   const withSetup: WizardState = { ...base, setup: { init, testCmd: 'npm test', ci: false } };
   const draft = {
@@ -183,18 +186,13 @@ export const demoWizard = (step: number, beat = 0): WizardState => {
     { id: 'q1', text: 'What should an order of exactly $50 pay for shipping?', why: 'It decides which side of the boundary criterion 1 lands on.' },
     { id: 'q2', text: 'Does the $50 include tax and discounts, or only the item subtotal?', why: 'The threshold has to be measured on one agreed number.' },
   ];
-  switch (step) {
-    case 1:
-      return { ...base, beat: Math.min(Math.max(beat, 0), 2) };
-    case 2:
-      return { ...withSetup, step: 'setup' };
-    case 3:
-      return { ...withSetup, step: 'connect' };
-    case 4:
-      return { ...withSetup, step: 'spec', goal: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', started: true, rounds: [], current: { questions, answers: ['Yes, exactly $50 ships free.', ''] }, draft };
-    case 5:
-      return { ...withSetup, step: 'freeze', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true } };
-    default:
-      return { ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', result: finish } };
-  }
+  const doneState = (): WizardState => ({ ...withSetup, step: 'done', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true }, freeze: { makeBranch: true, branch: '', outcome: finish } });
+  const stateByStep = new Map<number, () => WizardState>([
+    [1, () => ({ ...base, beat: Math.min(Math.max(beat, 0), 2) })],
+    [2, () => ({ ...withSetup, step: 'setup' })],
+    [3, () => ({ ...withSetup, step: 'connect' })],
+    [4, () => ({ ...withSetup, step: 'spec', goal: 'Orders of $50 or more should ship free, and everything else pays a $5 flat fee.', started: true, rounds: [], current: { questions, answers: ['Yes, exactly $50 ships free.', ''] }, draft })],
+    [5, () => ({ ...withSetup, step: 'freeze', goal: 'Orders of $50 or more should ship free.', started: true, draft: { ...draft, ready: true } })],
+  ]);
+  return (stateByStep.get(step) ?? doneState)();
 };

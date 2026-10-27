@@ -6,31 +6,43 @@ the Claude CLI provider, and the guided onboarding run end to end with a scripte
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import re
+import subprocess
+import sys
+import types
 
 import pytest
+import yaml
 
-from claimcheck import ClaimcheckError, ProviderError, gitio, initflow, onboard, providers, tui
-from claimcheck import config as C
+from claimcheck import (
+    ProviderError,
+    ci,
+    config,
+    gitio,
+    initflow,
+    onboard,
+    providers,
+    tui,
+)
 from claimcheck.providers import claude_cli
-from claimcheck.providers.stub import StubProvider
-
+from claimcheck.providers.stub import make_stub_provider
 
 # ---- setup core -------------------------------------------------------------
 
 def test_run_setup_does_everything_and_reports_it(repo):
-    repo.write("package.json", '{"scripts": {"test": "vitest run"}}')
-    repo.write("CLAUDE.md", "# rules\n")
-    r = initflow.run_setup(repo.path, ci_provider="github")
-    assert r["stack"] == {"name": "node", "test_cmd": "npm test", "others": []}
-    assert r["hook"]["status"] == "installed" and r["config"] == "created"
-    assert ".claimcheck/mutate.lock" in r["gitignore_added"]
-    assert r["agent_docs"] == [{"path": "CLAUDE.md", "action": "added"}]
-    assert r["ci"] == {"path": ".github/workflows/claimcheck.yml", "action": "created"}
-    cfg = C.load(repo.path)
-    assert cfg.test_cmd == "npm test" and "*.test.*" in cfg.ignore and cfg.checker_provider == "auto"
+    repo.write("package.json", text='{"scripts": {"test": "vitest run"}}')
+    repo.write("CLAUDE.md", text="# rules\n")
+    row = initflow.run_setup(repo.path, ci_provider="github")
+    assert row["stack"] == {"name": "node", "test_cmd": "npm test", "others": []}
+    assert row["hook"]["status"] == "installed" and row["config"] == "created"
+    assert ".claimcheck/mutate.lock" in row["gitignore_added"]
+    assert row["agent_docs"] == [{"path": "CLAUDE.md", "action": "added"}]
+    assert row["ci"] == {"path": ".github/workflows/claimcheck.yml", "action": "created"}
+    cfg = config.load(repo.path)
+    assert cfg["test_cmd"] == "npm test" and "*.test.*" in cfg["ignore"] and cfg["checker_provider"] == "auto"
     assert "claimcheck:begin" in repo.read("CLAUDE.md")
     assert "claimcheck run" in repo.read(".github/workflows/claimcheck.yml")
     manifest = json.loads(repo.read(".claimcheck/setup.json"))["files"]
@@ -39,30 +51,27 @@ def test_run_setup_does_everything_and_reports_it(repo):
 
 def test_run_setup_is_idempotent_and_never_overwrites(repo):
     initflow.run_setup(repo.path)
-    repo.write(".claimcheck/config.toml", 'version = 1\ntest_cmd = "make check"\n')
+    repo.write(".claimcheck/config.toml", text='version = 1\ntest_cmd = "make check"\n')
     second = initflow.run_setup(repo.path)
     assert second["created"] == [] and second["config"] == "exists" and second["hook"]["status"] == "present"
-    assert second["gitignore_added"] == [] and C.load(repo.path).test_cmd == "make check"
+    assert second["gitignore_added"] == [] and config.load(repo.path)["test_cmd"] == "make check"
 
 
 def test_run_setup_uses_a_typed_test_command(repo):
-    r = initflow.run_setup(repo.path, test_cmd="just test")
-    assert r["stack"]["test_cmd"] == "just test"
+    row = initflow.run_setup(repo.path, test_cmd="just test")
+    assert row["stack"]["test_cmd"] == "just test"
 
 
 def test_run_setup_can_create_the_agent_file_only_when_asked(repo):
     assert initflow.run_setup(repo.path)["agent_docs"] == []
-    r = initflow.run_setup(repo.path, create_agent_doc="claude")
-    assert r["agent_docs"] == [{"path": "CLAUDE.md", "action": "created"}]
+    row = initflow.run_setup(repo.path, create_agent_doc="claude")
+    assert row["agent_docs"] == [{"path": "CLAUDE.md", "action": "created"}]
 
 
 def test_the_workflow_file_is_valid_yaml_with_a_working_expression():
-    import yaml
-    from claimcheck import ci
-
-    data = yaml.safe_load(ci.render("node"))
-    steps = data["jobs"]["claimcheck"]["steps"]
-    run_step = next(s for s in steps if "claimcheck run" in s.get("run", ""))
+    raw = yaml.safe_load(ci.render("node"))
+    steps = raw["jobs"]["claimcheck"]["steps"]
+    run_step = next(step for step in steps if "claimcheck run" in step.get("run", ""))
     assert "${{ github.base_ref }}" in run_step["run"]
     assert run_step["env"]["ANTHROPIC_API_KEY"] == "${{ secrets.ANTHROPIC_API_KEY }}"
     assert steps[0]["with"]["fetch-depth"] == 0
@@ -70,19 +79,19 @@ def test_the_workflow_file_is_valid_yaml_with_a_working_expression():
 
 # ---- CLI: plain, json, status, machine commands ------------------------------
 
-def test_init_plain_mode_prints_a_summary_and_the_next_step(repo, capsys):
+def test_init_plain_mode_prints_a_summary_and_the_next_step(repo, *, capsys):
     assert repo.cli("init", "--yes") == 0
     err = capsys.readouterr().err
     assert "hook installed" in err and "claimcheck spec draft" in err and "test command is" in err
 
 
-def test_init_json_is_one_document_on_stdout(repo, capsys):
+def test_init_json_is_one_document_on_stdout(repo, *, capsys):
     assert repo.cli("init", "--json") == 0
-    out = json.loads(capsys.readouterr().out)
-    assert out["next"] == "write_spec" and out["hook"]["status"] == "installed" and out["repo"]
+    output = json.loads(capsys.readouterr().out)
+    assert output["next"] == "write_spec" and output["hook"]["status"] == "installed" and output["repo"]
 
 
-def test_status_before_and_after(repo, capsys):
+def test_status_before_and_after(repo, *, capsys):
     assert repo.cli("status", "--json") == 0
     before = json.loads(capsys.readouterr().out)
     assert before["initialized"] is False and before["spec"] == "none" and before["hook"] is False
@@ -93,7 +102,7 @@ def test_status_before_and_after(repo, capsys):
     assert after["initialized"] is True and after["spec"] == "none" and after["hook"] is True and after["branch"] == "main"
 
 
-def test_spec_draft_step_and_finish_machine_protocol(repo, monkeypatch, capsys):
+def test_spec_draft_step_and_finish_machine_protocol(repo, *, monkeypatch, capsys):
     repo.cli("init", "--json")
     capsys.readouterr()
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"goal": "Add free shipping over 50"})))
@@ -106,25 +115,24 @@ def test_spec_draft_step_and_finish_machine_protocol(repo, monkeypatch, capsys):
     assert repo.cli("spec", "draft", "--finish") == 0
     done = json.loads(capsys.readouterr().out)
     assert done["frozen"] and done["branch"].startswith("task/") and len(done["lock_sha256"]) == 64 and done["commit"]
-    assert gitio.current_branch(repo.path) == done["branch"]
+    assert gitio.read_current_branch(repo.path) == done["branch"]
 
 
-def test_machine_errors_come_back_as_json_with_the_exit_code(repo, monkeypatch, capsys):
+def test_machine_errors_come_back_as_json_with_the_exit_code(repo, *, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO("{not json"))
     code = repo.cli("spec", "draft", "--step", "--provider", "stub")
-    out = json.loads(capsys.readouterr().out)
-    assert code == 1 and out["code"] == 1 and "not valid JSON" in out["error"]
+    output = json.loads(capsys.readouterr().out)
+    assert code == 1 and output["code"] == 1 and "not valid JSON" in output["error"]
 
 
-def test_spec_draft_without_a_terminal_needs_a_goal(repo, monkeypatch, capsys):
+def test_spec_draft_without_a_terminal_needs_a_goal(repo, *, monkeypatch, capsys):
     assert repo.cli("spec", "draft", "--provider", "stub") == 1
     assert "pass --goal" in capsys.readouterr().err
 
 
-def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, capsys):
+def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, *, capsys):
     repo.cli("init", "--yes")
     inputs = iter(["a", "b", "", ""])
-    import builtins
 
     orig = builtins.input
     builtins.input = lambda prompt="": next(inputs)
@@ -133,7 +141,8 @@ def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, capsys):
     finally:
         builtins.input = orig
     assert "Add free shipping" in repo.read(".claimcheck/spec.md")
-    assert not (repo.cc / "spec.lock").exists()  # no terminal and no --yes: nothing was frozen
+    # No terminal and no --yes: nothing was frozen.
+    assert not (repo.cc / "spec.lock").exists()
 
 
 # ---- Claude CLI provider ------------------------------------------------------
@@ -184,25 +193,25 @@ def test_a_classic_npm_shim_with_node_beside_it_resolves_to_the_script(tmp_path)
 def test_provider_sends_the_prompt_on_stdin_with_tools_off(monkeypatch):
     seen = {}
 
-    class P:
-        returncode, stdout, stderr = 0, json.dumps({"structured_output": {"ok": True}}), ""
+    reply = json.dumps({"structured_output": {"ok": True}})
 
-    def fake_run(args, **kw):
+    def run_fake(args, **kw):
+        """Stand-in for subprocess.run that records the call and reports success."""
         seen["args"], seen["input"] = args, kw["input"]
-        return P()
+        return subprocess.CompletedProcess(args, 0, stdout=reply, stderr="")
 
-    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
-    prov = claude_cli.ClaudeCliProvider(binary="/usr/bin/claude", model="m1")
-    assert json.loads(prov.complete("SYS", "USER", schema={"type": "object"})) == {"ok": True}
-    a = seen["args"]
-    assert "--system-prompt" in a and a[a.index("--system-prompt") + 1] == "SYS" and seen["input"] == "USER"
-    assert "--disallowedTools" in a and "Bash" in a and "--model" in a and "m1" in a and "--json-schema" in a
+    monkeypatch.setattr(claude_cli.subprocess, "run", run_fake)
+    prov = claude_cli.make_claude_cli_provider(binary="/usr/bin/claude", model="m1")
+    assert json.loads(providers.ask_model(prov, system="SYS", user="USER", schema={"type": "object"})) == {"ok": True}
+    arg = seen["args"]
+    assert "--system-prompt" in arg and arg[arg.index("--system-prompt") + 1] == "SYS" and seen["input"] == "USER"
+    assert "--disallowedTools" in arg and "Bash" in arg and "--model" in arg and "m1" in arg and "--json-schema" in arg
 
 
 def test_provider_reports_a_missing_cli(monkeypatch):
     monkeypatch.setattr(claude_cli, "find_claude", lambda env=None: None)
     with pytest.raises(ProviderError, match="not found"):
-        claude_cli.ClaudeCliProvider()
+        claude_cli.make_claude_cli_provider()
 
 
 def test_auto_provider_prefers_the_key_then_the_cli_then_explains(monkeypatch):
@@ -211,155 +220,166 @@ def test_auto_provider_prefers_the_key_then_the_cli_then_explains(monkeypatch):
     with pytest.raises(ProviderError, match="no way to reach Claude"):
         providers.load("auto")
     monkeypatch.setattr(claude_cli, "find_claude", lambda env=None: "/usr/bin/claude")
-    assert type(providers.load("auto")).__name__ == "ClaudeCliProvider"
+    assert providers.load("auto")["name"] == "claude-cli"
     assert "claude-cli" in providers.NAMES
 
 
 # ---- terminal toolkit ----------------------------------------------------------
 
-def _term(**kw):
-    out = io.StringIO()
-    kw.setdefault("animate", False)
-    kw.setdefault("color", False)
-    kw.setdefault("unicode", False)
-    return tui.Term(out=out, inp=kw.pop("inp", lambda p: ""), **kw), out
+def _make_term(*, read_input=lambda prompt: "", animate=False, color=False, unicode=False, sleep=None, seed=None):
+    output = io.StringIO()
+    term = tui.make_term(
+        output,
+        read_input=read_input,
+        animate=animate,
+        color=color,
+        unicode=unicode,
+        sleep=sleep or (lambda seconds: None),
+        seed=seed,
+    )
+    return term, output
 
 
 def test_plain_terminal_has_no_escape_codes():
-    t, out = _term()
-    t.typewriter("hello")
-    t.shimmer("claimcheck")
-    t.animate_bar("bar", 0.5)
-    t.decode("lock", "abcdef")
-    t.box(["line one", "line two"], title="t")
-    with t.spinner("working") as s:
-        s.ok("done")
-    text = out.getvalue()
+    t, transcript = _make_term()
+    tui.write_typed(t, text="hello")
+    tui.show_shimmer(t, text="claimcheck")
+    tui.show_bar_filling(t, label="bar", to=0.5)
+    tui.show_decode(t, label="lock", final="abcdef")
+    tui.draw_box(t, lines=["line one", "line two"], title="t")
+    with tui.show_spinner(t, label="working") as message:
+        tui.set_spin_result(message, ok=True, note="done")
+    text = transcript.getvalue()
     assert "\x1b" not in text and "hello" in text and "abcdef" in text and "working" in text and "+ working" in text
 
 
 def test_animated_terminal_ends_on_the_final_frame_and_restores_the_cursor():
-    sleeps = []
-    t, out = _term(animate=True, color=True, unicode=True, sleep=sleeps.append, seed=1)
-    t.shimmer("claimcheck", passes=1)
-    t.animate_bar("conf", 0.92, suffix=lambda v: f"{v:.2f}")
-    t.decode("lock", "0123456789abcdef", duration=0.3)
-    t.typewriter("done.")
-    t.restore()
-    text = out.getvalue()
+    sleeps: list = []
+    t, transcript = _make_term(animate=True, color=True, unicode=True, sleep=sleeps.append, seed=1)
+    tui.show_shimmer(t, text="claimcheck", passes=1)
+    tui.show_bar_filling(t, label="conf", to=0.92, suffix=lambda fraction: f"{fraction:.2f}")
+    tui.show_decode(t, label="lock", final="0123456789abcdef", duration=0.3)
+    tui.write_typed(t, text="done.")
+    tui.show_cursor(t)
+    text = transcript.getvalue()
     assert sleeps and "0.92" in tui.strip_ansi(text) and "0123456789abcdef" in tui.strip_ansi(text)
     assert text.count(tui.HIDE_CURSOR) >= 1 and text.rstrip("\n").endswith(tui.SHOW_CURSOR) or tui.SHOW_CURSOR in text
 
 
 def test_detect_respects_no_color_ci_and_dumb_terminals():
-    class Tty(io.StringIO):
-        encoding = "utf-8"
-
-        def isatty(self):
-            return True
-
-    import sys
+    def make_tty():
+        """A stand-in stream that says it is a UTF-8 terminal."""
+        return types.SimpleNamespace(encoding="utf-8", isatty=lambda: True)
 
     real = sys.stdin
-    sys.stdin = Tty()
+    sys.stdin = make_tty()
     try:
-        assert tui.detect(Tty(), {})["animate"] is True
-        assert tui.detect(Tty(), {"NO_COLOR": "1"})["color"] is False
-        assert tui.detect(Tty(), {"CI": "true"})["animate"] is False
-        assert tui.detect(Tty(), {"TERM": "dumb"})["color"] is False
-        assert tui.detect(io.StringIO(), {})["tty"] is False
+        assert tui.detect(make_tty(), env={})["animate"] is True
+        assert tui.detect(make_tty(), env={"NO_COLOR": "1"})["color"] is False
+        assert tui.detect(make_tty(), env={"CI": "true"})["animate"] is False
+        assert tui.detect(make_tty(), env={"TERM": "dumb"})["color"] is False
+        assert tui.detect(io.StringIO(), env={})["tty"] is False
     finally:
         sys.stdin = real
 
 
 def test_pause_more_and_skip():
     answers = iter(["m", "", ])
-    t, out = _term(inp=lambda p: next(answers))
-    assert t.pause(more="deeper text") == "next" and "deeper text" in out.getvalue()
-    t2, _ = _term(inp=lambda p: "s")
-    assert t2.pause(skip_label="skip the tour") == "skip"
-    t3, _ = _term(inp=lambda p: (_ for _ in ()).throw(EOFError()))
-    assert t3.pause() == "next"
+    t, transcript = _make_term(read_input=lambda prompt: next(answers))
+    assert tui.wait_for_continue(t, more="deeper text") == "next" and "deeper text" in transcript.getvalue()
+    t2, _ = _make_term(read_input=lambda prompt: "s")
+    assert tui.wait_for_continue(t2, skip_label="skip the tour") == "skip"
+    t3, _ = _make_term(read_input=lambda prompt: (_ for _ in ()).throw(EOFError()))
+    assert tui.wait_for_continue(t3) == "next"
 
 
 def test_yes_no_defaults_and_answers():
     for typed, default, expected in (("", True, True), ("", False, False), ("n", True, False), ("Yes", False, True)):
-        t, _ = _term(inp=lambda p, v=typed: v)
-        assert t.yes_no("ok?", default=default) is expected
+        t, _ = _make_term(read_input=lambda prompt, answer=typed: answer)
+        assert tui.ask_yes_no(t, question="ok?", default=default) is expected
 
 
 # ---- the onboarding, end to end ------------------------------------------------
 
-def _scripted_term(inputs):
+def _make_scripted_term(inputs):
     it = iter(inputs)
     prompts = []
 
-    def inp(prompt):
+    def read_scripted(prompt):
+        """Scripted input: record the prompt and answer with the next reply."""
         prompts.append(prompt)
         return next(it)
 
-    t, out = _term(inp=inp)
-    return t, out, prompts, it
+    t, transcript = _make_term(read_input=read_scripted)
+    return t, transcript, prompts, it
 
 
-def test_onboarding_runs_the_whole_journey(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
+def test_onboarding_runs_the_whole_journey(repo, *, monkeypatch):
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
     inputs = [
-        "", "",                      # the two tour screens
-        "", "", "",                  # test command, create CLAUDE.md (yes), CI (no)
-        "",                          # pause after setup
-        "Add free shipping over 50", # the goal
-        "50 is free", "nothing",     # answers to the two questions
-        "", "",                      # review after round 1, review after round 2 (ready: save)
-        "",                          # freeze and commit: yes
+        # The two tour screens.
+        "", "",
+        # Test command, create CLAUDE.md (yes), CI (no)
+        "", "", "",
+        # Pause after setup.
+        "",
+        # The goal.
+        "Add free shipping over 50",
+        # Answers to the two questions.
+        "50 is free", "nothing",
+        # Review after round 1, review after round 2 (ready: save)
+        "", "",
+        # Freeze and commit: yes.
+        "",
     ]
-    t, out, prompts, rest = _scripted_term(inputs)
-    assert onboard.run_onboarding(t, repo.path) == 0
-    text = out.getvalue()
+    t, transcript, prompts, rest = _make_scripted_term(inputs)
+    assert onboard.run_onboarding(t, repo=repo.path) == 0
+    text = transcript.getvalue()
     for must in ("The problem", "Three checks", "Set up this repo", "Connect Claude", "Your first spec", "criteria locked", "done"):
         assert must in text, must
     assert next(rest, "unused") == "unused", "the script supplied more input than the flow asked for"
     # setup happened
     assert (repo.cc / "config.toml").exists() and "claimcheck:begin" in repo.read("CLAUDE.md")
     # the spec was frozen and committed on a task branch
-    branch = gitio.current_branch(repo.path)
+    branch = gitio.read_current_branch(repo.path)
     assert branch == "task/add-free-shipping-over-50"
     assert "Freeze acceptance criteria" in repo.git("log", "-1", "--format=%s")
     assert "claimcheck:begin" in repo.git("show", "HEAD:CLAUDE.md")
     assert "Add free shipping over 50" in repo.read(".claimcheck/spec.md")
 
 
-def test_onboarding_tour_can_be_skipped_and_goal_left_blank(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
-    inputs = ["s", "", "", "", "", ""]  # skip tour at screen 1; setup prompts; blank goal
-    t, out, _, rest = _scripted_term(inputs)
-    assert onboard.run_onboarding(t, repo.path) == 0
-    text = out.getvalue()
+def test_onboarding_tour_can_be_skipped_and_goal_left_blank(repo, *, monkeypatch):
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
+    # Skip tour at screen 1; setup prompts; blank goal.
+    inputs = ["s", "", "", "", "", ""]
+    t, transcript, _, rest = _make_scripted_term(inputs)
+    assert onboard.run_onboarding(t, repo=repo.path) == 0
+    text = transcript.getvalue()
     assert "Three checks" not in text and "Skipped" in text and "claimcheck spec draft" in text
     assert not (repo.cc / "spec.lock").exists()
 
 
-def test_onboarding_without_a_claude_connection_still_finishes_setup(repo, monkeypatch):
-    def nope(name, model=None):
+def test_onboarding_without_a_claude_connection_still_finishes_setup(repo, *, monkeypatch):
+    def fail_load(name, *, model=None):
         raise ProviderError("no way to reach Claude")
 
-    monkeypatch.setattr(providers, "load", nope)
-    t, out, _, _ = _scripted_term(["", "", "", "", "", ""])
-    assert onboard.run_onboarding(t, repo.path) == 0
-    assert "no way to reach Claude" in out.getvalue() and (repo.cc / "config.toml").exists()
+    monkeypatch.setattr(providers, "load", fail_load)
+    t, transcript, _, _ = _make_scripted_term(["", "", "", "", "", ""])
+    assert onboard.run_onboarding(t, repo=repo.path) == 0
+    assert "no way to reach Claude" in transcript.getvalue() and (repo.cc / "config.toml").exists()
 
 
-def test_ctrl_c_stops_cleanly_and_setup_can_resume(repo, monkeypatch):
-    def interrupt(prompt):
+def test_ctrl_c_stops_cleanly_and_setup_can_resume(repo, *, monkeypatch):
+    def throw_interrupt(prompt):
         raise KeyboardInterrupt
 
-    t, out = _term(inp=interrupt)
-    assert onboard.run_onboarding(t, repo.path) == 130
-    assert "Run `claimcheck init` again" in out.getvalue()
+    t, transcript = _make_term(read_input=throw_interrupt)
+    assert onboard.run_onboarding(t, repo=repo.path) == 130
+    assert "Run `claimcheck init` again" in transcript.getvalue()
 
 
-def test_ansi_never_leaks_into_the_plain_transcript(repo, monkeypatch):
-    monkeypatch.setattr(providers, "load", lambda name, model=None: StubProvider())
-    t, out, _, _ = _scripted_term(["s", "", "", "", "", ""])
-    onboard.run_onboarding(t, repo.path)
-    assert not re.search(r"\x1b\[", out.getvalue())
+def test_ansi_never_leaks_into_the_plain_transcript(repo, *, monkeypatch):
+    monkeypatch.setattr(providers, "load", lambda name, model=None: make_stub_provider())
+    t, transcript, _, _ = _make_scripted_term(["s", "", "", "", "", ""])
+    onboard.run_onboarding(t, repo=repo.path)
+    assert not re.search(r"\x1b\[", transcript.getvalue())

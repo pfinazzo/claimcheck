@@ -5,16 +5,19 @@
  * @author Patrick Finazzo
  */
 
-let doc: Document | null = typeof document === 'undefined' ? null : document;
-
-/** Tests give the helpers a DOM of their own. */
-export const setDocument = (d: Document): void => {
-  doc = d;
+// The document the helpers build into; tests swap in their own.
+const documentHolder: { doc: Document | null } = {
+  doc: typeof document === 'undefined' ? null : document,
 };
 
-export const getDocument = (): Document => {
-  if (!doc) throw new Error('No document: call setDocument first.');
-  return doc;
+/** Tests give the helpers a DOM of their own. */
+export const setDocument = ({ replacement }: { replacement: Document }): void => {
+  documentHolder.doc = replacement;
+};
+
+export const readDocument = (): Document => {
+  if (!documentHolder.doc) throw new Error('No document: call setDocument first.');
+  return documentHolder.doc;
 };
 
 export type Child = Node | string | number | null | undefined | false;
@@ -23,50 +26,50 @@ export type Props = {
   class?: string;
   /** Plain attributes: id, type, value, placeholder, title, href, disabled, hidden... */
   attrs?: Record<string, string | number | boolean | null | undefined>;
-  data?: Record<string, string | number | null | undefined>;
+  dataset?: Record<string, string | number | null | undefined>;
   on?: Partial<Record<'click' | 'input' | 'change' | 'keydown' | 'submit' | 'toggle', (event: Event) => void>>;
 };
 
 /** Create an element. `props` and children are all optional. */
-export const h = <K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...children: Child[]): HTMLElementTagNameMap[K] => {
-  const el = getDocument().createElement(tag);
-  if (props.class) el.className = props.class;
-  for (const [k, v] of Object.entries(props.attrs ?? {})) {
+export const makeElement = <K extends keyof HTMLElementTagNameMap>({ tag, props = {}, children = [] }: { tag: K; props?: Props; children?: readonly Child[] }): HTMLElementTagNameMap[K] => {
+  const element = readDocument().createElement(tag);
+  if (props.class) element.className = props.class;
+  for (const [key, value] of Object.entries(props.attrs ?? {})) {
     // ARIA states are words, not flags: a pressed button is aria-pressed="true", and an unpressed one says "false".
-    if (k.startsWith('aria-') && typeof v === 'boolean') {
-      el.setAttribute(k, String(v));
+    if (key.startsWith('aria-') && typeof value === 'boolean') {
+      element.setAttribute(key, String(value));
       continue;
     }
-    if (v === null || v === undefined || v === false) continue;
-    el.setAttribute(k, v === true ? '' : String(v));
+    if (value === null || value === undefined || value === false) continue;
+    element.setAttribute(key, value === true ? '' : String(value));
   }
-  for (const [k, v] of Object.entries(props.data ?? {})) {
-    if (v !== null && v !== undefined) el.dataset[k] = String(v);
+  for (const [dataKey, dataValue] of Object.entries(props.dataset ?? {})) {
+    if (dataValue !== null && dataValue !== undefined) element.dataset[dataKey] = String(dataValue);
   }
   for (const [name, handler] of Object.entries(props.on ?? {})) {
-    if (handler) el.addEventListener(name, handler);
+    element.addEventListener(name, handler);
   }
-  append(el, children);
-  return el;
+  append({ parent: element, children });
+  return element;
 };
 
-export const append = (parent: Node, children: Child[]): void => {
-  for (const c of children) {
-    if (c === null || c === undefined || c === false) continue;
-    parent.appendChild(typeof c === 'string' || typeof c === 'number' ? getDocument().createTextNode(String(c)) : c);
+export const append = ({ parent, children }: { parent: Node; children: readonly Child[] }): void => {
+  for (const child of children) {
+    if (child === null || child === undefined || child === false) continue;
+    parent.appendChild(typeof child === 'string' || typeof child === 'number' ? readDocument().createTextNode(String(child)) : child);
   }
 };
 
 /** Replace everything inside a node. */
-export const mount = (parent: Node, ...children: Child[]): void => {
+export const mount = ({ parent, children = [] }: { parent: Node; children?: readonly Child[] }): void => {
   while (parent.firstChild) parent.removeChild(parent.firstChild);
-  append(parent, children);
+  append({ parent, children });
 };
 
-export const text = (s: string): Text => getDocument().createTextNode(s);
+export const makeText = ({ text }: { text: string }): Text => readDocument().createTextNode(text);
 
-export const frag = (...children: Child[]): DocumentFragment => {
-  const f = getDocument().createDocumentFragment();
-  append(f, children);
-  return f;
+export const makeFragment = (...children: Child[]): DocumentFragment => {
+  const fragment = readDocument().createDocumentFragment();
+  append({ parent: fragment, children });
+  return fragment;
 };

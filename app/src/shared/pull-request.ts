@@ -10,7 +10,7 @@
  * Why a pull request cannot be opened right now, in words for the person, or null when it can.
  * `origin` is the URL of the repo's `origin` remote, or null when the repo has none.
  */
-export const pullRequestBlocker = ({ isGhReady, origin }: { isGhReady: boolean; origin: string | null }): string | null => {
+export const findPullRequestBlocker = ({ isGhReady, origin }: { isGhReady: boolean; origin: string | null }): string | null => {
   if (!origin) return 'This repo has no GitHub remote yet. Add one with git remote add origin <url> and push, then come back.';
   if (!isGhReady) return 'The GitHub CLI is not signed in. Run gh auth login in a terminal, then come back.';
   return null;

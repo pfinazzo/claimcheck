@@ -11,7 +11,7 @@ class ClaimcheckError(Exception):
 
     code = 1
 
-    def __init__(self, message: str, code: int | None = None):
+    def __init__(self, message: str, *, code: int | None = None):
         super().__init__(message)
         if code is not None:
             self.code = code

@@ -10,8 +10,8 @@ from claimcheck import agentdocs
 
 def test_adds_block_to_existing_files_only(tmp_path):
     (tmp_path / "CLAUDE.md").write_text("# Project\n\nUse tabs.\n", encoding="utf-8")
-    out = agentdocs.install(tmp_path)
-    assert out == [("CLAUDE.md", "added")]
+    output = agentdocs.install(tmp_path)
+    assert output == [("CLAUDE.md", "added")]
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert text.startswith("# Project\n\nUse tabs.\n\n<!-- claimcheck:begin")
     assert "claimcheck spec draft" in text and text.rstrip().endswith(agentdocs.END)
@@ -48,7 +48,8 @@ def test_preserves_crlf_and_bom(tmp_path):
     agentdocs.install(tmp_path)
     raw = (tmp_path / "CLAUDE.md").read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf# T\r\n")
-    assert b"\n" not in raw.replace(b"\r\n", b"")  # every newline is CRLF
+    # Every newline is CRLF.
+    assert b"\n" not in raw.replace(b"\r\n", b"")
     assert agentdocs.install(tmp_path) == [("CLAUDE.md", "unchanged")]
 
 

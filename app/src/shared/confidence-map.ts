@@ -20,7 +20,11 @@ export const GUTTER = -0.1;
  * The checker's verdict as a height on the third axis. A claim nobody has checked has no verdict, so
  * it sits in the gutter like a missing number on the other axes.
  */
-export const CHECKER_LEVELS: Readonly<Record<string, number>> = { refuted: 0, unverifiable: 0.5, supported: 1 };
+export const CHECKER_LEVELS: ReadonlyMap<string, number> = new Map([
+  ['refuted', 0],
+  ['unverifiable', 0.5],
+  ['supported', 1],
+]);
 
 /**
  * Below this checker level a claim is flagged, and at or above it the checker is satisfied. The board
@@ -48,7 +52,7 @@ export type MapPoint = {
 };
 
 export type ConfidenceMap = {
-  points: MapPoint[];
+  points: readonly MapPoint[];
   /** Below this stated confidence a claim is flagged. */
   flagConfidence: number;
   /** Below this catch rate a claim is flagged. */
@@ -62,17 +66,20 @@ export type ConfidenceMap = {
 const CELL = 0.02;
 const SPREAD_STEP = 0.016;
 const GOLDEN_ANGLE = 2.399963;
+const EDGE_MARGIN = 0.02;
 
-const clampTo = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
+const clampTo = ({ value, low, high }: { value: number; low: number; high: number }): number => Math.min(high, Math.max(low, value));
+
+const toCellKey = ({ point }: { point: MapPoint }): string => `${Math.round(point.x / CELL)}:${Math.round(point.y / CELL)}:${Math.round(point.z / CELL)}`;
 
 /**
  * Claims with the same numbers would sit on one spot and hide each other. The first keeps the
  * spot and the rest fan out around it in a fixed pattern, so the picture is the same every time.
  */
-const spreadApart = (points: MapPoint[]): MapPoint[] => {
+const splitOverlappingPoints = ({ points }: { points: readonly MapPoint[] }): MapPoint[] => {
   const seen = new Map<string, number>();
   return points.map((point) => {
-    const key = `${Math.round(point.x / CELL)}:${Math.round(point.y / CELL)}:${Math.round(point.z / CELL)}`;
+    const key = toCellKey({ point });
     const nth = seen.get(key) ?? 0;
     seen.set(key, nth + 1);
     if (nth === 0) return point;
@@ -80,8 +87,8 @@ const spreadApart = (points: MapPoint[]): MapPoint[] => {
     const angle = nth * GOLDEN_ANGLE;
     return {
       ...point,
-      x: clampTo(point.x + Math.cos(angle) * radius, MAP_BOUNDS.minX + 0.02, MAP_BOUNDS.maxX - 0.02),
-      y: clampTo(point.y + Math.sin(angle) * radius, MAP_BOUNDS.minY + 0.02, MAP_BOUNDS.maxY - 0.02),
+      x: clampTo({ value: point.x + Math.cos(angle) * radius, low: MAP_BOUNDS.minX + EDGE_MARGIN, high: MAP_BOUNDS.maxX - EDGE_MARGIN }),
+      y: clampTo({ value: point.y + Math.sin(angle) * radius, low: MAP_BOUNDS.minY + EDGE_MARGIN, high: MAP_BOUNDS.maxY - EDGE_MARGIN }),
     };
   });
 };
@@ -91,7 +98,7 @@ export const buildConfidenceMap = ({ board }: { board: Board }): ConfidenceMap =
   const flagged = new Set(board.queue);
   const placed: MapPoint[] = board.claims.map((claim) => {
     const catchRate = claim.mutation && claim.mutation.total > 0 ? claim.mutation.catchRate : null;
-    const verdict = claim.verdict?.verdict?.toLowerCase() ?? 'not checked';
+    const verdict = claim.verdict?.verdict.toLowerCase() ?? 'not checked';
     return {
       id: claim.id,
       title: claim.claim,
@@ -103,15 +110,15 @@ export const buildConfidenceMap = ({ board }: { board: Board }): ConfidenceMap =
       isRefuted: verdict === 'refuted',
       x: catchRate ?? GUTTER,
       y: claim.confidence ?? GUTTER,
-      z: CHECKER_LEVELS[verdict] ?? GUTTER,
+      z: CHECKER_LEVELS.get(verdict) ?? GUTTER,
     };
   });
-  const points = spreadApart(placed);
+  const points = splitOverlappingPoints({ points: placed });
   const flagConfidence = board.config.app.flagConfidence;
   const flagCatchRate = board.config.app.flagCatchRate;
-  const signature = JSON.stringify([flagConfidence, flagCatchRate, points.map((p) => [p.id, p.x, p.y, p.z, p.needsDecision, p.isSettled, p.isRefuted, p.title])]);
+  const signature = JSON.stringify([flagConfidence, flagCatchRate, points.map((point) => [point.id, point.x, point.y, point.z, point.needsDecision, point.isSettled, point.isRefuted, point.title])]);
   return { points, flagConfidence, flagCatchRate, flagChecker: CHECKER_FLAG_LINE, signature };
 };
 
 /** How many claims still need a decision, for the heading over the map. Settled claims do not count. */
-export const countNeedingDecision = (map: ConfidenceMap): number => map.points.filter((p) => p.needsDecision && !p.isSettled).length;
+export const countNeedingDecision = ({ map }: { map: ConfidenceMap }): number => map.points.filter((point) => point.needsDecision && !point.isSettled).length;

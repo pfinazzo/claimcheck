@@ -4,29 +4,11 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "The workflow that init --ci github writes no longer contains the comment about the claimcheck repository being private or needing a token, for every detected stack, and is still valid YAML"
-    confidence: 0.93
-    criteria: [1]
-    files: ["src/claimcheck/ci.py"]
-    kill_condition: "test: tests/test_ci_template.py::test_the_workflow_does_not_assume_a_private_repo_or_a_token"
+    claim: "This is a merge of origin/main into the Desk branch. Every file under src/claimcheck in the merge is exactly the file on origin/main, so the merge changes no Python behavior of its own"
+    confidence: 0.97
+    criteria: []
+    files: ["src/claimcheck/__init__.py", "src/claimcheck/agentdocs.py", "src/claimcheck/checker.py", "src/claimcheck/ci.py", "src/claimcheck/claims.py", "src/claimcheck/cli.py", "src/claimcheck/config.py", "src/claimcheck/detect.py", "src/claimcheck/gitio.py", "src/claimcheck/hook.py", "src/claimcheck/initflow.py", "src/claimcheck/ledger.py", "src/claimcheck/mutate.py", "src/claimcheck/onboard.py", "src/claimcheck/providers/__init__.py", "src/claimcheck/providers/claude.py", "src/claimcheck/providers/claude_cli.py", "src/claimcheck/providers/shapes.py", "src/claimcheck/providers/stub.py", "src/claimcheck/redact.py", "src/claimcheck/run.py", "src/claimcheck/spec.py", "src/claimcheck/specdraft.py", "src/claimcheck/tui.py"]
+    kill_condition: "cmd: git diff origin/main -- src/claimcheck prints nothing"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_template.py"
-      - "obs: rendered the workflow for seven stacks and parsed each with a YAML loader"
-
-  - id: c2
-    claim: "The workflow still installs claimcheck from https://github.com/pfinazzo/claimcheck.git and still runs claimcheck run --provider claude --base origin/${{ github.base_ref }} with ANTHROPIC_API_KEY from the repository secrets"
-    confidence: 0.9
-    criteria: [2]
-    files: ["src/claimcheck/ci.py"]
-    kill_condition: "test: tests/test_ci_template.py::test_the_workflow_installs_from_the_public_address_and_runs_against_the_base"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_template.py -k installs"
-
-  - id: c3
-    claim: "A test fails if the README install command stops matching the GitHub address in the workflow template, because the template's install URL is the one the test compares against"
-    confidence: 0.8
-    criteria: [3]
-    files: ["src/claimcheck/ci.py"]
-    kill_condition: "test: tests/test_ci_template.py::test_the_readme_install_command_uses_the_templates_address"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_template.py -k readme"
+      - "cmd: git diff origin/main --stat -- src prints nothing"
+      - "cmd: python -m pytest -q passes on the merged tree (380 passed, 1 skipped)"

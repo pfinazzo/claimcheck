@@ -20,20 +20,20 @@ export type TrustedCommand = {
 };
 
 /** Every command the app itself would run for this board, with where it came from. */
-export const commandsFor = (board: Pick<Board, 'config' | 'claims'>): TrustedCommand[] => {
-  const out: TrustedCommand[] = [{ label: 'Test command', command: String(board.config.test_cmd) }];
-  if (board.config.app?.python) out.push({ label: 'Python used to run claimcheck', command: String(board.config.app.python) });
-  for (const claim of board.claims) {
-    const kc = String(claim.killCondition ?? '');
-    if (/^cmd:/.test(kc)) out.push({ label: `Kill condition for ${claim.id}`, command: kc.replace(/^cmd:\s*/, '') });
-    else if (/^test:/.test(kc)) out.push({ label: `Test id for ${claim.id}`, command: `${board.config.test_cmd} ${kc.replace(/^test:\s*/, '')}` });
-  }
-  return out;
+export const listCommandsFor = ({ board }: { board: Pick<Board, 'config' | 'claims'> }): TrustedCommand[] => {
+  const python: TrustedCommand[] = board.config.app.python ? [{ label: 'Python used to run claimcheck', command: String(board.config.app.python) }] : [];
+  const fromClaims = board.claims.flatMap((claim): TrustedCommand[] => {
+    const { killCondition } = claim;
+    if (/^cmd:/.test(killCondition)) return [{ label: `Kill condition for ${claim.id}`, command: killCondition.replace(/^cmd:\s*/, '') }];
+    if (/^test:/.test(killCondition)) return [{ label: `Test id for ${claim.id}`, command: `${board.config.test_cmd} ${killCondition.replace(/^test:\s*/, '')}` }];
+    return [];
+  });
+  return [{ label: 'Test command', command: String(board.config.test_cmd) }, ...python, ...fromClaims];
 };
 
-export const digestOf = (commands: TrustedCommand[]): string => createHash('sha256').update(JSON.stringify(commands.map((c) => c.command))).digest('hex');
+export const computeDigest = ({ commands }: { commands: readonly TrustedCommand[] }): string => createHash('sha256').update(JSON.stringify(commands.map((trustedCommand) => trustedCommand.command))).digest('hex');
 
-const keyOf = (repoPath: string): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
+const toKey = ({ repoPath }: { repoPath: string }): string => (process.platform === 'win32' ? path.resolve(repoPath).toLowerCase() : path.resolve(repoPath));
 
 export type TrustStore = {
   isTrusted: (repoPath: string, digest: string) => boolean;
@@ -44,19 +44,19 @@ export const createTrustStore = ({ dir }: { dir: string }): TrustStore => {
   const file = path.join(dir, 'trusted-repos.json');
   const load = (): Record<string, string> => {
     try {
-      const data: unknown = JSON.parse(readFileSync(file, 'utf8'));
-      return data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, string>) : {};
+      const payload: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      return payload && typeof payload === 'object' && !Array.isArray(payload) ? (payload as Record<string, string>) : {};
     } catch {
       return {};
     }
   };
   return {
-    isTrusted: (repoPath, digest) => load()[keyOf(repoPath)] === digest,
+    isTrusted: (repoPath, digest) => load()[toKey({ repoPath })] === digest,
     trust(repoPath, digest) {
-      const data = load();
-      data[keyOf(repoPath)] = digest;
+      const payload = load();
+      payload[toKey({ repoPath })] = digest;
       mkdirSync(dir, { recursive: true });
-      writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+      writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
     },
   };
 };

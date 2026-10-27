@@ -10,8 +10,8 @@
 import { buildConfidenceMap, countNeedingDecision } from '../shared/confidence-map.ts';
 import type { Board, Claim } from '../shared/types.ts';
 import { startConfidenceMap, type MapStart } from './confidence-map.ts';
-import { getDocument, h, type Child } from './dom.ts';
-import { FLAG_TEXT, pct, plural, verdictWord } from './format.ts';
+import { makeElement, readDocument } from './dom.ts';
+import { FLAG_TEXT, formatPercent, formatPlural, formatVerdictWord } from './format.ts';
 
 /** What the graph view needs from the board's page state. */
 export type GraphUi = {
@@ -20,9 +20,9 @@ export type GraphUi = {
 };
 
 export type GraphActions = {
-  select: (id: string | null) => void;
+  select: (options: { id: string | null }) => void;
   /** Leaves the map for the list, with this claim open. */
-  showClaim: (id: string) => void;
+  showClaim: (options: { id: string }) => void;
 };
 
 type Host = {
@@ -37,143 +37,210 @@ type Host = {
   onSelect: (id: string) => void;
 };
 
-const CLAIM_STATE_WORDS: Record<Claim['status'], string> = { open: '', fixing: 'Fix in progress', resolved: 'Resolved', accepted: 'Accepted' };
+const CLAIM_STATE_WORDS = new Map<string, string>([
+  ['fixing', 'Fix in progress'],
+  ['resolved', 'Resolved'],
+  ['accepted', 'Accepted'],
+]);
+
+const SETTLED_STATUSES = new Set(['resolved', 'accepted']);
+
+const MAP_HINT =
+  'Up is what the author stated, right is what the tests proved, and toward you is the independent checker\'s verdict. Drag to orbit, scroll to zoom, right-drag to pan, double-click to reset. Claims with the same numbers are spread a little so none hides another. "No run", "none" and "not checked" mean there was nothing to measure.';
 
 // The one chart for the whole app. It is created on first use and kept, so its canvas survives page rebuilds.
-let host: Host | null = null;
+const hostHolder: { current: Host | null } = { current: null };
 
-const legendItem = (swatch: string, text: string): HTMLElement => h('li', {}, h('span', { class: `swatch ${swatch}`, attrs: { 'aria-hidden': 'true' } }), text);
+const renderLegendItem = ({ swatch, text }: { swatch: string; text: string }): HTMLElement =>
+  makeElement({ tag: 'li', props: {}, children: [makeElement({ tag: 'span', props: { class: `swatch ${swatch}`, attrs: { 'aria-hidden': 'true' } } }), text] });
+
+const buildHost = (): Host => {
+  const canvas = readDocument().createElement('canvas');
+  const overlay = makeElement({ tag: 'div', props: { class: 'map-overlay', attrs: { 'aria-hidden': 'true' } } });
+  const tooltip = makeElement({ tag: 'div', props: { class: 'map-tooltip' } });
+  tooltip.hidden = true;
+  const stage = makeElement({
+    tag: 'div',
+    props: {
+      class: 'map-stage',
+      attrs: { role: 'img', 'aria-label': '3D confidence map. Every claim is a sphere placed by stated confidence, tests caught and the checker verdict. The table below lists the same claims with the same numbers.' },
+    },
+    children: [canvas, overlay, tooltip],
+  });
+  const note = makeElement({ tag: 'p', props: { class: 'muted map-note', attrs: { role: 'status' } } });
+  note.hidden = true;
+  const root = makeElement({
+    tag: 'div',
+    props: { class: 'map-card' },
+    children: [
+      stage,
+      makeElement({
+        tag: 'ul',
+        props: { class: 'plain map-legend' },
+        children: [
+          renderLegendItem({ swatch: 'zone', text: 'Red sheet: a flag line' }),
+          renderLegendItem({ swatch: 'good', text: 'Green box: backed on all three checks' }),
+          renderLegendItem({ swatch: 'bad', text: 'Needs a decision' }),
+          renderLegendItem({ swatch: 'accent', text: 'Backed' }),
+          renderLegendItem({ swatch: 'faint', text: 'Settled' }),
+          renderLegendItem({ swatch: 'ring', text: 'Ring: the checker refuted it' }),
+        ],
+      }),
+      makeElement({ tag: 'p', props: { class: 'muted map-hint' }, children: [MAP_HINT] }),
+      note,
+    ],
+  });
+  return { root, stage, canvas, overlay, tooltip, note, start: null, signature: '', onSelect: () => undefined };
+};
 
 const ensureHost = (): Host => {
-  if (host) return host;
-  const canvas = getDocument().createElement('canvas');
-  const overlay = h('div', { class: 'map-overlay', attrs: { 'aria-hidden': 'true' } });
-  const tooltip = h('div', { class: 'map-tooltip' });
-  tooltip.hidden = true;
-  const stage = h('div', { class: 'map-stage', attrs: { role: 'img', 'aria-label': '3D confidence map. Every claim is a sphere placed by stated confidence, tests caught and the checker verdict. The table below lists the same claims with the same numbers.' } }, canvas, overlay, tooltip);
-  const note = h('p', { class: 'muted map-note', attrs: { role: 'status' } });
-  note.hidden = true;
-  const root = h(
-    'div',
-    { class: 'map-card' },
-    stage,
-    h(
-      'ul',
-      { class: 'plain map-legend' },
-      legendItem('zone', 'Red sheet: a flag line'),
-      legendItem('good', 'Green box: backed on all three checks'),
-      legendItem('bad', 'Needs a decision'),
-      legendItem('accent', 'Backed'),
-      legendItem('faint', 'Settled'),
-      legendItem('ring', 'Ring: the checker refuted it'),
-    ),
-    h('p', { class: 'muted map-hint' }, 'Up is what the author stated, right is what the tests proved, and toward you is the independent checker\'s verdict. Drag to orbit, scroll to zoom, right-drag to pan, double-click to reset. Claims with the same numbers are spread a little so none hides another. "No run", "none" and "not checked" mean there was nothing to measure.'),
-    note,
-  );
-  host = { root, stage, canvas, overlay, tooltip, note, start: null, signature: '', onSelect: () => {} };
-  return host;
+  const existing = hostHolder.current;
+  if (existing) return existing;
+  const created = buildHost();
+  hostHolder.current = created;
+  return created;
 };
 
-const selectionCard = (claim: Claim | null, a: GraphActions): HTMLElement => {
-  if (!claim) return h('aside', { class: 'selection panel' }, h('h3', {}, 'Selected claim'), h('p', { class: 'muted' }, 'Click a dot on the map, or a row in the table, to see its claim here.'));
-  const m = claim.mutation;
-  const caught = m && m.total > 0 ? pct((m.killed + m.timeout) / m.total) : 'no run';
-  return h(
-    'aside',
-    { class: 'selection panel' },
-    h('h3', {}, `Selected claim ${claim.id}`),
-    h('p', { class: 'selection-title' }, claim.claim),
-    h('dl', { class: 'selection-facts' }, h('div', {}, h('dt', {}, 'Stated'), h('dd', {}, claim.confidence === null ? 'not stated' : claim.confidence.toFixed(2))), h('div', {}, h('dt', {}, 'Tests caught'), h('dd', {}, caught)), h('div', {}, h('dt', {}, 'Checker'), h('dd', {}, verdictWord(claim)))),
-    claim.flags.length ? h('ul', { class: 'plain' }, ...claim.flags.map((flag) => h('li', { class: 'error' }, FLAG_TEXT[flag] ?? flag))) : h('p', { class: 'muted' }, 'Nothing is flagged on this claim.'),
-    h('button', { class: 'btn primary', attrs: { type: 'button' }, on: { click: () => a.showClaim(claim.id) } }, 'Open claim'),
-  );
+const renderSelectionCard = ({ claim, actions }: { claim: Claim | null; actions: GraphActions }): HTMLElement => {
+  if (!claim) {
+    return makeElement({
+      tag: 'aside',
+      props: { class: 'selection panel' },
+      children: [makeElement({ tag: 'h3', props: {}, children: ['Selected claim'] }), makeElement({ tag: 'p', props: { class: 'muted' }, children: ['Click a dot on the map, or a row in the table, to see its claim here.'] })],
+    });
+  }
+  const mutation = claim.mutation;
+  const caught = mutation && mutation.total > 0 ? formatPercent({ x: (mutation.killed + mutation.timeout) / mutation.total }) : 'no run';
+  const fact = ({ label, value }: { label: string; value: string }): HTMLElement =>
+    makeElement({ tag: 'div', props: {}, children: [makeElement({ tag: 'dt', props: {}, children: [label] }), makeElement({ tag: 'dd', props: {}, children: [value] })] });
+  return makeElement({
+    tag: 'aside',
+    props: { class: 'selection panel' },
+    children: [
+      makeElement({ tag: 'h3', props: {}, children: [`Selected claim ${claim.id}`] }),
+      makeElement({ tag: 'p', props: { class: 'selection-title' }, children: [claim.claim] }),
+      makeElement({
+        tag: 'dl',
+        props: { class: 'selection-facts' },
+        children: [
+          fact({ label: 'Stated', value: claim.confidence === null ? 'not stated' : claim.confidence.toFixed(2) }),
+          fact({ label: 'Tests caught', value: caught }),
+          fact({ label: 'Checker', value: formatVerdictWord({ claim }) }),
+        ],
+      }),
+      claim.flags.length
+        ? makeElement({ tag: 'ul', props: { class: 'plain' }, children: claim.flags.map((flag) => makeElement({ tag: 'li', props: { class: 'error' }, children: [FLAG_TEXT[flag] ?? flag] })) })
+        : makeElement({ tag: 'p', props: { class: 'muted' }, children: ['Nothing is flagged on this claim.'] }),
+      makeElement({ tag: 'button', props: { class: 'btn primary', attrs: { type: 'button' }, on: { click: () => actions.showClaim({ id: claim.id }) } }, children: ['Open claim'] }),
+    ],
+  });
 };
 
-const stateWord = (board: Board, claim: Claim): string => CLAIM_STATE_WORDS[claim.status] || (board.queue.includes(claim.id) ? 'Needs a decision' : 'Backed');
+const describeClaimState = ({ board, claim }: { board: Board; claim: Claim }): string => CLAIM_STATE_WORDS.get(claim.status) ?? (board.queue.includes(claim.id) ? 'Needs a decision' : 'Backed');
 
 /** Every claim on the board, riskiest first, each as a row that selects it. */
-const claimsTable = (board: Board, selectedId: string | null, a: GraphActions): HTMLElement => {
-  const ordered = [...board.claims].sort((first, second) => second.risk - first.risk || first.id.localeCompare(second.id));
-  return h(
-    'section',
-    { class: 'all-claims panel' },
-    h('h3', {}, `All claims (${board.claims.length})`),
-    h(
-      'table',
-      { class: 'all-claims-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Claim'), h('th', {}, 'Stated'), h('th', {}, 'Tests caught'), h('th', {}, 'Checker'), h('th', {}, 'State'))),
-      h(
-        'tbody',
-        {},
-        ...ordered.map((claim) => {
-          const m = claim.mutation;
-          const isFlagged = board.queue.includes(claim.id) && claim.status !== 'resolved' && claim.status !== 'accepted';
-          return h(
-            'tr',
-            { class: claim.id === selectedId ? 'is-selected' : '', data: { claim: claim.id } },
-            h('td', {}, h('button', { class: 'claim-link', attrs: { type: 'button', 'aria-pressed': claim.id === selectedId }, on: { click: () => a.select(claim.id) } }, h('span', { class: 'mono claim-id' }, claim.id), ' ', claim.claim)),
-            h('td', { class: 'number' }, claim.confidence === null ? 'not stated' : claim.confidence.toFixed(2)),
-            h('td', { class: 'number' }, m && m.total > 0 ? pct((m.killed + m.timeout) / m.total) : 'no run'),
-            h('td', {}, verdictWord(claim)),
-            h('td', { class: isFlagged ? 'error' : 'muted' }, stateWord(board, claim)),
-          );
+const renderClaimsTable = ({ board, selectedId, actions }: { board: Board; selectedId: string | null; actions: GraphActions }): HTMLElement => {
+  const ordered = board.claims.toSorted((first, second) => second.risk - first.risk || first.id.localeCompare(second.id));
+  const renderRow = ({ claim }: { claim: Claim }): HTMLElement => {
+    const mutation = claim.mutation;
+    const isFlagged = board.queue.includes(claim.id) && !SETTLED_STATUSES.has(claim.status);
+    return makeElement({
+      tag: 'tr',
+      props: { class: claim.id === selectedId ? 'is-selected' : '', dataset: { claim: claim.id } },
+      children: [
+        makeElement({
+          tag: 'td',
+          props: {},
+          children: [
+            makeElement({
+              tag: 'button',
+              props: { class: 'claim-link', attrs: { type: 'button', 'aria-pressed': claim.id === selectedId }, on: { click: () => actions.select({ id: claim.id }) } },
+              children: [makeElement({ tag: 'span', props: { class: 'mono claim-id' }, children: [claim.id] }), ' ', claim.claim],
+            }),
+          ],
         }),
-      ),
-    ),
-  );
+        makeElement({ tag: 'td', props: { class: 'number' }, children: [claim.confidence === null ? 'not stated' : claim.confidence.toFixed(2)] }),
+        makeElement({ tag: 'td', props: { class: 'number' }, children: [mutation && mutation.total > 0 ? formatPercent({ x: (mutation.killed + mutation.timeout) / mutation.total }) : 'no run'] }),
+        makeElement({ tag: 'td', props: {}, children: [formatVerdictWord({ claim })] }),
+        makeElement({ tag: 'td', props: { class: isFlagged ? 'error' : 'muted' }, children: [describeClaimState({ board, claim })] }),
+      ],
+    });
+  };
+  return makeElement({
+    tag: 'section',
+    props: { class: 'all-claims panel' },
+    children: [
+      makeElement({ tag: 'h3', props: {}, children: [`All claims (${board.claims.length})`] }),
+      makeElement({
+        tag: 'table',
+        props: { class: 'all-claims-table' },
+        children: [
+          makeElement({
+            tag: 'thead',
+            props: {},
+            children: [makeElement({ tag: 'tr', props: {}, children: ['Claim', 'Stated', 'Tests caught', 'Checker', 'State'].map((label) => makeElement({ tag: 'th', props: {}, children: [label] })) })],
+          }),
+          makeElement({ tag: 'tbody', props: {}, children: ordered.map((claim) => renderRow({ claim })) }),
+        ],
+      }),
+    ],
+  });
 };
 
-/** The whole Confidence map tab. The chart itself is started by syncConfidenceMap once this is in the page. */
-export const renderGraphView = (ui: GraphUi, a: GraphActions): Child[] => {
+/** The whole Confidence map tab. The chart itself is started by drawConfidenceMap once this is in the page. */
+export const renderGraphView = ({ ui, actions }: { ui: GraphUi; actions: GraphActions }): HTMLElement => {
   const board = ui.board;
-  if (!board) return [];
+  if (!board) return makeElement({ tag: 'div', props: { class: 'graph-view' } });
   const map = buildConfidenceMap({ board });
   const selected = board.claims.find((claim) => claim.id === ui.selectedId) ?? null;
-  const needing = countNeedingDecision(map);
-  return [
-    h(
-      'div',
-      { class: 'graph-view' },
-      h(
-        'div',
-        { class: 'graph-top' },
-        h('section', { class: 'map-column panel' }, h('h3', {}, `Confidence map: ${needing === 0 ? 'no claim needs a decision' : `${needing} of ${plural(map.points.length, 'claim')} need a decision`}`), ensureHost().root),
-        selectionCard(selected, a),
-      ),
-      claimsTable(board, ui.selectedId, a),
-    ),
-  ];
+  const needing = countNeedingDecision({ map });
+  const heading = needing === 0 ? 'no claim needs a decision' : `${needing} of ${formatPlural({ count: map.points.length, one: 'claim' })} need a decision`;
+  return makeElement({
+    tag: 'div',
+    props: { class: 'graph-view' },
+    children: [
+      makeElement({
+        tag: 'div',
+        props: { class: 'graph-top' },
+        children: [
+          makeElement({ tag: 'section', props: { class: 'map-column panel' }, children: [makeElement({ tag: 'h3', props: {}, children: [`Confidence map: ${heading}`] }), ensureHost().root] }),
+          renderSelectionCard({ claim: selected, actions }),
+        ],
+      }),
+      renderClaimsTable({ board, selectedId: ui.selectedId, actions }),
+    ],
+  });
 };
 
 /**
  * Starts the chart the first time, then feeds it the board. Call it after the page from
  * renderGraphView is in the document, because the chart measures the space it was given.
  */
-export const syncConfidenceMap = ({ ui, onSelect, reducedMotion }: { ui: GraphUi; onSelect: (id: string) => void; reducedMotion: boolean }): void => {
+export const drawConfidenceMap = ({ ui, onSelect, reducedMotion }: { ui: GraphUi; onSelect: (id: string) => void; reducedMotion: boolean }): void => {
   const board = ui.board;
   if (!board) return;
-  const current = ensureHost();
-  current.onSelect = onSelect;
-  if (!current.start) {
-    current.start = startConfidenceMap({ stage: current.stage, canvas: current.canvas, overlay: current.overlay, tooltip: current.tooltip, reducedMotion, onSelect: (id) => current.onSelect(id) });
-    if (current.start.status === 'unavailable') {
-      current.note.hidden = false;
-      current.note.textContent = `The map could not start (${current.start.reason}). The table has the same numbers.`;
-    }
+  const host = ensureHost();
+  host.onSelect = onSelect;
+  host.start ??= startConfidenceMap({ stage: host.stage, canvas: host.canvas, overlay: host.overlay, tooltip: host.tooltip, reducedMotion, onSelect: (id) => host.onSelect(id) });
+  const start = host.start;
+  if (start.status === 'unavailable') {
+    host.note.hidden = false;
+    host.note.textContent = `The map could not start (${start.reason}). The table has the same numbers.`;
+    return;
   }
-  if (current.start.status !== 'ready') return;
   const map = buildConfidenceMap({ board });
-  if (current.signature !== map.signature) {
-    current.start.handle.setMap(map);
-    current.signature = map.signature;
+  if (host.signature !== map.signature) {
+    start.handle.setMap(map);
+    host.signature = map.signature;
   }
-  current.start.handle.setSelected(ui.selectedId);
-  current.start.handle.drawNow();
+  start.handle.setSelected(ui.selectedId);
+  start.handle.drawNow();
 };
 
 /** Re-reads the page's colours, after the light or dark setting changed. */
 export const refreshConfidenceMapTheme = (): void => {
-  if (host?.start?.status !== 'ready') return;
-  host.start.handle.setTheme();
-  host.start.handle.drawNow();
+  const start = hostHolder.current?.start;
+  if (start?.status !== 'ready') return;
+  start.handle.setTheme();
+  start.handle.drawNow();
 };
