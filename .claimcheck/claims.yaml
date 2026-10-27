@@ -1,51 +1,124 @@
 # claimcheck claims file: one entry per thing the author asserts about this diff.
+# Written after the fact for the Desk work merged in pull requests 25 to 30. Those pull requests
+# shipped without claims, so this file makes the claims they should have carried and grades them.
 version: 1
 author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "When claimcheck is not on PATH and no path or [app].python is set, Desk uses the first Python that can run python -m claimcheck: python then py on Windows, python3 then python elsewhere. A Python that does not have claimcheck is passed over, and when none has it the answer is still null"
-    confidence: 0.9
-    criteria: []
-    files: ["app/src/lib/runner.ts"]
-    kill_condition: "test: app/test/gh.test.ts, 'with no claimcheck on PATH, a Python that has it installed is used' and 'a Python without claimcheck is passed over'"
-    verified_by:
-      - "cmd: npm test, in app/ (213 pass)"
-      - "obs: with PATH cut down to Windows and Node only, resolveClaimcheck returned null, and with the repo as a search root it returned the repo's .venv Python"
-
-  - id: c2
-    claim: "The existing order is kept: a set path, then claimcheck on PATH, then [app].python all win over the new Python probes, and no probe is run once one of them has answered"
+    claim: "Desk remembers the Light, Dark or Auto choice in a file in its own data folder and reads it back at startup. Any value that is not light, dark or system, and a missing or damaged file, reads as Auto"
     confidence: 0.92
     criteria: []
-    files: ["app/src/lib/runner.ts"]
-    kill_condition: "test: app/test/gh.test.ts, 'the order is: set path, claimcheck on PATH, [app].python, then the probes'"
+    files: ["app/src/lib/theme-store.ts", "app/src/shared/theme.ts"]
+    kill_condition: "test: app/test/theme.test.ts, 'a pick is remembered across restarts, and a damaged file reads as Auto' and 'anything that is not light, dark or system is refused or read as Auto'"
     verified_by:
-      - "cmd: node --test test/gh.test.ts, in app/"
+      - "cmd: npm test, in app/"
+      - "obs: in a real Desk window with a throwaway profile, picking Dark, quitting and starting again opened dark"
+
+  - id: c2
+    claim: "Picking a look in the top bar sets Electron's native theme, which flips the page's light-or-dark media query, so the style sheet, the backdrop and the 3D map all follow, and the window's own background colour is repainted at the same moment"
+    confidence: 0.75
+    criteria: []
+    files: ["app/src/main.ts"]
+    kill_condition: "obs: in a real Desk window, clicking Dark, Light and Dark flipped matchMedia('(prefers-color-scheme: dark)') each time. There is no automated test for the main process, so a break would not fail npm test"
+    verified_by:
+      - "obs: driven through the Chrome DevTools protocol against a real window, not by a unit test"
 
   - id: c3
-    claim: "A virtualenv inside the repo (.venv or venv) is tried before any Python on PATH, and only when the caller passes search roots. claimcheckBin passes them only when isRepoTrusted is true, and the run is the only call that passes true"
+    claim: "Open pull request from the all-clear banner is refused with a sentence when there is no remote, gh is not signed in, the repo is on the base branch, the branch is not on GitHub, or a claim still needs a decision. Desk never pushes"
     confidence: 0.9
     criteria: []
-    files: ["app/src/lib/runner.ts", "app/src/lib/desk-api.ts"]
-    kill_condition: "test: app/test/gh.test.ts, 'a virtualenv in the repo is tried first, but only when the caller says the repo is trusted'"
+    files: ["app/src/shared/pull-request.ts", "app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/branch-pr.test.ts, 'a branch can be opened as a pull request only when GitHub, the branch and the remote are all in place', 'Desk refuses while a claim still needs a decision' and 'Desk refuses a branch GitHub does not have yet, and says how to push it'"
     verified_by:
-      - "obs: the only other caller of resolveClaimcheck in desk-api.ts is the wizard's cc call, and it does not pass isRepoTrusted"
+      - "cmd: node --test test/branch-pr.test.ts, in app/"
 
   - id: c4
-    claim: "When no claimcheck can be found, the message names the pip install command, Connect Claude and [app].python"
-    confidence: 0.95
-    criteria: []
-    files: ["app/src/lib/runner.ts"]
-    kill_condition: "test: app/test/gh.test.ts, 'the not-found message says how to install it and where to set the path'"
-    verified_by:
-      - "cmd: node --test test/gh.test.ts, in app/"
-
-  - id: c5
-    claim: "Pressing Run claimcheck on a repo that has a .venv Python starts none of the repo's programs until the person has agreed to the commands dialog, and after agreeing it runs claimcheck with that virtualenv's Python"
+    claim: "The board knows the current commit is on origin under the branch's name only when git says so, and a new local commit makes it not pushed again"
     confidence: 0.9
     criteria: []
-    files: ["app/src/lib/desk-api.ts"]
-    kill_condition: "test: app/test/pr-check.test.ts, 'the repo's own virtualenv Python is not started until the commands dialog has been agreed to' (a real Desk API, a repo with a .venv Python, and a recorder on every program Desk starts)"
+    files: ["app/src/lib/store.ts"]
+    kill_condition: "test: app/test/branch-pr.test.ts, 'the board knows whether the branch is on the remote, and a new commit makes it not pushed again'"
+    verified_by:
+      - "cmd: node --test test/branch-pr.test.ts, in app/"
+
+  - id: c5
+    claim: "The pull request description built from the board lists every claim with its three figures, escapes pipes and newlines so a claim cannot break the table, names a claim settled by hand while still flagged instead of calling it backed, and says that backed is not a review"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/lib/gh.ts"]
+    kill_condition: "test: app/test/branch-pr.test.ts, 'the description lists every claim with its three figures and says backed is not a review' and app/test/pr-check.test.ts, 'the review comment says which commit and which settings, and is not an approval'"
+    verified_by:
+      - "cmd: npm test, in app/"
+
+  - id: c6
+    claim: "What gh prints is read defensively: a list entry with no number is dropped, wrong-typed fields become empty values, markup in a title or label stays text, text that is not a list is refused in a readable sentence, and gh failures (not installed, not signed in, no remote, rate limit, no access, no network) become a sentence about what to do"
+    confidence: 0.88
+    criteria: []
+    files: ["app/src/lib/github-data.ts"]
+    kill_condition: "test: app/test/github-data.test.ts, 'strange input becomes empty values, never a crash, and markup stays text', 'text that is not a list is refused in words a person can read' and 'when gh fails, the person reads a sentence about what to do, not gh's own output'"
+    verified_by:
+      - "obs: read against real GitHub, this repo's open pull requests and a public repo's issues parsed correctly"
+
+  - id: c7
+    claim: "A pull request's checks are counted once per name with the newest run winning, skipped checks are left out, and one failing check makes the pull request failing even while others run"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/lib/github-data.ts"]
+    kill_condition: "test: app/test/github-data.test.ts, 'checks are counted once per name, newest run wins, skipped ones are left out' and 'a failing check wins over a running one, and the failing names are kept'"
+    verified_by:
+      - "cmd: node --test test/github-data.test.ts, in app/"
+
+  - id: c8
+    claim: "A pull request or issue description is drawn from Markdown by building only known elements. HTML comments and a fixed list of formatting tags (such as details, summary, b and img) are dropped, with br becoming a line break. Any other tag, including script and iframe, is shown as the literal text it was written as and never becomes an element. Images are named and never loaded, only http and https links are kept and they open through the page, and no anchor element is ever created"
+    confidence: 0.88
+    criteria: []
+    files: ["app/src/renderer/markdown.ts"]
+    kill_condition: "test: app/test/markdown.test.ts, 'HTML in a description is dropped and cannot become an element, a script or a remote image', 'links open through the page, and only web links are links' and 'a Markdown image is named and never loaded'"
+    verified_by:
+      - "cmd: node --test test/markdown.test.ts, in app/"
+
+  - id: c9
+    claim: "Checking a pull request fetches it into a folder under Desk's own data folder at exactly its commit, and leaves the person's branch, commit and uncommitted work exactly as they were. Nothing is pushed"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/lib/pr-worktree.ts"]
+    kill_condition: "test: app/test/pr-check.test.ts, 'the pull request is checked out in Desk's own folder at exactly its commit, and the checkout is not touched'"
+    verified_by:
+      - "cmd: node --test test/pr-check.test.ts, in app/ (real git repos with a bare remote)"
+
+  - id: c10
+    claim: "While a pull request is graded, the base branch's .claimcheck/config.toml replaces the pull request's own when the base has one, so a pull request cannot change its own test command or skip files. A pull request that brings its own settings keeps them, and its checker is always the reviewer's, never its own stand-in"
+    confidence: 0.88
+    criteria: []
+    files: ["app/src/lib/pr-worktree.ts", "app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/pr-check.test.ts, 'when the base branch has a config, it replaces the pull request's own, so the pull request cannot loosen its checks' and 'a pull request that brings its own settings cannot pick the stand-in checker'"
     verified_by:
       - "cmd: node --test test/pr-check.test.ts, in app/"
-      - "obs: the ordering lives in runClaimcheck, where ensureTrusted comes before resolveClaimcheck. That code is outside this diff's hunks, so the checker may not be able to confirm it"
+
+  - id: c11
+    claim: "Post results posts a comment on the pull request only when the text sent back is exactly what the board says now, so the person posts only what they were shown"
+    confidence: 0.88
+    criteria: []
+    files: ["app/src/lib/desk-api.ts", "app/src/lib/gh.ts"]
+    kill_condition: "test: app/test/pr-check.test.ts, 'the results are previewed first, and posted only as exactly that text'"
+    verified_by:
+      - "cmd: node --test test/pr-check.test.ts, in app/"
+
+  - id: c12
+    claim: "A branch name with .., //, a trailing slash or dot, .lock, a leading dash or a space is refused before it reaches git or gh, and a pull request number that is not a whole number above zero is refused"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/shared/pull-request.ts", "app/src/lib/pr-worktree.ts"]
+    kill_condition: "test: app/test/pr-check.test.ts, 'bad input is refused before git runs, and a missing pull request says so in words'"
+    verified_by:
+      - "cmd: node --test test/pr-check.test.ts, in app/"
+
+  - id: c13
+    claim: "An issue becomes the spec wizard's goal as its title and number followed by its description with template comments removed, cut to the 8000 characters the wizard keeps, and the wizard only takes the goal when it is non-blank text"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/shared/github.ts", "app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/github-data.test.ts, 'an issue becomes the spec goal: its title and number, then its description without template comments' and app/test/pr-check.test.ts, 'the spec wizard can start with a goal taken from an issue, and an empty goal leaves it blank'"
+    verified_by:
+      - "cmd: npm test, in app/"
