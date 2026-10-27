@@ -14,7 +14,11 @@ AI coding assistants write code and then say it works. Sometimes they're wrong, 
 4. **claimcheck slips small bugs into the new code on purpose** and reruns your tests. If the tests still pass, they weren't really checking that code.
 5. **Every result goes into a permanent record** that shows if anyone edits or deletes an entry later.
 
-At the end you can see which claims were actually verified and which were only confident.
+At the end you can see which claims were actually verified and which were only confident. This is that view, in the Desk app. Every claim is a ball in a 3D box, and the red sheets are the warning lines.
+
+![The Desk confidence map: every claim is a ball in a 3D box, with red sheets for the warning lines and a green box for claims that pass every check](docs/screenshots/desk-confidence-map.png)
+
+*Sample data for a made-up checkout service. [How to read this chart](#reading-the-confidence-map) explains every part of it in plain words.*
 
 ## The problem it solves
 
@@ -490,6 +494,83 @@ From a flagged claim, **Fix this** proposes three or four different ways to reso
 
 ![The same board in dark mode](docs/screenshots/desk-board-dark.png)
 
+### Reading the confidence map
+
+Desk has a second tab next to the list, called **Confidence map**. It shows every claim at once, the ones that passed and the ones that did not. Each claim is one ball inside a see-through box. Where the ball sits tells you how far to trust that claim.
+
+![The confidence map in light mode](docs/screenshots/desk-confidence-map-light.png)
+
+*The same sample data in light mode.*
+
+#### What the three directions mean
+
+The box asks three questions about every claim. A ball's position is the answer to all three at once.
+
+| Direction | The question | What the number is | The good end |
+| --- | --- | --- | --- |
+| **Up** | How sure was the AI that wrote the code? | The confidence it stated, from 0 to 1. | The top |
+| **Right** | Would your tests catch a mistake? | claimcheck plants small bugs in the new code and reruns your tests. This is the share of those bugs that your tests noticed, from 0 (none) to 1.0 (all). | The right |
+| **Toward you** | Did a second AI agree? | The verdict of the separate checker that read the claim and the code: refuted, unverifiable or supported. | The side nearest you at the start, which is supported |
+
+The best place for a ball is high, far to the right and near you. That is a claim the AI was sure about, the tests back up, and the second AI agreed with.
+
+The labels along the edges of the box tell you which way is which, even after you turn it.
+
+#### What the colors and shapes mean
+
+- A **red ball** needs a decision from you.
+- A **blue ball** is backed. Nothing about it is flagged.
+- A **grey ball** is settled. You fixed it, or you accepted the risk.
+- A **ring** around a ball means the second AI said the claim is false.
+- A thin **line down to the floor** has no meaning of its own. It only helps you see where the ball is.
+
+#### The red sheets and the green box
+
+Three red sheets cut through the box. Each one is a warning line, and a ball on the wrong side of a sheet gets flagged.
+
+| Red sheet | A claim is flagged when it is | In plain words |
+| --- | --- | --- |
+| **Confidence below 0.75** | Below the sheet | The AI was not sure about its own claim, or gave no number at all. |
+| **Tests below 0.8** | To the left of the sheet | Your tests missed more than 2 of every 10 planted bugs, or no planted-bug run covers the claim yet. |
+| **Checker not satisfied** | On the far side of the sheet | The second AI did not say "supported". It said refuted or unverifiable, or nobody has run the check yet. |
+
+The small **green box** is the good corner: sure enough, well tested and confirmed. A ball outside the green box has at least one warning. A red ball still needs a decision. A grey ball had a warning that you have already dealt with.
+
+The first two lines are settings. The defaults are below, and you can change them in `.claimcheck/config.toml`. Desk reads these and the command line ignores them. The checker sheet has no setting.
+
+```toml
+[app]
+flagConfidence = 0.75
+flagCatchRate = 0.8
+```
+
+#### How to read it in ten seconds
+
+1. Find the green box. Balls inside it are fine.
+2. Look at the red balls. Each one needs a decision.
+3. Look hardest at red balls that are **high and on the left**. The AI was very sure, and the tests are weak. In the picture, claim c6 says 0.97, and the tests caught only half of the planted bugs. This is the kind of claim claimcheck exists to find.
+4. A red ball that is **low** is a claim the AI doubted itself. It is telling you where it is unsure.
+5. A **ring** means the second AI disagrees with the claim. Open the claim to read why.
+
+#### The strips at the edge: when nothing was measured
+
+Some claims have nothing to measure in one direction. They sit in a thin strip just outside the box on that side.
+
+- **no run** (the tests side): no planted-bug run covers this claim yet.
+- **none** (the confidence side): the author gave no confidence.
+- **not checked** (the checker side): the second AI has not looked at this claim yet.
+
+A ball in a strip does not mean zero. It means nobody has measured that yet. Press **Run claimcheck** to fill it in.
+
+#### Moving around and getting details
+
+- **Drag** to turn the box, **scroll** to zoom, **right-drag** to slide it, and **double-click** to go back to the start. The box turns slowly by itself until you touch it.
+- **Hover** over a ball to read its claim.
+- **Click** a ball to select it. The card on the right shows its numbers, and **Open claim** takes you to the full page for that claim.
+- The table under the chart lists every claim with the exact numbers in words, riskiest first.
+- Balls with the same numbers are moved apart a little so that none hides another. The table has the true numbers.
+- If your computer cannot draw 3D graphics, Desk shows the table on its own and says so.
+
 Desk reads Claude Code's sign-in or an API key stored encrypted by your operating system. Before anything goes to Claude it applies the same secret filter as the command line. In Claude Code mode it denies the file tools access to credential files and blocks `cat`, `grep`, `curl`, `git push` and package installs. The first run in a repository shows the exact commands its config and claims name and asks before running them. The page is built without `innerHTML`, so text from a repository can never become markup.
 
 ## Writing good claims
@@ -696,7 +777,7 @@ examples/         a sample spec, claims file, config and ledger
 docs/screenshots/ images used in this README
 ```
 
-The terminal screens in this README are real frames from the onboarding run rendered to images. The Desk images come from the app's own `npm run screenshot` command, using a small demo project.
+The terminal screens in this README are real frames from the onboarding run rendered to images. The Desk images come from the app's own `npm run screenshot` command, using a small demo project. The confidence map images use sample claims for a made-up checkout service, drawn with `npm run screenshot -- <repo> out.png --view board:graph`.
 
 ## Credit and prior art
 
