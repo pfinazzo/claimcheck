@@ -64,6 +64,7 @@ const skipAction = (): void => {};
 const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<typeof createRecorder<string>> } = {}): BoardActions => ({
   select: ({ id }) => calls.record(`select:${id}`),
   setMode: ({ mode }) => calls.record(`mode:${mode}`),
+  setTheme: ({ choice }) => calls.record(`theme:${choice}`),
   showClaim: ({ id }) => calls.record(`show:${id}`),
   connectGithub: () => calls.record('github'),
   inspect: (id) => calls.record(`inspect:${id}`),
@@ -72,8 +73,8 @@ const makeActions = ({ calls = createRecorder<string>() }: { calls?: ReturnType<
   useApproach: skipAction, copyPrompt: skipAction, copyImplement: skipAction, copyText: skipAction, acceptRisk: skipAction, openPr: skipAction, openPath: skipAction, connect: skipAction,
 });
 
-const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean }): BoardUi => ({
-  board, mode, selectedId, runs, ghOk, running: false, drawer: { open: false, status: '', lines: [] },
+const makeUi = ({ board, selectedId = null, runs = new Map(), mode = 'list', ghOk = false, theme = 'system' }: { board: Board | null; selectedId?: string | null; runs?: Map<string, PublicRun>; mode?: BoardUi['mode']; ghOk?: boolean; theme?: BoardUi['theme'] }): BoardUi => ({
+  board, mode, selectedId, runs, ghOk, theme, running: false, drawer: { open: false, status: '', lines: [] },
 });
 
 const draw = ({ ui, actions = makeActions() }: { ui: BoardUi; actions?: BoardActions }): string => {
@@ -405,4 +406,21 @@ test('Back from the first spec step of a board-started wizard leaves the wizard'
   const back = [...document.querySelectorAll('button')].find((x) => x.textContent === 'Back') as HTMLElement;
   back.click();
   assert.deepEqual(calls.list(), ['exit']);
+});
+
+test('the top bar has a Light, Dark and Auto switch, with the current one marked', () => {
+  draw({ ui: makeUi({ board: readBoard({ claims: [makeClaim()], queue: [] }), theme: 'dark' }) });
+  const buttons = [...document.querySelectorAll('.theme-switch button')];
+  assert.deepEqual(buttons.map((button) => button.textContent), ['Light', 'Dark', 'Auto']);
+  assert.deepEqual(buttons.map((button) => button.getAttribute('aria-pressed')), ['false', 'true', 'false']);
+  assert.ok(document.querySelector('.topbar .theme-switch'), 'the switch sits in the top bar');
+});
+
+test('the switch is there before any repo is open, and a click asks for that look', () => {
+  const calls = createRecorder<string>();
+  draw({ ui: makeUi({ board: null }), actions: makeActions({ calls }) });
+  for (const label of ['Light', 'Dark', 'Auto']) {
+    ([...document.querySelectorAll('.theme-switch button')].find((button) => button.textContent === label) as HTMLElement).click();
+  }
+  assert.deepEqual(calls.list(), ['theme:light', 'theme:dark', 'theme:system']);
 });

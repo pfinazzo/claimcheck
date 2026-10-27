@@ -8,6 +8,7 @@
 import type { PublicRun } from '../lib/fixer.ts';
 import type { RunUpdate } from '../shared/ipc.ts';
 import { toBridgeFailure } from '../shared/ipc.ts';
+import { DEFAULT_THEME_CHOICE } from '../shared/theme.ts';
 import type { Board, ConnectionSummary, ViewName } from '../shared/types.ts';
 import type { WizardState } from '../shared/wizard-state.ts';
 import { renderBoard, type BoardActions, type BoardUi } from './board.ts';
@@ -36,7 +37,7 @@ darkScheme.addEventListener('change', (event) => {
   refreshConfidenceMapTheme();
 });
 
-const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, running: false, drawer: { open: false, status: '', lines: [] } };
+const ui: BoardUi = { board: null, mode: 'list', selectedId: null, runs: new Map(), ghOk: false, theme: DEFAULT_THEME_CHOICE, running: false, drawer: { open: false, status: '', lines: [] } };
 // What the page is showing right now, and its pending timers.
 const page: { view: ViewName; wizard: WizardState | null; connection: ConnectionSummary | null; wasSignalled: boolean; toastTimer: number; saveTimer: number; shownBefore: string; didDemoAction: boolean } = {
   view: 'empty',
@@ -187,6 +188,10 @@ const boardActions: BoardActions = {
     ui.mode = mode;
     renderAll();
   },
+  setTheme: ({ choice }) => runGuarded({ callback: async () => {
+    ui.theme = await desk.setTheme({ choice });
+    renderAll();
+  } }),
   showClaim: ({ id }) => {
     ui.selectedId = id;
     ui.mode = 'list';
@@ -326,6 +331,11 @@ window.addEventListener('focus', () => void refreshOnFocus());
 
 // ---- boot ---------------------------------------------------------------------------
 const startApp = async (): Promise<void> => {
+  try {
+    ui.theme = await desk.getTheme();
+  } catch {
+    ui.theme = DEFAULT_THEME_CHOICE;
+  }
   if (demoParam?.startsWith('wizard:')) {
     const parts = demoParam.split(':');
     const step = Number(parts[1]);

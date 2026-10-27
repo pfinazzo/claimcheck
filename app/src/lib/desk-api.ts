@@ -11,6 +11,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { parseUnifiedDiff, type ParsedDiff } from '../shared/diff.ts';
 import { findPullRequestBlocker } from '../shared/pull-request.ts';
+import { isKnownThemeChoice, toThemeChoice, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, CcFinish, CcInit, CcStatus, CcStep, ConnectionMode, ConnectionSummary, DraftInput, TrustInfo, ViewName } from '../shared/types.ts';
 import * as cliDefault from './claude-cli.ts';
 import * as apiDefault from './claude-api.ts';
@@ -21,6 +22,7 @@ import * as ghDefault from './gh.ts';
 import { updateAppState } from './ledger.ts';
 import { buildProposePrompt, buildImplementPrompt } from './prompts.ts';
 import { createRecents, isRealProjectFolder } from './recents.ts';
+import { createThemeStore } from './theme-store.ts';
 import * as runnerDefault from './runner.ts';
 import { readBoard } from './store.ts';
 import { setTomlString } from './toml.ts';
@@ -162,6 +164,7 @@ export const createDeskApi = ({
   const wizardFile = path.join(userDir, 'wizard-state.json');
   const recents = createRecents({ dir: userDir, isUsable: (folder) => isRealProjectFolder({ folder }) });
   const trustStore = createTrustStore({ dir: userDir });
+  const themeStore = createThemeStore({ dir: userDir });
   const state: {
     repoPath: string | null;
     board: Board | null;
@@ -690,6 +693,17 @@ export const createDeskApi = ({
     openRepo,
     recents: (): Promise<string[]> => toPromise({ work: () => recents.list() }),
     lastRepo: (): string | null => recents.last(),
+    getTheme: (): Promise<ThemeChoice> => toPromise({ work: () => themeStore.readChoice() }),
+    // Saves the pick. Painting it is the main process's job, since only it can change the window.
+    setTheme: ({ choice }: { choice: unknown }): Promise<ThemeChoice> =>
+      toPromise({
+        work: () => {
+          if (!isKnownThemeChoice({ value: choice })) throw new Error('Pick Light, Dark or Auto.');
+          const known = toThemeChoice({ value: choice });
+          themeStore.saveChoice({ choice: known });
+          return known;
+        },
+      }),
     // Re-reads the repo, so a remote added or a branch changed outside Desk shows up.
     getBoard: async (): Promise<Board | null> => (await refresh()) ?? state.board,
     getView: (): Promise<ViewPayload> => toPromise({ work: () => currentView() }),
