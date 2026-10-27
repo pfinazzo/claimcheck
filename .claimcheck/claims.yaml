@@ -4,11 +4,48 @@ author: "claude-code/claude-sonnet-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "This is a merge of origin/main into the Desk branch. Every file under src/claimcheck in the merge is exactly the file on origin/main, so the merge changes no Python behavior of its own"
-    confidence: 0.97
+    claim: "When claimcheck is not on PATH and no path or [app].python is set, Desk uses the first Python that can run python -m claimcheck: python then py on Windows, python3 then python elsewhere. A Python that does not have claimcheck is passed over, and when none has it the answer is still null"
+    confidence: 0.9
     criteria: []
-    files: ["src/claimcheck/__init__.py", "src/claimcheck/agentdocs.py", "src/claimcheck/checker.py", "src/claimcheck/ci.py", "src/claimcheck/claims.py", "src/claimcheck/cli.py", "src/claimcheck/config.py", "src/claimcheck/detect.py", "src/claimcheck/gitio.py", "src/claimcheck/hook.py", "src/claimcheck/initflow.py", "src/claimcheck/ledger.py", "src/claimcheck/mutate.py", "src/claimcheck/onboard.py", "src/claimcheck/providers/__init__.py", "src/claimcheck/providers/claude.py", "src/claimcheck/providers/claude_cli.py", "src/claimcheck/providers/shapes.py", "src/claimcheck/providers/stub.py", "src/claimcheck/redact.py", "src/claimcheck/run.py", "src/claimcheck/spec.py", "src/claimcheck/specdraft.py", "src/claimcheck/tui.py"]
-    kill_condition: "cmd: git diff origin/main -- src/claimcheck prints nothing"
+    files: ["app/src/lib/runner.ts"]
+    kill_condition: "test: app/test/gh.test.ts, 'with no claimcheck on PATH, a Python that has it installed is used' and 'a Python without claimcheck is passed over'"
     verified_by:
-      - "cmd: git diff origin/main --stat -- src prints nothing"
-      - "cmd: python -m pytest -q passes on the merged tree (380 passed, 1 skipped)"
+      - "cmd: npm test, in app/ (213 pass)"
+      - "obs: with PATH cut down to Windows and Node only, resolveClaimcheck returned null, and with the repo as a search root it returned the repo's .venv Python"
+
+  - id: c2
+    claim: "The existing order is kept: a set path, then claimcheck on PATH, then [app].python all win over the new Python probes, and no probe is run once one of them has answered"
+    confidence: 0.92
+    criteria: []
+    files: ["app/src/lib/runner.ts"]
+    kill_condition: "test: app/test/gh.test.ts, 'the order is: set path, claimcheck on PATH, [app].python, then the probes'"
+    verified_by:
+      - "cmd: node --test test/gh.test.ts, in app/"
+
+  - id: c3
+    claim: "A virtualenv inside the repo (.venv or venv) is tried before any Python on PATH, and only when the caller passes search roots. claimcheckBin passes them only when isRepoTrusted is true, and the run is the only call that passes true"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/lib/runner.ts", "app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/gh.test.ts, 'a virtualenv in the repo is tried first, but only when the caller says the repo is trusted'"
+    verified_by:
+      - "obs: the only other caller of resolveClaimcheck in desk-api.ts is the wizard's cc call, and it does not pass isRepoTrusted"
+
+  - id: c4
+    claim: "When no claimcheck can be found, the message names the pip install command, Connect Claude and [app].python"
+    confidence: 0.95
+    criteria: []
+    files: ["app/src/lib/runner.ts"]
+    kill_condition: "test: app/test/gh.test.ts, 'the not-found message says how to install it and where to set the path'"
+    verified_by:
+      - "cmd: node --test test/gh.test.ts, in app/"
+
+  - id: c5
+    claim: "Pressing Run claimcheck on a repo that has a .venv Python starts none of the repo's programs until the person has agreed to the commands dialog, and after agreeing it runs claimcheck with that virtualenv's Python"
+    confidence: 0.9
+    criteria: []
+    files: ["app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/pr-check.test.ts, 'the repo's own virtualenv Python is not started until the commands dialog has been agreed to' (a real Desk API, a repo with a .venv Python, and a recorder on every program Desk starts)"
+    verified_by:
+      - "cmd: node --test test/pr-check.test.ts, in app/"
+      - "obs: the ordering lives in runClaimcheck, where ensureTrusted comes before resolveClaimcheck. That code is outside this diff's hunks, so the checker may not be able to confirm it"
