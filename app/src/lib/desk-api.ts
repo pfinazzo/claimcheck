@@ -451,9 +451,14 @@ export const createDeskApi = ({
     return outcome;
   };
 
-  const claimcheckBin = ({ board }: { board: Board | null }): runnerDefault.ResolveOptions => ({
+  /**
+   * How to look for the claimcheck command. A virtualenv inside the repo is only looked at once the
+   * person has agreed to run the repo's commands, because asking it a question runs its Python.
+   */
+  const claimcheckBin = ({ board, isRepoTrusted = false }: { board: Board | null; isRepoTrusted?: boolean }): runnerDefault.ResolveOptions => ({
     python: board?.config.app.python ?? null,
     bin: state.settings.claimcheckBin ?? null,
+    ...(isRepoTrusted ? { searchRoots: [board?.repo.path, state.pullRequestCheck?.originPath].filter((root): root is string => typeof root === 'string' && root !== '') } : {}),
     ...(execFn ? { execFn } : {}),
   });
 
@@ -471,7 +476,7 @@ export const createDeskApi = ({
     state.claimcheckRunning = true;
     emitRun({ type: 'claimcheck', status: 'running' });
     try {
-      const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board }));
+      const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board, isRepoTrusted: true }));
       const outcome = await runnerModule.runClaimcheck({
         repoPath: board.repo.path,
         provider: provider ?? toCheckerProvider({ board }),
