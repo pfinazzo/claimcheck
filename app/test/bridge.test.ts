@@ -24,7 +24,7 @@ test('an Error or a bare value reads as a failure with no code', () => {
 });
 
 test('every dialog and tab has a screenshot view, and an unknown view falls back to the board', () => {
-  for (const view of ['board:trust', 'board:github', 'board:code', 'board:open', 'board:propose', 'board:graph']) {
+  for (const view of ['board:trust', 'board:github', 'board:code', 'board:open', 'board:propose', 'board:graph', 'board:clear']) {
     assert.equal(parseScreenshotArgs({ argList: ['--screenshot', 'repo', 'out.png', '--view', view] })?.view, view);
   }
   assert.equal(parseScreenshotArgs({ argList: ['--screenshot', 'repo', 'out.png', '--view', 'board:nope'] })?.view, 'board');

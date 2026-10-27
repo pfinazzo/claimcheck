@@ -6,12 +6,12 @@
  */
 
 import type { PublicRun } from '../lib/fixer.ts';
-import { findPullRequestBlocker } from '../shared/pull-request.ts';
+import { findBranchPullRequestBlocker, findPullRequestBlocker } from '../shared/pull-request.ts';
 import { THEME_CHOICES, THEME_HINTS, THEME_LABELS, type ThemeChoice } from '../shared/theme.ts';
 import type { Board, Claim } from '../shared/types.ts';
 import { renderDetail, type DetailActions } from './detail.ts';
 import { makeElement, type Child } from './dom.ts';
-import { calculateSummaryStats, collectClaimGroups, formatFactsLine, formatSpecWord, formatSummaryLine } from './format.ts';
+import { calculateSummaryStats, collectClaimGroups, formatFactsLine, formatPlural, formatSpecWord, formatSummaryLine } from './format.ts';
 import { renderGraphView } from './graph-view.ts';
 
 export type BoardMode = 'list' | 'graph';
@@ -25,6 +25,8 @@ export type BoardUi = {
   ghOk: boolean;
   /** The look the person picked: light, dark, or follow the computer. */
   theme: ThemeChoice;
+  /** The pull request opened from the whole branch from the all-clear banner, once there is one. */
+  branchPr: { branch: string; url: string } | null;
   running: boolean;
   drawer: { open: boolean; status: string; lines: readonly string[] };
 };
@@ -33,6 +35,8 @@ export type BoardActions = DetailActions & {
   select: (options: { id: string | null }) => void;
   setMode: (options: { mode: BoardMode }) => void;
   setTheme: (options: { choice: ThemeChoice }) => void;
+  /** Opens a pull request from the branch the repo is on, once nothing needs a decision. */
+  openBranchPr: () => void;
   /** Opens one claim in the list view. */
   showClaim: (options: { id: string }) => void;
   openRepo: () => void;
@@ -119,6 +123,64 @@ const renderHeader = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): 
     ],
   });
 };
+
+const SPARK_COUNT = 10;
+
+/** The board has claims and none of them needs a decision. */
+export const isBoardClear = ({ board }: { board: Board }): boolean => board.claims.length > 0 && board.queue.length === 0;
+
+/** Claims that left the queue without becoming backed: a risk the person accepted, or a fix not checked again yet. */
+export const countHeldClaims = ({ board }: { board: Board }): number => board.claims.filter((claim) => claim.flags.length > 0).length;
+
+/** The line under the banner's heading: how many claims, and how many planted bugs the tests caught. */
+const describeAllClear = ({ board }: { board: Board }): string => {
+  const stats = calculateSummaryStats({ board });
+  const heldCount = countHeldClaims({ board });
+  const claims = `${formatPlural({ count: stats.claims - heldCount, one: 'claim' })} backed`;
+  const held = heldCount === 0 ? '' : `, ${heldCount} settled by hand but still flagged`;
+  return stats.total === 0 ? `${claims}${held}.` : `${claims}${held}. The tests caught ${stats.caught} of ${stats.total} planted bugs.`;
+};
+
+/**
+ * What the pull request button says and does: it opens one, or shows the reason it cannot and
+ * puts Connect GitHub one press away. Once a pull request exists it links to it instead.
+ */
+const renderBranchPrOffer = ({ board, ui, actions }: { board: Board; ui: BoardUi; actions: BoardActions }): HTMLElement => {
+  const opened = ui.branchPr !== null && ui.branchPr.branch === board.repo.branch ? ui.branchPr : null;
+  if (opened) return makeElement({ tag: 'div', props: { class: 'pr-offer' }, children: [makeElement({ tag: 'p', props: { class: 'muted', attrs: { role: 'status' } }, children: ['Pull request opened.'] }), renderButton({ label: 'View pull request', onClick: () => actions.openPath(opened.url), cls: 'primary' })] });
+  const blocker = findBranchPullRequestBlocker({ isGhReady: ui.ghOk, origin: board.repo.origin, branch: board.repo.branch, base: board.config.base, isBranchPushed: board.repo.isBranchPushed });
+  return makeElement({
+    tag: 'div',
+    props: { class: 'pr-offer' },
+    children: [
+      makeElement({ tag: 'div', props: { class: 'row' }, children: [renderButton({ label: 'Open pull request', onClick: actions.openBranchPr, cls: 'primary', disabled: blocker !== null }), blocker && !ui.ghOk ? renderButton({ label: 'Connect GitHub', onClick: actions.connectGithub }) : null] }),
+      blocker ? makeElement({ tag: 'p', props: { class: 'muted pr-blocker', attrs: { role: 'status' } }, children: [blocker] }) : null,
+    ],
+  });
+};
+
+/**
+ * Shown when every claim is backed: a short celebration, an honest line about what that means,
+ * and the way forward. The sparks are decoration and only move when the banner is first reached.
+ */
+const renderAllClear = ({ board, ui, actions }: { board: Board; ui: BoardUi; actions: BoardActions }): HTMLElement =>
+  makeElement({
+    tag: 'section',
+    props: { class: 'all-clear panel', attrs: { 'aria-label': 'All claims backed' } },
+    children: [
+      makeElement({ tag: 'div', props: { class: 'all-clear-mark', attrs: { 'aria-hidden': 'true' } }, children: [...Array.from({ length: SPARK_COUNT }, () => makeElement({ tag: 'span', props: { class: 'spark' } })), makeElement({ tag: 'span', props: { class: 'check' }, children: ['✓'] })] }),
+      makeElement({
+        tag: 'div',
+        props: { class: 'all-clear-text' },
+        children: [
+          makeElement({ tag: 'h2', props: {}, children: [countHeldClaims({ board }) === 0 ? 'Nice work. Every claim is backed.' : 'Nice work. Nothing is left to decide.'] }),
+          makeElement({ tag: 'p', props: {}, children: [`Nothing on ${board.repo.branch ?? 'this branch'} needs a decision now. ${describeAllClear({ board })}`] }),
+          makeElement({ tag: 'p', props: { class: 'muted' }, children: ['That is a good sign, not a sign-off. Open a pull request so a person reads it before it merges.'] }),
+        ],
+      }),
+      renderBranchPrOffer({ board, ui, actions }),
+    ],
+  });
 
 /** A bar filled to `ratio` (0 to 1). The width is set through the CSSOM, since the CSP forbids inline style attributes. */
 const renderMeterBar = ({ ratio, isWeak }: { ratio: number; isWeak: boolean }): HTMLElement => {
@@ -279,5 +341,5 @@ const renderBody = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): HT
 export const renderBoard = ({ ui, actions }: { ui: BoardUi; actions: BoardActions }): Child[] => {
   const board = ui.board;
   const hasClaims = board !== null && board.claims.length > 0;
-  return [renderHeader({ ui, actions }), board && hasClaims ? renderStats({ board }) : null, board && hasClaims ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
+  return [renderHeader({ ui, actions }), board && hasClaims ? renderStats({ board }) : null, board && isBoardClear({ board }) ? renderAllClear({ board, ui, actions }) : null, board && hasClaims ? renderModeTabs({ ui, actions }) : null, renderBody({ ui, actions }), renderDrawer({ ui, actions })];
 };

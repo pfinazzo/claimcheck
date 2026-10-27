@@ -33,7 +33,7 @@ export const parseScreenshotArgs = ({ argList }: { argList: readonly string[] })
   const positional = rest.filter((arg, index) => !arg.startsWith('--') && !VALUE_FLAGS.includes(rest[index - 1] ?? ''));
   const size = /^(\d{3,4})x(\d{3,4})$/.exec(flags['--size'] ?? '1440x900');
   const requestedView = flags['--view'] ?? 'board';
-  const view = /^(board|board:(trust|github|code|open|propose|graph)|wizard:[1-6](:[0-2])?)$/.test(requestedView) ? requestedView : 'board';
+  const view = /^(board|board:(trust|github|code|open|propose|graph|clear)|wizard:[1-6](:[0-2])?)$/.test(requestedView) ? requestedView : 'board';
   const theme = flags['--theme'];
   return {
     repo: positional[0],

@@ -7,6 +7,7 @@
 
 import { execFile, spawn, type SpawnOptions } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { Claim } from '../shared/types.ts';
 import { toPlainMessage } from './plain-error.ts';
 import { GH_TIMEOUT_MS } from './timeouts.ts';
 
@@ -95,6 +96,41 @@ export const buildPrBody = ({ claim, proposal, run }: PrBodyInput): string =>
     `Tests: ${run.tests?.ok ? 'pass' : 'fail'}. Kill condition: ${describeKillCheck({ ok: run.killCondition?.ok })}.`,
     '',
     'Built by Claude Code from claimcheck Desk\'s "Fix this" button. Review it like any other pull request before merging.',
+  ].join('\n');
+
+/** A cell in the pull request's table: one line, with the pipe that would end the cell made harmless. */
+const toTableCell = ({ text }: { text: string }): string => text.replace(/\s+/g, ' ').replaceAll('|', '/').trim();
+
+const toCaughtText = ({ claim }: { claim: Claim }): string => {
+  const catchRate = claim.mutation?.catchRate;
+  return catchRate === null || catchRate === undefined ? 'not run' : `${Math.round(catchRate * 100)}%`;
+};
+
+const toStatusText = ({ claim }: { claim: Claim }): string => (claim.flags.length === 0 ? 'backed' : toTableCell({ text: `settled by hand, still flagged: ${claim.flags.join(', ')}${claim.note ? `. ${claim.note}` : ''}` }));
+
+const describeClaimCount = ({ claims }: { claims: readonly Claim[] }): string => {
+  const heldCount = claims.filter((claim) => claim.flags.length > 0).length;
+  return heldCount === 0 ? `Every claim about this change is backed (${claims.length}).` : `${claims.length} claims about this change: ${claims.length - heldCount} backed, and ${heldCount} settled by hand but still flagged. Read those first.`;
+};
+
+/**
+ * The description for a pull request opened from the whole branch once claimcheck has nothing left
+ * to flag. It lists each claim with its three figures, and says plainly that backed claims are not
+ * a review.
+ */
+export const buildBranchPrBody = ({ claims }: { claims: readonly Claim[] }): string =>
+  [
+    '## claimcheck found nothing left to decide',
+    '',
+    describeClaimCount({ claims }),
+    '',
+    '| Claim | Stated confidence | Checker | Planted bugs caught | Status |',
+    '| --- | --- | --- | --- | --- |',
+    ...claims.map((claim) => `| ${toTableCell({ text: `${claim.id}: ${claim.claim}` })} | ${claim.confidence === null ? 'none' : claim.confidence.toFixed(2)} | ${(claim.verdict?.verdict ?? 'not run').toLowerCase()} | ${toCaughtText({ claim })} | ${toStatusText({ claim })} |`),
+    '',
+    'Backed means the author, an independent checker and the planted-bug run raised no objection. It does not replace a review. Read the kill conditions and the diff like any other pull request.',
+    '',
+    "Opened from claimcheck Desk's all-clear screen.",
   ].join('\n');
 
 export type PrInput = {

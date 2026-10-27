@@ -41,6 +41,8 @@ From a fix, **Inspect the code** opens a read-only viewer: the changed files on 
 
 From a flagged claim, **Fix this** asks Claude (read-only) for three or four different ways to resolve it, and for one recommendation. Claude weighs each approach's pros and cons against what you said you wanted built when you wrote the spec (and the frozen criteria and the project's own rules), then marks exactly one **Recommended**, puts it first, and says in two or three sentences why it fits and why the others lose. The recommendation is advice: you pick one, and Claude builds only that one. Claude builds it with tests on a new branch in a separate worktree, Desk runs your tests there, and a fix only counts as resolved when the tests pass **and** Claude actually committed a change. **Copy prompt** gives you the request as text, and **Accept the risk** takes a one-line reason and writes it to the ledger.
 
+When no claim needs a decision, a banner says so and offers **Open pull request**. It opens a pull request from the branch you are on into the base branch, once GitHub already has that branch. Desk does not push. The description lists every claim with its figures, and says plainly that backed is not a review.
+
 Arrow keys move through the list. **Light, Dark and Auto** sit at the right end of the top bar. Auto follows the computer's light or dark setting, and a pick is remembered the next time Desk opens. Desk also respects reduced motion.
 
 ## Setup in the app

@@ -15,3 +15,17 @@ export const findPullRequestBlocker = ({ isGhReady, origin }: { isGhReady: boole
   if (!isGhReady) return 'The GitHub CLI is not signed in. Run gh auth login in a terminal, then come back.';
   return null;
 };
+
+/**
+ * Why the branch you are on cannot be opened as a pull request right now, or null when it can.
+ * Checked in the order a person would fix them: the remote and sign-in first, then which branch
+ * this is, then whether GitHub has it.
+ */
+export const findBranchPullRequestBlocker = ({ isGhReady, origin, branch, base, isBranchPushed }: { isGhReady: boolean; origin: string | null; branch: string | null; base: string; isBranchPushed: boolean }): string | null => {
+  const blocker = findPullRequestBlocker({ isGhReady, origin });
+  if (blocker) return blocker;
+  if (!branch || branch === 'HEAD') return 'Desk cannot tell which branch this is. Check out a branch, then come back.';
+  if (branch === base) return `You are on ${base}, the branch a pull request goes into. Check out your feature branch, then come back.`;
+  if (!isBranchPushed) return `This branch is not on GitHub yet. Run git push -u origin ${branch} in a terminal, then come back.`;
+  return null;
+};
