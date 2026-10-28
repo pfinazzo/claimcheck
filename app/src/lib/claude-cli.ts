@@ -49,7 +49,15 @@ const toRecord = ({ value }: { value: unknown }): Record<string, unknown> | null
 
 export const SIGN_IN_ERRORS = /not logged in|please run \/login|credit balance|invalid api key|unauthorized|authentication/i;
 
-export const BASE_ARGS = ['--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config'];
+/**
+ * Arguments every `claude -p` run gets.
+ *
+ * `--setting-sources user` loads only the person's own Claude Code settings. Claude Code runs in the
+ * repo, and without this flag it also loads the repo's .claude/settings.json and settings.local.json.
+ * Hooks in those files are shell commands, so a cloned repo could run its own code on "Fix this"
+ * before the person ever agreed to trust it.
+ */
+export const BASE_ARGS = ['--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--strict-mcp-config', '--setting-sources', 'user'];
 
 const listNvmCandidates = (): string[] => {
   const dir = path.join(os.homedir(), '.nvm', 'versions', 'node');

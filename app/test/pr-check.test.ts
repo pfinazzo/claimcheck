@@ -278,7 +278,7 @@ test('the repo\'s own virtualenv Python is not started until the commands dialog
     const [file, argList, options] = call;
     asked.record(file);
     if (file === 'where' || file === 'which') throw new Error('no claimcheck on PATH');
-    if (argList.join(' ') === '-m claimcheck --version') {
+    if (argList.join(' ') === '-P -m claimcheck --version') {
       if (file === venvPython) return { stdout: 'claimcheck 0.1.0\n' };
       throw new Error('no claimcheck here');
     }

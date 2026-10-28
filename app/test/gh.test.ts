@@ -49,7 +49,7 @@ test('AC 25: runner resolves claimcheck on PATH, else python -m, else null', asy
   const onPath = await resolveClaimcheck({ execFn: () => Promise.resolve({ stdout: 'C:\\x\\claimcheck.exe\n' }) });
   assert.deepEqual(onPath, { command: 'C:\\x\\claimcheck.exe', prefix: [] });
   const viaPy = await resolveClaimcheck({ python: 'py', execFn: () => Promise.reject(new Error('no')) });
-  assert.deepEqual(viaPy, { command: 'py', prefix: ['-m', 'claimcheck'] });
+  assert.deepEqual(viaPy, { command: 'py', prefix: ['-P', '-m', 'claimcheck'] });
   assert.equal(await resolveClaimcheck({ execFn: () => Promise.reject(new Error('no')) }), null);
   const lines = createRecorder<string>();
   const response = await runClaimcheck({ repoPath: '.', provider: 'stub', resolved: null, onLine: (line) => lines.record(line) });
@@ -62,22 +62,22 @@ test('AC 25: runner resolves claimcheck on PATH, else python -m, else null', asy
 const makeProbeExec = ({ works, calls }: { works: readonly string[]; calls: ReturnType<typeof createRecorder<string>> }) => (file: string, argList: string[]) => {
   calls.record(`${file} ${argList.join(' ')}`);
   const isFinder = file === 'where' || file === 'which';
-  return !isFinder && works.includes(file) && argList.join(' ') === '-m claimcheck --version' ? Promise.resolve({ stdout: 'claimcheck 0.1.0\n' }) : Promise.reject(new Error('no'));
+  return !isFinder && works.includes(file) && argList.join(' ') === '-P -m claimcheck --version' ? Promise.resolve({ stdout: 'claimcheck 0.1.0\n' }) : Promise.reject(new Error('no'));
 };
 
 test('with no claimcheck on PATH, a Python that has it installed is used', async () => {
   const calls = createRecorder<string>();
   const found = await resolveClaimcheck({ execFn: makeProbeExec({ works: ['python'], calls }), platform: 'win32' });
-  assert.deepEqual(found, { command: 'python', prefix: ['-m', 'claimcheck'] });
+  assert.deepEqual(found, { command: 'python', prefix: ['-P', '-m', 'claimcheck'] });
   const onUnix = await resolveClaimcheck({ execFn: makeProbeExec({ works: ['python3'], calls: createRecorder<string>() }), platform: 'linux' });
-  assert.deepEqual(onUnix, { command: 'python3', prefix: ['-m', 'claimcheck'] });
+  assert.deepEqual(onUnix, { command: 'python3', prefix: ['-P', '-m', 'claimcheck'] });
 });
 
 test('a Python without claimcheck is passed over, and when none has it the answer is still null', async () => {
   const calls = createRecorder<string>();
   assert.equal(await resolveClaimcheck({ execFn: makeProbeExec({ works: [], calls }), platform: 'win32' }), null);
-  assert.ok(calls.list().some((call) => call.startsWith('python -m claimcheck')));
-  assert.ok(calls.list().some((call) => call.startsWith('py -m claimcheck')));
+  assert.ok(calls.list().some((call) => call.startsWith('python -P -m claimcheck')));
+  assert.ok(calls.list().some((call) => call.startsWith('py -P -m claimcheck')));
 });
 
 test('the order is: set path, claimcheck on PATH, [app].python, then the probes', async () => {
@@ -96,7 +96,7 @@ test('a virtualenv in the repo is tried first, but only when the caller says the
   writeFileSync(python, '', 'utf8');
   const calls = createRecorder<string>();
   const trusted = await resolveClaimcheck({ searchRoots: [root], execFn: makeProbeExec({ works: [python, 'python'], calls }), platform: 'win32' });
-  assert.deepEqual(trusted, { command: python, prefix: ['-m', 'claimcheck'] });
+  assert.deepEqual(trusted, { command: python, prefix: ['-P', '-m', 'claimcheck'] });
   const untrustedCalls = createRecorder<string>();
   const untrusted = await resolveClaimcheck({ execFn: makeProbeExec({ works: [python, 'python'], calls: untrustedCalls }), platform: 'win32' });
   assert.equal(untrusted?.command, 'python', 'the repo\'s own Python was never asked');

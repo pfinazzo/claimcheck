@@ -54,6 +54,14 @@ const GLOBAL_PYTHONS = new Map<boolean, readonly string[]>([
 ]);
 
 /**
+ * How a Python is told to run claimcheck.
+ *
+ * `-P` keeps the working folder off Python's import path. Desk runs claimcheck inside the repo.
+ * Without `-P`, a file such as yaml.py in the repo would load in place of the real library.
+ */
+const PYTHON_CLAIMCHECK_ARGS: readonly string[] = ['-P', '-m', 'claimcheck'];
+
+/**
  * The first Python that can run `python -m claimcheck`: a virtualenv in the repo, then whichever
  * Python is on PATH. Each is asked once, and one that does not have claimcheck simply says no.
  */
@@ -62,7 +70,7 @@ const findPythonWithClaimcheck = async ({ roots, platform, execFn, env }: { root
   const answers = await Promise.all(
     candidates.map(async (candidate) => {
       try {
-        await execFn(candidate, ['-m', 'claimcheck', '--version'], { windowsHide: true, timeout: FINDER_TIMEOUT_MS, env });
+        await execFn(candidate, [...PYTHON_CLAIMCHECK_ARGS, '--version'], { windowsHide: true, timeout: FINDER_TIMEOUT_MS, env });
         return true;
       } catch {
         return false;
@@ -85,9 +93,9 @@ export const resolveClaimcheck = async ({ python, bin = null, env = process.env,
   }
   const [first] = await findOnPath({ name: 'claimcheck', execFn });
   if (first) return { command: first, prefix: [] };
-  if (python) return { command: python, prefix: ['-m', 'claimcheck'] };
+  if (python) return { command: python, prefix: PYTHON_CLAIMCHECK_ARGS };
   const found = await findPythonWithClaimcheck({ roots: searchRoots, platform, execFn, env });
-  return found ? { command: found, prefix: ['-m', 'claimcheck'] } : null;
+  return found ? { command: found, prefix: PYTHON_CLAIMCHECK_ARGS } : null;
 };
 
 export type RunOptions = {
