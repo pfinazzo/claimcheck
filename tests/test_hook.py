@@ -72,7 +72,7 @@ def test_ac11_claims_files_must_be_subset_of_staged(cc_repo):
     _write_and_stage(cc_repo, rel_path=".claimcheck/claims.yaml", text=CLAIMS_FOR_CALC)
     with pytest.raises(ClaimsError) as error:
         hook.run_pre_commit(cc_repo.path, settings=config.load(cc_repo.path))
-    assert "files not in the staged diff: ['src/calc.py']" in str(error.value)
+    assert "files not in the diff under test: ['src/calc.py']" in str(error.value)
 
 
 def test_ac11_staged_version_of_claims_is_what_counts(cc_repo):

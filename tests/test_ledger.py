@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import ClaimcheckError, claims, ledger, spec
+from claimcheck import ClaimcheckError, checker, claims, ledger, spec
 from conftest import PY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +21,8 @@ TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"
 
 def test_ac28_run_appends_one_line_per_claim(calc_repo, *, capsys):
     code = calc_repo.cli("run", "--provider", "stub", "--test-cmd", TEST_CMD)
-    assert code == 0
+    # The stub answers UNVERIFIABLE, and an UNVERIFIABLE no person accepted now exits 9.
+    assert code == checker.EXIT_NEEDS_A_PERSON
     output = json.loads(capsys.readouterr().out)
     assert output["ledger_lines_appended"] == 2
     lines = calc_repo.read(".claimcheck/ledger.jsonl").splitlines()

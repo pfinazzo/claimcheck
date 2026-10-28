@@ -174,8 +174,9 @@ def _run_file(repo, *, kind):
     return json.loads(files[-1].read_text(encoding="utf-8"))
 
 
-def test_ac19_check_exit_0_and_run_file(calc_repo, *, capsys):
-    assert calc_repo.cli("check", "--provider", "stub") == 0
+def test_ac19_check_writes_its_run_file(calc_repo, *, capsys):
+    # The stub answers UNVERIFIABLE, and an UNVERIFIABLE no person accepted now exits 9.
+    assert calc_repo.cli("check", "--provider", "stub") == checker.EXIT_NEEDS_A_PERSON
     printed = json.loads(capsys.readouterr().out)
     saved = _run_file(calc_repo, kind="check")
     assert printed == saved
@@ -187,7 +188,8 @@ def test_ac19_check_exit_0_and_run_file(calc_repo, *, capsys):
 
 
 def test_ac19_worktree_flag(calc_repo, *, capsys):
-    assert calc_repo.cli("check", "--provider", "stub", "--worktree") == 0
+    # The stub answers UNVERIFIABLE, and an UNVERIFIABLE no person accepted now exits 9.
+    assert calc_repo.cli("check", "--provider", "stub", "--worktree") == checker.EXIT_NEEDS_A_PERSON
     assert json.loads(capsys.readouterr().out)["head"] == "worktree"
 
 
@@ -236,7 +238,7 @@ def test_checker_prompt_never_contains_author_confidence(calc_repo, *, monkeypat
     calc_repo.commit("ledger", date="2020-01-06T00:00:00+00:00")
     cap, prompts = make_capturing_provider()
     monkeypatch.setattr(providers, "load", lambda name, model=None: cap)
-    assert calc_repo.cli("check", "--provider", "stub", *extra) == 0
+    assert calc_repo.cli("check", "--provider", "stub", *extra) == checker.EXIT_NEEDS_A_PERSON
     # The real diff is still there.
     assert "src/calc.py" in prompts[-1]
     assert "return a - b" in prompts[-1]

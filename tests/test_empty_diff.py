@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from claimcheck import mutate, providers
+from claimcheck import checker, mutate, providers
 from conftest import PY
 
 TEST_CMD = f"{PY} -m pytest -q -p no:cacheprovider"
@@ -62,7 +62,8 @@ def test_worktree_mode_with_no_changes_is_also_refused(cc_repo, *, capsys):
 
 
 def test_a_non_empty_diff_runs_as_before(calc_repo, *, capsys):
-    assert calc_repo.cli("run", "--provider", "stub", "--test-cmd", TEST_CMD) == 0
+    # The stub answers UNVERIFIABLE, and an UNVERIFIABLE no person accepted now exits 9.
+    assert calc_repo.cli("run", "--provider", "stub", "--test-cmd", TEST_CMD) == checker.EXIT_NEEDS_A_PERSON
     assert json.loads(capsys.readouterr().out)["ledger_lines_appended"] == 2
     assert len(calc_repo.read(".claimcheck/ledger.jsonl").splitlines()) == 2
 

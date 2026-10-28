@@ -41,7 +41,7 @@ def _read_help(*argv) -> str:
 
 
 def test_ac2_help_tree():
-    assert "{init,status,spec,claims,check,mutate,run,verify-ledger,hook}" in _read_help()
+    assert "{init,status,spec,claims,check,mutate,run,accept,verify-ledger,hook}" in _read_help()
     assert "{freeze,verify,draft}" in _read_help("spec")
     assert "{validate}" in _read_help("claims")
     assert "{pre-commit}" in _read_help("hook")

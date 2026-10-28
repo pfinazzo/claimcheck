@@ -10,6 +10,11 @@ from pathlib import Path
 from . import checker, claims, config, gitio, ledger, mutate, spec
 
 
+def pick_exit_code(codes: list[int]) -> int:
+    """The run's exit code from its parts: 2 (refuted, or too few planted bugs caught) wins over 9, and 9 over 0."""
+    return checker.EXIT_REFUTED if checker.EXIT_REFUTED in codes else max(codes)
+
+
 def run_all(
     repo: Path,
     *, settings: config.Config,
@@ -72,6 +77,7 @@ def run_all(
                     "evidence": value.get("evidence", []),
                 },
                 mutation=per_claim.get(claim["id"], mutate._summarize([])),
+                accepted=check_result["accepted"].get(claim["id"]),
             )
         )
     appended = ledger.append_atomic(repo, records=records)
@@ -81,4 +87,4 @@ def run_all(
         "mutate": mutate_result,
         "ledger_lines_appended": appended,
     }
-    return outcome, max(check_code, mutate_code)
+    return outcome, pick_exit_code([check_code, mutate_code])
