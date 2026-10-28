@@ -205,7 +205,7 @@ def test_provider_sends_the_prompt_on_stdin_with_tools_off(monkeypatch):
     assert json.loads(providers.ask_model(prov, system="SYS", user="USER", schema={"type": "object"})) == {"ok": True}
     arg = seen["args"]
     assert "--system-prompt" in arg and arg[arg.index("--system-prompt") + 1] == "SYS" and seen["input"] == "USER"
-    assert "--disallowedTools" in arg and "Bash" in arg and "--model" in arg and "m1" in arg and "--json-schema" in arg
+    assert "--safe-mode" in arg and arg[arg.index("--tools") + 1] == "" and "--model" in arg and "m1" in arg and "--json-schema" in arg
 
 
 def test_provider_reports_a_missing_cli(monkeypatch):

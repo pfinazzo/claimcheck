@@ -1,47 +1,41 @@
 # Acceptance criteria
 
-Goal: Close two ways Desk runs a repo's own code before the person has agreed to trust that repo. First: "Fix this" (propose) and the implement step start Claude Code inside the repo, and Claude Code then runs the hooks in the repo's .claude/settings.json and .claude/settings.local.json. Every Claude Code run Desk starts should pass --setting-sources user, so only the person's own settings load. Second: the spec wizard runs claimcheck through the Python named by [app] python in the repo's own .claimcheck/config.toml before the repo is trusted, and in API mode hands that program the API key. Desk should ignore [app] python until the person has trusted the repo's commands; the trust dialog already lists it. Every Python that Desk starts to run claimcheck also gets -P, so a file such as yaml.py in the repo cannot stand in for a library. The Python CLI does not change.
+Goal: Make the claude-cli checker blind to the repo it checks. Today `_run_claude` in src/claimcheck/providers/claude_cli.py starts `claude -p` in the folder named by the TEMP environment variable. On macOS and Linux TEMP is normally unset, so `claude -p` starts in the repo. It then reads the repo's CLAUDE.md and the gitignored CLAUDE.local.md, and runs the hooks in the repo's .claude settings. Text the AI author controls can steer the verdict without appearing in the diff. The same provider serves spec draft, so Desk's "Write a spec" can still run a repo's hooks this way. Change it so every `claude -p` call starts in a fresh, empty folder made for that call and removed after it, on every platform. Pass --safe-mode, so the person's own CLAUDE.md, hooks, skills and plugins do not load either, while sign-in still works. Replace the 10-name --disallowedTools list with --tools "", which turns off every tool. Everything else stays as it is: the prompt on stdin, redaction, --json-schema, timeouts, and the error messages. The API, openai and stub providers do not change.
 
-- [ ] 1. Every `claude -p` run Desk starts (propose, implement, connection test) gets --setting-sources user from the shared base arguments in claude-cli.ts.
-  - Check: Test in app/test/claude-cli.test.ts: build args for propose, implement and connection test; assert each has "--setting-sources" immediately followed by "user".
-- [ ] 2. Sign-in (`claude auth login`) is unchanged and does not get --setting-sources.
-  - Check: Test: build the sign-in command line and assert it has no --setting-sources argument.
-- [ ] 3. With --setting-sources user, hooks in the repo's .claude/settings.json or settings.local.json do not run during propose or implement.
-  - Check: Manual probe: real claude in a repo whose hooks write marker files, API at a dead local port; markers absent with the flag, present without it.
-- [ ] 4. If the repo is not trusted, the spec wizard ignores [app] python in the repo's .claimcheck/config.toml and never starts that program.
-  - Check: Fixture repo whose [app] python writes a marker; run wizard untrusted; assert marker absent and the resolved program is not that script.
-- [ ] 5. If the repo is not trusted, the wizard also ignores the repo's .venv when choosing a Python.
-  - Check: Fixture repo with a .venv python that writes a marker; run wizard untrusted; assert marker absent and the resolved program is not under .venv.
-- [ ] 6. If the repo is not trusted, the wizard picks claimcheck in this order: path saved in Connect or CLAIMCHECK_BIN, claimcheck on PATH, then a Python on PATH that has claimcheck.
-  - Check: Unit test of the resolver with each source present in turn; assert the first available one in that order is chosen.
-- [ ] 7. If the repo is not trusted and no claimcheck is found, the wizard shows the existing 'claimcheck not found' message and is not blocked otherwise.
-  - Check: Resolver test with no claimcheck available; assert the existing message text is returned.
-- [ ] 8. If the repo is not trusted and API mode is on, the API key reaches only a claimcheck found by the untrusted order, never a program named by the repo.
-  - Check: Fixture repo with a recording [app] python script; run wizard untrusted in API mode; assert the script never ran and the key is absent from its args and env.
-- [ ] 9. If the person has trusted the repo's commands, the wizard uses [app] python and the repo's virtualenv, as claimcheck run does, and may pass the API key to it.
-  - Check: Mark fixture repo trusted in the per-repo trust record; run wizard; assert the configured Python was started.
-- [ ] 10. The wizard reads the same per-repo trust record that claimcheck run uses, and that trust persists across Desk restarts.
-  - Check: Trust a repo, reload the store from disk, resolve the wizard Python; assert it still uses [app] python.
-- [ ] 11. Trust is read on every wizard call: trusting the repo while the wizard is open makes the very next call use [app] python.
-  - Check: Test: resolve untrusted, then mark trusted without restarting, resolve again; assert the second result is [app] python.
-- [ ] 12. If a trusted repo's [app] python is missing or broken, the person sees the start error naming that path, with no fallback to the untrusted order.
-  - Check: Trusted fixture with a nonexistent [app] python; run wizard; assert an error naming that path and that no other Python was started.
-- [ ] 13. Every `python -m claimcheck` Desk starts (runs, wizard calls, the `--version` probe) has -P before -m.
-  - Check: Unit test each spawn site's resolved args; assert the list begins with -P then -m claimcheck.
-- [ ] 14. A yaml.py in the working folder does not stand in for the yaml library when Desk runs claimcheck.
-  - Check: Manual probe: in a folder with a marker-writing yaml.py, run `<python> -P -m claimcheck --version`; assert the marker is absent.
-- [ ] 15. No file under src/claimcheck changes.
-  - Check: git diff --stat shows no paths under src/claimcheck.
+- [ ] 1. Every `claude -p` call from the claude-cli provider starts with its working directory set to a newly created, empty folder that is not inside the repo.
+  - Check: Fake `claude` records its cwd: the cwd exists, is empty at start, and is not the repo or a parent or child of it.
+- [ ] 2. The working folder is unique per call, so two calls never share one.
+  - Check: Make two calls with a fake `claude`; the recorded cwd paths differ.
+- [ ] 3. The working folder is removed after the call returns normally.
+  - Check: After a successful call, the recorded cwd path no longer exists.
+- [ ] 4. The working folder is removed after a non-zero exit, a timeout, and an exception during the call.
+  - Check: Fake `claude` exits non-zero, sleeps past the timeout, and (via a forced error) raises; in each case the recorded cwd path no longer exists.
+- [ ] 5. The folder choice does not depend on the TEMP environment variable, on macOS, Linux and Windows.
+  - Check: Run with TEMP unset and with TEMP set to the repo path; cwd is still a fresh empty folder, not the repo.
+- [ ] 6. If the empty folder cannot be created, the call raises a ProviderError saying the empty folder could not be made, with the reason, and never runs `claude` in the repo or TEMP.
+  - Check: Make folder creation fail (for example an unwritable temp dir); expect ProviderError with that message and the fake `claude` never started.
+- [ ] 7. The `claude` command line includes `--safe-mode`.
+  - Check: Fake `claude` records argv and it contains `--safe-mode`.
+- [ ] 8. The `claude` command line includes `--tools` followed by an empty string, and no `--disallowedTools` flag.
+  - Check: Recorded argv has `--tools` then `""`, and has no `--disallowedTools`.
+- [ ] 9. A repo CLAUDE.md, CLAUDE.local.md and .claude settings hook have no effect on the call.
+  - Check: Put a hook and a CLAUDE.local.md marker in a temp repo and run from it; the fake's cwd is outside the repo and the hook marker file is never created.
+- [ ] 10. If claude's error output says an option is unknown, the ProviderError tells the person to update Claude Code.
+  - Check: Fake `claude` exits non-zero printing 'unknown option --safe-mode'; the ProviderError message contains an instruction to update Claude Code.
+- [ ] 11. If `claude` cannot be started, the existing 'claude CLI could not be started' error is still raised.
+  - Check: Point the provider at a missing binary; the error text matches the current message.
+- [ ] 12. The prompt still goes in on stdin, redaction is still applied, and --json-schema, timeouts and other error messages are unchanged.
+  - Check: Existing claude_cli tests pass unchanged, except those asserting the old --disallowedTools flag or TEMP cwd.
+- [ ] 13. The API, openai and stub providers and Desk's app/src/lib/claude-cli.ts behave exactly as before.
+  - Check: Their existing tests pass and the diff touches none of those files.
 
 ## Out of scope
 
-- Any change to the Python CLI in src/claimcheck
-- Changing the trust dialog's layout or wording
-- Blocking or sandboxing other commands the repo defines
-- Changing config.toml parsing beyond ignoring [app] python while untrusted
-- Changing the sign-in flow (claude auth login)
-- Blocking the wizard when the repo is untrusted
-- Starting or changing any Python other than for claimcheck
-- Falling back to the untrusted order when a trusted [app] python is broken
+- Changes to the claude (API), openai-compatible or stub providers
+- Changes to Desk's app/src/lib/claude-cli.ts
+- Changes to the checker prompt, verdict parsing or schema
+- Scrubbing or changing environment variables of the child process
+- A claude version check before each call
+- Changing the ledger, config or hook behavior
 
 <!-- drafted with `claimcheck spec draft`; frozen with `claimcheck spec freeze` -->

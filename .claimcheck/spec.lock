@@ -2,67 +2,59 @@
   "criteria": [
     {
       "id": 1,
-      "sha256": "aee03586e7b64ac12f77f2389eb7a8290fb269dfbf6dae252419b99e2df22062"
+      "sha256": "21e10d99dff0171ffc8950eff1034ef8342563f86843890f3b50b77e522f6308"
     },
     {
       "id": 2,
-      "sha256": "6726a8033266ae89dc13dea2fa79748cab52fce9bc012ed977579768b29a4624"
+      "sha256": "cf9aaada1b90770f322c900de21e9d533d43b3c0a463063ae504a3ceef55862f"
     },
     {
       "id": 3,
-      "sha256": "8a0c608175c8515cf84aa454c2d4e4096f49e5897b286bed2d32722e947d2a2e"
+      "sha256": "4bda40454d6e962c7214d860df95501960f29b1ff60ea85b26420e37402d30d9"
     },
     {
       "id": 4,
-      "sha256": "b1007d57a4c97b3fc211a9a30264be67d1db74b38bae66a2a6b18234dfbe4342"
+      "sha256": "5ff5959d23f0d7b4d5eafdb2dd5105424570b88770e420b30a69bd0e6d331a03"
     },
     {
       "id": 5,
-      "sha256": "59f0529e7a9a1bfea24fe4d72de16e1fcfb2f744a8ef014989b019515e565901"
+      "sha256": "403961faab14cc98311190a9da70c1a10b15e1a328598d6d0ff0f0856a820788"
     },
     {
       "id": 6,
-      "sha256": "d40c7f8b3088a82c84bd23488efc6f72176158783af5a6ccd62c5f5e7eca2ad1"
+      "sha256": "5ac31d76511e4110e8c2b9bae62e6c25988729ede1c691aa45455967b23cf752"
     },
     {
       "id": 7,
-      "sha256": "88cb7c35332580a0ae28cd251391e0b976940dace87025a34351233cf78c2419"
+      "sha256": "835e188915906e7341be833803503201dfda6fc533123f61ce3554a350760b15"
     },
     {
       "id": 8,
-      "sha256": "80dc8283b20cf721086d736d65a00a977bb9e86d7d1a06b3d060f8577195279a"
+      "sha256": "03fae25dd4a83c969c6752ccc64c4b59a8f173d70b86fd4770358a86c65385e9"
     },
     {
       "id": 9,
-      "sha256": "ffe90b07384cebc115d948111f978bef35de1276f6b879bff20c2846ccb9e98b"
+      "sha256": "8b91730c3cb80d76a4e3ccef4874d2e5c036681177aacd1384b68a4c6455b53a"
     },
     {
       "id": 10,
-      "sha256": "ad3c32bda8e299366aabc22b1f4436962f289907030b57e08fa655b2b53a9072"
+      "sha256": "0578a51375d9701ebd26c383e3fff8bade169a83bf0916bb4f32451f8d08c70a"
     },
     {
       "id": 11,
-      "sha256": "78d09cd351b68b733b8bddf858f41162cc1facf16ab78101e9cdd1b54d84aff8"
+      "sha256": "1e54f92ca11be1fa4b6d2f64f6b60fae9f00e48e8e694f4ca6ecc35370046e28"
     },
     {
       "id": 12,
-      "sha256": "0b5b65a470622760f5d1bdbbf477b700bc57542468ef7fa145231d997d076951"
+      "sha256": "6280a1f4b0d1945f44bdf86cf7624c134321e7156c37c9fd989b9cfdd5dbde55"
     },
     {
       "id": 13,
-      "sha256": "7624d6243ac10ecbff6cb28c43e5d96b707213d7be837d46bc96f4e456207bd9"
-    },
-    {
-      "id": 14,
-      "sha256": "8db347051fcbe55d81dbb1d2a3f7db330aeef457c2c3bbb7dc33c0b65d456d89"
-    },
-    {
-      "id": 15,
-      "sha256": "f9927980ab658e82c4b83caec976cc8f3bb92ed81f545af31566bcdd44eb5f9f"
+      "sha256": "9032a13d03db1c57b7f1c92d9455fba70988d73f3ec23811497f4c97c007f8ee"
     }
   ],
-  "frozen_at": "2026-10-28T15:32:02Z",
-  "git_head": "4247933e4ac5971ee5b6fecc8d084598f33d2b84",
-  "spec_sha256": "e04bdd64d2eb4b324724455ce190866517c047664d62d22a5789f3704a121e6b",
+  "frozen_at": "2026-10-28T16:04:41Z",
+  "git_head": "bbcbf2f5d9b2a695a4e66186de4613c660425f68",
+  "spec_sha256": "2e875f032fdf627786b669f2a35b27a14f5749d4ada9d9354ca4b197e8b5d5dd",
   "version": 1
 }

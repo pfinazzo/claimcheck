@@ -436,7 +436,10 @@ What each feature sends:
 Two more protections follow from this:
 
 - You can see what was held back. The result of `claimcheck check` has a `sent` section listing the withheld files, how many values were redacted and of what kind, and whether anything was cut for size. It never contains the secret itself.
-- When Claude runs through your Claude Code sign-in, claimcheck starts it with its file, shell and web tools switched off and from a temporary folder, so it works only from the text it was handed.
+- When Claude runs through your Claude Code sign-in, claimcheck starts it with every tool switched off, so it works only from the text it was handed.
+  - Each call starts in a new empty folder outside the repo, which is removed afterwards. If your temp folder (`TMPDIR`, or `TEMP` on Windows) is inside a git repo, the call stops with an error instead.
+  - Claude Code also runs with `--safe-mode`. Neither the repo's `CLAUDE.md` and hooks nor your own Claude Code setup reach the checker.
+  - An older Claude Code that doesn't know these options gets an error that says to update it.
 
 This is a safety net, not a guarantee. The patterns lean toward redacting too much, but a secret in an unusual format can slip past, and a key that was ever committed should be rotated whatever claimcheck does. `init` closes the usual hole first (`.env` ignored, committed secrets reported), and the Desk app applies the same filter and a deny list for Claude Code's file tools (see [The Desk app](#the-desk-app)). The Python and Desk filters are tested against the same set of cases, in [`tests/fixtures/secret_cases.json`](tests/fixtures/secret_cases.json), so they cannot drift apart.
 
