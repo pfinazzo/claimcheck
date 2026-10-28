@@ -32,7 +32,6 @@ OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_MODEL_ENV = "OPENAI_MODEL"
 STUB_FILE_ENV = "CLAIMCHECK_STUB_FILE"
-TEMP_ENV = "TEMP"
 
 
 def has_api_key() -> bool:
@@ -58,11 +57,6 @@ def read_openai_model() -> str | None:
 def read_stub_reply_file() -> str | None:
     """The canned-reply file the stub provider returns verbatim, if one is set (tests use this)."""
     return os.environ.get(STUB_FILE_ENV) or None
-
-
-def read_temp_dir() -> str | None:
-    """The Windows TEMP folder, if set; the Claude CLI runs there so it never sees the repo."""
-    return os.environ.get(TEMP_ENV) or None
 
 
 DEFAULT_IGNORE = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml"]
