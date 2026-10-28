@@ -83,6 +83,9 @@ Everything the CLI prints is treated as untrusted text: it is parsed, coerced to
 - **Build markup from text.** The page is built with DOM calls and text nodes. There is no `innerHTML` anywhere, and a test fails if one appears. The page's content security policy allows no inline script, no inline style and no network requests.
 - **Open arbitrary paths.** The only things it opens are a web link or a fix worktree folder inside the repo.
 - **Run commands from a repo you have not looked at.** The first run in a repo shows the exact commands its config and claims name, and asks first. If they change, it asks again.
+  - Claude Code runs load only your own Claude Code settings. Hooks in the repo's `.claude/` settings never run.
+  - The Python named by the repo's `[app] python`, and a virtualenv inside the repo, are used only after you agree.
+  - Every Python Desk starts runs with `-P`, so a file in the repo such as `yaml.py` cannot load in place of a real library.
 - **Push, merge, open a pull request without you pressing the button, or read `.env` files.**
 - **Store a key in plain text.** An API key is encrypted with your operating system's keychain, decrypted only at the moment of a call, and handed to the child process only.
 

@@ -114,7 +114,8 @@ export const startCc = ({ resolved, cliArgs: argList, input, cwd, env = {}, time
       }, timeoutMs);
     }
     spawned.on('error', (spawnError: NodeJS.ErrnoException) =>
-      done({ callback: reject, value: new CcError(spawnError.code === 'ENOENT' ? MISSING_MESSAGE : `claimcheck could not be started: ${spawnError.message}`, { kind: 'missing' }) }),
+      // The path is named so a wrong [app] python or saved path can be found and fixed.
+      done({ callback: reject, value: new CcError(spawnError.code === 'ENOENT' ? `${MISSING_MESSAGE} Tried: ${resolved.command}` : `claimcheck could not be started: ${spawnError.message}`, { kind: 'missing' }) }),
     );
     spawned.stdin?.on('error', () => {});
     spawned.stdin?.end(input === undefined ? '' : JSON.stringify(input), 'utf8');

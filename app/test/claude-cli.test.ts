@@ -11,7 +11,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ChildProcess } from 'node:child_process';
-import { BASE_ARGS, SIGN_IN_ERRORS, describeEvent, parseStreamLine, resolveSpawn, runClaude, testConnection, type SpawnFn } from '../src/lib/claude-cli.ts';
+import { BASE_ARGS, SIGN_IN_ERRORS, buildWindowsSignInLaunch, describeEvent, parseStreamLine, resolveSpawn, runClaude, startSignIn, testConnection, type SpawnFn } from '../src/lib/claude-cli.ts';
+import { IMPLEMENT_ARGS, PROPOSE_ARGS } from '../src/lib/fixer.ts';
 import { toText } from '../src/shared/text.ts';
 import { createRecorder } from './helpers.ts';
 
@@ -125,4 +126,31 @@ test('testConnection: OK round trip', async () => {
   const { spawnFn } = makeFakeSpawn({ lines: [ok] });
   const response = await testConnection({ bin: '/x/claude', spawnFn });
   assert.deepEqual(response, { ok: true, path: '/x/claude', error: null, needsSignIn: false });
+});
+
+/** True when `--setting-sources` is directly followed by `user`, so only the person's own settings load. */
+const hasUserSettingsOnly = ({ argList }: { argList: readonly string[] }): boolean => argList[argList.indexOf('--setting-sources') + 1] === 'user' && argList.includes('--setting-sources');
+
+test('propose, implement and the connection test each start claude with --setting-sources user, so a repo\'s own hooks are not loaded', async () => {
+  const ok = JSON.stringify({ type: 'result', is_error: false, 'result': 'OK' });
+  const { spawnFn, calls } = makeFakeSpawn({ lines: [ok] });
+  await runClaude({ prompt: 'propose', cliArgs: PROPOSE_ARGS, cwd: '.', bin: '/usr/bin/claude', spawnFn });
+  await runClaude({ prompt: 'implement', cliArgs: IMPLEMENT_ARGS, cwd: '.', bin: '/usr/bin/claude', spawnFn });
+  await testConnection({ bin: '/usr/bin/claude', spawnFn });
+  const launches = calls.list();
+  assert.equal(launches.length, 3);
+  launches.forEach((launch) => assert.ok(hasUserSettingsOnly({ argList: launch.cliArgs }), `missing --setting-sources user in: ${launch.cliArgs.join(' ')}`));
+});
+
+test('sign-in is not a claude session, so it does not get --setting-sources', () => {
+  const launched = createRecorder<readonly string[]>();
+  // A stand-in for node's spawn: it keeps spawn's positional (command, args) shape, and sign-in only calls unref on what it returns.
+  const spawnFn: SpawnFn = ((_command: string, argList: readonly string[]) => {
+    launched.record(argList);
+    return { unref: () => undefined };
+  }) as never;
+  startSignIn({ bin: '/usr/bin/claude', spawnFn });
+  const windows = buildWindowsSignInLaunch({ exe: 'C:\\claude.exe' });
+  [...launched.list(), windows.cliArgs].forEach((argList) => assert.ok(!argList.join(' ').includes('--setting-sources'), argList.join(' ')));
+  assert.equal(launched.list().length, 1);
 });

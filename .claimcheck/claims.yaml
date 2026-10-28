@@ -4,110 +4,105 @@ author: "claude-code/claude-opus-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "`openai` is a provider name that load() accepts, so `--provider openai` reaches it from spec draft, check and run, and `provider = \"openai\"` under [checker] reaches it from check and run"
-    confidence: 0.9
+    claim: "Every `claude -p` run Desk starts gets `--setting-sources user`, because it is in the shared BASE_ARGS that runClaude puts on every launch. Propose, implement and the connection test all go through runClaude"
+    confidence: 0.95
     criteria: [1]
-    files: ["src/claimcheck/providers/__init__.py"]
-    kill_condition: "test: tests/test_openai_provider.py::test_check_runs_through_the_openai_provider and test_openai_is_a_provider_name_load_accepts"
+    files: ["app/src/lib/claude-cli.ts"]
+    kill_condition: "test: app/test/claude-cli.test.ts 'propose, implement and the connection test each start claude with --setting-sources user, so a repo's own hooks are not loaded'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test (224 tests, 222 pass, 2 skipped)"
+      - "obs: the same test fails with the fix set aside"
 
   - id: c2
-    claim: "The provider POSTs once to <base URL>/chat/completions. A trailing slash on OPENAI_BASE_URL gives the same path, and with the variable unset the address is https://api.openai.com/v1/chat/completions"
-    confidence: 0.9
-    criteria: [2, 10]
-    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
-    kill_condition: "test: test_request_goes_to_chat_completions_with_or_without_a_trailing_slash, test_an_unset_base_url_means_openai_itself and test_an_error_status_is_tried_once_and_never_retried"
+    claim: "Sign-in (`claude auth login`) does not go through runClaude, so it does not get `--setting-sources`"
+    confidence: 0.95
+    criteria: [2]
+    files: ["app/src/lib/claude-cli.ts"]
+    kill_condition: "test: app/test/claude-cli.test.ts 'sign-in is not a claude session, so it does not get --setting-sources'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
 
   - id: c3
-    claim: "OPENAI_API_KEY, when set, is sent as 'Authorization: Bearer <key>'. When it is unset the request has no Authorization header"
-    confidence: 0.9
+    claim: "With `--setting-sources user`, hooks in a repo's .claude/settings.json and .claude/settings.local.json do not run. Without the flag they do. This holds for the installed Claude Code; a future CLI could change what the flag covers"
+    confidence: 0.85
     criteria: [3]
-    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
-    kill_condition: "test: test_the_key_is_sent_as_a_bearer_token and test_no_key_means_no_authorization_header"
+    files: ["app/src/lib/claude-cli.ts"]
+    kill_condition: "obs: in a scratch repo whose SessionStart and UserPromptSubmit hooks touch marker files, run claude -p with Desk's propose arguments and ANTHROPIC_BASE_URL=http://127.0.0.1:9; the markers appear without --setting-sources user and do not appear with it"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "obs: ran exactly that probe on 2026-10-28; all three markers without the flag, none with it"
 
   - id: c4
-    claim: "A passed model is sent as body.model and wins over OPENAI_MODEL. With no model passed, OPENAI_MODEL is used. With neither, a ProviderError naming --model, [checker] model and OPENAI_MODEL is raised before any request"
-    confidence: 0.88
-    criteria: [4, 5]
-    files: ["src/claimcheck/providers/openai_compatible.py", "src/claimcheck/config.py"]
-    kill_condition: "test: test_a_passed_model_is_sent_and_wins_over_openai_model, test_openai_model_is_used_when_no_model_is_passed and test_no_model_anywhere_fails_before_any_request"
+    claim: "While the repo is untrusted, the wizard's claimcheck lookup gets no [app] python and no repo virtualenv, so it follows the untrusted order: Connect path or CLAIMCHECK_BIN, claimcheck on PATH, then a PATH Python that has claimcheck. The repo's script and .venv Python are never started or asked"
+    confidence: 0.9
+    criteria: [4, 5, 6]
+    files: ["app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/repo-trust.test.ts 'before the repo is trusted, the wizard ignores the Python the repo names and uses one found on PATH' and 'before the repo is trusted, the wizard never asks or starts the repo's own virtualenv Python'; app/test/gh.test.ts 'the order is: set path, claimcheck on PATH, [app].python, then the probes'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
+      - "obs: the first repo-trust test fails with the fix set aside"
 
   - id: c5
-    claim: "The request body holds the system message, the user message with the schema appended as text, and response_format json_schema with the request's schema and strict false. It has no stream flag"
-    confidence: 0.9
-    criteria: [6]
-    files: ["src/claimcheck/providers/openai_compatible.py"]
-    kill_condition: "test: test_the_body_asks_for_json_twice"
+    claim: "When nothing is found for an untrusted repo, the wizard still gets the existing 'claimcheck was not found' message and nothing else is blocked. That message is unchanged when no program was found at all"
+    confidence: 0.8
+    criteria: [7]
+    files: ["app/src/lib/cc-cli.ts"]
+    kill_condition: "test: app/test/wizard-state.test.ts startCc with resolved null rejects with kind 'missing' and MISSING_MESSAGE"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
 
   - id: c6
-    claim: "The provider returns choices[0].message.content as text, with a ```json fence stripped. Unfenced text comes back unchanged"
-    confidence: 0.85
-    criteria: [7]
-    files: ["src/claimcheck/providers/openai_compatible.py"]
-    kill_condition: "test: test_a_fenced_reply_comes_back_as_bare_json and test_an_unfenced_reply_is_returned_as_it_came"
+    claim: "In API mode with an untrusted repo, the key in ANTHROPIC_API_KEY reaches only the claimcheck found by the untrusted order. The repo's own script is never started, so it never sees the key"
+    confidence: 0.9
+    criteria: [8]
+    files: ["app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/repo-trust.test.ts 'in API mode, the key goes only to the claimcheck found on PATH, never to the repo's Python, while the repo is untrusted'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
+      - "obs: this test fails with the fix set aside"
 
   - id: c7
-    claim: "The system and user text pass through redact.redact_text before the request is built, so no must_redact case from tests/fixtures/secret_cases.json reaches the server. A server's error message is redacted too, so a key it echoes never reaches the ProviderError"
+    claim: "The wizard reads the same per-repo trust record as claimcheck run, on every call. Trusting the repo makes the very next wizard call use [app] python, and trust given in the run dialog still counts after Desk restarts. A trusted repo's virtualenv is also searched, but no test covers the wizard picking it"
     confidence: 0.85
-    criteria: [8]
-    files: ["src/claimcheck/providers/openai_compatible.py"]
-    kill_condition: "test: test_no_secret_reaches_the_server and test_an_error_message_never_holds_the_key"
+    criteria: [9, 10, 11]
+    files: ["app/src/lib/desk-api.ts"]
+    kill_condition: "test: app/test/repo-trust.test.ts 'once the repo is trusted, the very next wizard call uses the repo's Python, without reopening anything' and 'trust is the same record claimcheck run uses, and it is still there after Desk restarts'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
 
   - id: c8
-    claim: "Each failure raises a ProviderError with a hint: an unreachable server, a timeout, 401 or 403 (check OPENAI_API_KEY), 404 (check OPENAI_BASE_URL and the model name), 429 (rate limit or quota), any other status with the server's message cut to 300 characters, a body that is not JSON, and a reply with no message content"
-    confidence: 0.82
-    criteria: [9]
-    files: ["src/claimcheck/providers/openai_compatible.py"]
-    kill_condition: "test: the error tests in tests/test_openai_provider.py, one per case, including test_any_other_status_shows_the_server_message_cut_short and test_a_server_that_never_answers_times_out"
+    claim: "If a trusted repo's [app] python does not exist, the wizard rejects with a message naming that path, and no other Python is started"
+    confidence: 0.9
+    criteria: [12]
+    files: ["app/src/lib/cc-cli.ts", "app/src/lib/runner.ts"]
+    kill_condition: "test: app/test/repo-trust.test.ts 'a trusted repo whose Python does not exist shows an error naming that path, and nothing else is started'"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "cmd: cd app && npm test"
+      - "obs: this test fails with the fix set aside"
 
   - id: c9
-    claim: "The new provider imports only the standard library and claimcheck's own modules, and pyproject.toml is unchanged"
-    confidence: 0.97
-    criteria: [11]
-    files: ["src/claimcheck/providers/openai_compatible.py"]
-    kill_condition: "cmd: git diff main -- pyproject.toml is empty, and the module's imports are json, re, urllib.error, urllib.request and claimcheck modules"
+    claim: "Every `python -m claimcheck` Desk starts has -P before -m: the [app] python run, a found Python's run, and the finder's --version probe all use PYTHON_CLAIMCHECK_ARGS"
+    confidence: 0.95
+    criteria: [13]
+    files: ["app/src/lib/runner.ts"]
+    kill_condition: "test: app/test/gh.test.ts resolver tests expect prefix ['-P', '-m', 'claimcheck'] and probe '-P -m claimcheck --version'; app/test/pr-check.test.ts virtualenv test matches the -P probe"
     verified_by:
-      - "obs: read the import lines of src/claimcheck/providers/openai_compatible.py"
+      - "cmd: cd app && npm test"
+      - "cmd: grep -rn \"'-m', 'claimcheck'\" app/src finds nothing outside PYTHON_CLAIMCHECK_ARGS"
 
   - id: c10
-    claim: "`auto` still picks a Claude provider when OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL are all set"
-    confidence: 0.93
-    criteria: [12]
-    files: ["src/claimcheck/providers/__init__.py"]
-    kill_condition: "test: test_auto_still_picks_claude_when_openai_variables_are_set"
+    claim: "With -P, a yaml.py in the working folder is not imported in place of the yaml library"
+    confidence: 0.9
+    criteria: [14]
+    files: ["app/src/lib/runner.ts"]
+    kill_condition: "obs: in a folder whose yaml.py writes a marker and exits, `.venv/bin/python -m claimcheck --version` prints 'fake yaml loaded' and leaves the marker; with -P it prints 'claimcheck 0.1.0' and leaves none"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
+      - "obs: ran exactly that probe on 2026-10-28"
 
   - id: c11
-    claim: "The config written by init, examples/config.toml, the --provider help of spec draft, check and run, and README all list `openai`. README explains OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL with an Ollama example"
-    confidence: 0.9
-    criteria: [13, 14]
-    files: ["src/claimcheck/detect.py", "src/claimcheck/cli.py"]
-    kill_condition: "test: test_the_config_init_writes_lists_openai and test_the_provider_help_lists_openai"
-    verified_by:
-      - "cmd: .venv/bin/python -m pytest -q tests/test_openai_provider.py"
-      - "obs: README has a 'Using a model other than Claude' section with the three variables and an Ollama example"
-
-  - id: c12
-    claim: "checker.py, ledger.py and mutate.py are unchanged, and pytest, ruff and mypy pass"
-    confidence: 0.95
+    claim: "The change stays inside Desk: the only code files changed are these four under app/src/lib, and no file under src/claimcheck changes"
+    confidence: 0.98
     criteria: [15]
-    files: ["src/claimcheck/config.py"]
-    kill_condition: "cmd: git diff main -- src/claimcheck/checker.py src/claimcheck/ledger.py src/claimcheck/mutate.py is empty; .venv/bin/python -m pytest -q, ruff check and mypy pass"
+    files: ["app/src/lib/cc-cli.ts", "app/src/lib/claude-cli.ts", "app/src/lib/desk-api.ts", "app/src/lib/runner.ts"]
+    kill_condition: "cmd: git diff --stat main...HEAD -- src/claimcheck prints nothing"
     verified_by:
-      - "cmd: .venv/bin/python -m pytest -q (429 passed), .venv/bin/ruff check, .venv/bin/mypy"
+      - "cmd: git diff --stat main -- src/claimcheck"

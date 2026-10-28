@@ -452,11 +452,14 @@ export const createDeskApi = ({
   };
 
   /**
-   * How to look for the claimcheck command. A virtualenv inside the repo is only looked at once the
-   * person has agreed to run the repo's commands, because asking it a question runs its Python.
+   * How to look for the claimcheck command.
+   *
+   * Two choices come from the repo itself: the Python named by [app] python, and a virtualenv inside
+   * the repo. Both are used only once the person has agreed to run the repo's commands. Starting either
+   * one runs a program the repo picked, and in API mode that program would also get the key.
    */
   const claimcheckBin = ({ board, isRepoTrusted = false }: { board: Board | null; isRepoTrusted?: boolean }): runnerDefault.ResolveOptions => ({
-    python: board?.config.app.python ?? null,
+    python: isRepoTrusted ? (board?.config.app.python ?? null) : null,
     bin: state.settings.claimcheckBin ?? null,
     ...(isRepoTrusted ? { searchRoots: [board?.repo.path, state.pullRequestCheck?.originPath].filter((root): root is string => typeof root === 'string' && root !== '') } : {}),
     ...(execFn ? { execFn } : {}),
@@ -701,7 +704,9 @@ export const createDeskApi = ({
   const cc = async ({ argList, input, timeoutMs, env = {} }: Partial<{ input?: unknown; timeoutMs?: number; env?: Record<string, string> }> & { argList: readonly string[] }): Promise<unknown> => {
     const repoPath = requireRepo();
     if (state.ccCall) throw new Error('claimcheck is already working on something. Wait for it or cancel it.');
-    const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board: state.board }));
+    // Trust is read on every call, so trusting the repo while the wizard is open counts at once.
+    const isRepoTrusted = state.board ? trustInfo({ board: state.board }).trusted : false;
+    const resolved = await runnerModule.resolveClaimcheck(claimcheckBin({ board: state.board, isRepoTrusted }));
     const call = ccModule.startCc({ resolved, cliArgs: argList, input, cwd: repoPath, env, ...(timeoutMs ? { timeoutMs } : {}), ...(spawnFn ? { spawnFn } : {}) });
     state.ccCall = call;
     try {
