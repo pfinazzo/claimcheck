@@ -60,6 +60,25 @@ flowchart LR
   H --> B
 ```
 
+## What it caught in its first five days
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/caught-bugs-dark.png">
+  <img alt="Two bugs in claimcheck's own code. Every test passed and the agent was 93 and 95 percent sure. claimcheck refuted both claims, and each fix passed a claimcheck rerun 3 and 9 minutes later." src="docs/screenshots/caught-bugs-light.png">
+</picture>
+
+From Oct 24 to 28, 2026, AI agents wrote claimcheck's own code, and claimcheck checked their changes. Every number here comes from this repo's [ledger](.claimcheck/ledger.jsonl), so you can check them yourself.
+
+- **4 claims refuted, in 137 checks of 92 distinct claims.** A run after a fix checks the same claims again, so checks outnumber claims.
+- **3 of those claims pointed at 2 code bugs.** Every test passed on both. The ledger shows this, because claimcheck only plants bugs once the whole suite passes.
+- **Both fixes passed a claimcheck rerun,** 9 and 3 minutes after the catch.
+- **The fourth claim said more than the code did.** It said unknown HTML tags were dropped. They stay as plain text, which is safe, so the claim was corrected.
+- **No false alarms.** The fix or the corrected claim that followed confirmed all 4.
+- **The agent's confidence carried no signal.** It said 80% to 95% on 90% of its claims, and on all 4 false ones.
+- **18% of checks went to a person.** The diff alone could not settle those claims, often because they depend on running the code. claimcheck holds the run until a person accepts or narrows each one.
+
+[A real catch](#a-real-catch) walks through the empty-diff bug, ledger line included.
+
 ## Use it in your own repo
 
 Six steps take a project from nothing to a checked change. Each links to the detail further down.
@@ -199,6 +218,7 @@ Each run writes one JSON line per claim. This is the second run, trimmed:
 ## Contents
 
 - [The problem it solves](#the-problem-it-solves)
+- [What it caught in its first five days](#what-it-caught-in-its-first-five-days)
 - [Use it in your own repo](#use-it-in-your-own-repo)
 - [A real catch](#a-real-catch)
 - [Example: the weak-test catch](#example-the-weak-test-catch)
