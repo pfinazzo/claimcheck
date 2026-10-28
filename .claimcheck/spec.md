@@ -1,47 +1,47 @@
 # Acceptance criteria
 
-Goal: Let claimcheck use a model provider other than Claude. Add an `openai` provider that talks to any OpenAI-compatible chat completions endpoint (OpenAI itself, or a local server such as Ollama), chosen the same way as the others: `--provider openai` or `[checker] provider = "openai"` in config.toml. The base URL, key and model come from OPENAI_BASE_URL, OPENAI_API_KEY (optional for local servers) and the configured or --model model, with OPENAI_MODEL as the fallback when no model is given. It uses the standard library only, no new dependency. It applies the same redaction as the other providers before anything leaves the process, and failures become a ProviderError that says what to fix. `auto` stays Claude-only, so Claude stays the default. The checker, the ledger and the mutation test are unchanged. README, the config comments and the CLI help list the new provider and how to set it up.
+Goal: Close two ways Desk runs a repo's own code before the person has agreed to trust that repo. First: "Fix this" (propose) and the implement step start Claude Code inside the repo, and Claude Code then runs the hooks in the repo's .claude/settings.json and .claude/settings.local.json. Every Claude Code run Desk starts should pass --setting-sources user, so only the person's own settings load. Second: the spec wizard runs claimcheck through the Python named by [app] python in the repo's own .claimcheck/config.toml before the repo is trusted, and in API mode hands that program the API key. Desk should ignore [app] python until the person has trusted the repo's commands; the trust dialog already lists it. Every Python that Desk starts to run claimcheck also gets -P, so a file such as yaml.py in the repo cannot stand in for a library. The Python CLI does not change.
 
-- [ ] 1. `--provider openai` selects the OpenAI-compatible provider for spec draft, check and run, and `[checker] provider = "openai"` selects it for check and run.
-  - Check: Tests load the provider by name and run check through it against a local fake server.
-- [ ] 2. The provider POSTs to <OPENAI_BASE_URL>/chat/completions; a trailing slash gives the same path, and an unset OPENAI_BASE_URL means https://api.openai.com/v1.
-  - Check: Fake server records the path with and without a trailing slash; a unit test checks the default URL.
-- [ ] 3. When OPENAI_API_KEY is set the request carries 'Authorization: Bearer <key>'; when it is unset no Authorization header is sent.
-  - Check: Fake server records the headers in both cases.
-- [ ] 4. The model is the one passed in (--model, else the config's [checker] model); when none is passed, OPENAI_MODEL is used.
-  - Check: Fake server tests check body.model for a passed model and for OPENAI_MODEL alone.
-- [ ] 5. With no model anywhere, a ProviderError naming --model, [checker] model and OPENAI_MODEL is raised before any network call.
-  - Check: Test with all three unset: the error names all three and the fake server saw no request.
-- [ ] 6. The body sends the system and user messages, response_format json_schema with the request's schema and strict false, and the schema appended to the user message as text.
-  - Check: Fake server captures the body and checks each part.
-- [ ] 7. The provider returns the reply's message content as text, with ```json fences stripped.
-  - Check: Fake server replies with fenced JSON; the returned text is the bare JSON.
-- [ ] 8. No secret from tests/fixtures/secret_cases.json reaches the server.
-  - Check: Send the shared secret cases through the provider; none appear in the body the fake server received.
-- [ ] 9. Each failure raises a ProviderError with a hint: unreachable server, timeout, 401 or 403, 404, 429, any other status, a body that is not JSON, and a reply with no message content.
-  - Check: One fake-server test per case checks the ProviderError and its hint.
-- [ ] 10. The provider makes exactly one HTTP request per call and never retries.
-  - Check: Fake server answering 500 sees exactly one request.
-- [ ] 11. The provider uses only the standard library, and pyproject.toml gains no dependency.
-  - Check: Read the new module's imports and the pyproject diff.
-- [ ] 12. `auto` still picks Claude even when OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL are set.
-  - Check: Test: with the three variables set, load('auto') returns a Claude provider.
-- [ ] 13. README, examples/config.toml, the config written by init, and the --provider help text each list `openai`.
-  - Check: Test or grep each one for openai.
-- [ ] 14. README explains OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL with an Ollama example.
-  - Check: Read the README providers section.
-- [ ] 15. checker.py, ledger.py and mutate.py are unchanged, and pytest, ruff and mypy pass.
-  - Check: git diff of those files is empty; run the three commands.
+- [ ] 1. Every `claude -p` run Desk starts (propose, implement, connection test) gets --setting-sources user from the shared base arguments in claude-cli.ts.
+  - Check: Test in app/test/claude-cli.test.ts: build args for propose, implement and connection test; assert each has "--setting-sources" immediately followed by "user".
+- [ ] 2. Sign-in (`claude auth login`) is unchanged and does not get --setting-sources.
+  - Check: Test: build the sign-in command line and assert it has no --setting-sources argument.
+- [ ] 3. With --setting-sources user, hooks in the repo's .claude/settings.json or settings.local.json do not run during propose or implement.
+  - Check: Manual probe: real claude in a repo whose hooks write marker files, API at a dead local port; markers absent with the flag, present without it.
+- [ ] 4. If the repo is not trusted, the spec wizard ignores [app] python in the repo's .claimcheck/config.toml and never starts that program.
+  - Check: Fixture repo whose [app] python writes a marker; run wizard untrusted; assert marker absent and the resolved program is not that script.
+- [ ] 5. If the repo is not trusted, the wizard also ignores the repo's .venv when choosing a Python.
+  - Check: Fixture repo with a .venv python that writes a marker; run wizard untrusted; assert marker absent and the resolved program is not under .venv.
+- [ ] 6. If the repo is not trusted, the wizard picks claimcheck in this order: path saved in Connect or CLAIMCHECK_BIN, claimcheck on PATH, then a Python on PATH that has claimcheck.
+  - Check: Unit test of the resolver with each source present in turn; assert the first available one in that order is chosen.
+- [ ] 7. If the repo is not trusted and no claimcheck is found, the wizard shows the existing 'claimcheck not found' message and is not blocked otherwise.
+  - Check: Resolver test with no claimcheck available; assert the existing message text is returned.
+- [ ] 8. If the repo is not trusted and API mode is on, the API key reaches only a claimcheck found by the untrusted order, never a program named by the repo.
+  - Check: Fixture repo with a recording [app] python script; run wizard untrusted in API mode; assert the script never ran and the key is absent from its args and env.
+- [ ] 9. If the person has trusted the repo's commands, the wizard uses [app] python and the repo's virtualenv, as claimcheck run does, and may pass the API key to it.
+  - Check: Mark fixture repo trusted in the per-repo trust record; run wizard; assert the configured Python was started.
+- [ ] 10. The wizard reads the same per-repo trust record that claimcheck run uses, and that trust persists across Desk restarts.
+  - Check: Trust a repo, reload the store from disk, resolve the wizard Python; assert it still uses [app] python.
+- [ ] 11. Trust is read on every wizard call: trusting the repo while the wizard is open makes the very next call use [app] python.
+  - Check: Test: resolve untrusted, then mark trusted without restarting, resolve again; assert the second result is [app] python.
+- [ ] 12. If a trusted repo's [app] python is missing or broken, the person sees the start error naming that path, with no fallback to the untrusted order.
+  - Check: Trusted fixture with a nonexistent [app] python; run wizard; assert an error naming that path and that no other Python was started.
+- [ ] 13. Every `python -m claimcheck` Desk starts (runs, wizard calls, the `--version` probe) has -P before -m.
+  - Check: Unit test each spawn site's resolved args; assert the list begins with -P then -m claimcheck.
+- [ ] 14. A yaml.py in the working folder does not stand in for the yaml library when Desk runs claimcheck.
+  - Check: Manual probe: in a folder with a marker-writing yaml.py, run `<python> -P -m claimcheck --version`; assert the marker is absent.
+- [ ] 15. No file under src/claimcheck changes.
+  - Check: git diff --stat shows no paths under src/claimcheck.
 
 ## Out of scope
 
-- Making auto pick OpenAI
-- Streaming or tool calls
-- Retries or backoff inside the provider
-- Desk (app/) support for the new provider
-- Other endpoint styles such as Gemini native or Anthropic-compatible
-- Any change to the checker prompt, parsing, retry, ledger format or mutation test
-- Telling local servers from remote ones
-- A --model flag on spec draft
+- Any change to the Python CLI in src/claimcheck
+- Changing the trust dialog's layout or wording
+- Blocking or sandboxing other commands the repo defines
+- Changing config.toml parsing beyond ignoring [app] python while untrusted
+- Changing the sign-in flow (claude auth login)
+- Blocking the wizard when the repo is untrusted
+- Starting or changing any Python other than for claimcheck
+- Falling back to the untrusted order when a trusted [app] python is broken
 
 <!-- drafted with `claimcheck spec draft`; frozen with `claimcheck spec freeze` -->
