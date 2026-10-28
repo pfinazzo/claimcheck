@@ -4,95 +4,91 @@ author: "claude-code/claude-opus-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "Every `claude -p` call from the claude-cli provider runs in a new folder from tempfile.TemporaryDirectory that is empty when claude starts. If that folder would sit inside any git repo, including the one being checked, the call raises ProviderError before claude starts and the folder is removed"
-    confidence: 0.95
-    criteria: [1]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_each_call_starts_in_a_new_empty_folder_outside_the_repo and test_a_temp_variable_pointing_into_the_repo_stops_the_call_before_claude_starts"
+    claim: "claims.check_coverage raises ClaimsError (exit 4) when a claim lists a file the diff does not change, when code files changed and there are no claims, and, with require_full_coverage, when a changed code file has no claim; without it that last case is a returned warning. run_check calls it with the changed files directly after loading the claims file"
+    confidence: 0.92
+    criteria: [1, 2, 3]
+    files: ["src/claimcheck/claims.py", "src/claimcheck/checker.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_code_changed_with_no_claims_exits_4_before_the_checker, test_a_claim_about_a_file_the_diff_does_not_change_exits_4_even_beside_a_good_claim, test_an_uncovered_code_file_exits_4_with_full_coverage_and_only_warns_without_it and test_a_refusal_wins_over_a_refuted_verdict_and_the_checker_never_runs"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py (15 passed)"
-      - "obs: the three temp-variable tests fail without the inside-a-repo check; the first claimcheck run refuted the version without it"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py (25 passed)"
 
   - id: c2
-    claim: "Two calls get two different folders"
-    confidence: 0.95
-    criteria: [2]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_two_calls_never_share_a_folder"
+    claim: "The pre-commit hook no longer has its own coverage loop; it passes the staged paths to claims.check_coverage, the same function run_check uses, so both give the same refusal text"
+    confidence: 0.93
+    criteria: [4]
+    files: ["src/claimcheck/hook.py", "src/claimcheck/claims.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_the_hook_and_check_give_the_same_refusal_through_one_function"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py tests/test_hook.py"
 
   - id: c3
-    claim: "The folder is removed when the call ends: after a reply, a non-zero exit, a timeout, and an unexpected exception. On Windows a removal error is ignored rather than hiding the real result, so a folder could be left behind there"
-    confidence: 0.85
-    criteria: [3, 4]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: test_the_folder_is_gone_after_a_call_that_worked, test_the_folder_is_gone_after_a_failure_or_a_timeout and test_the_folder_is_gone_when_starting_claude_raises_something_unexpected"
+    claim: "filter_diff now lists in files_truncated each file cut by the per-file cap and every file dropped by the total cap. mark_unseen turns a SUPPORTED verdict into UNVERIFIABLE when its claim lists a file in files_omitted or files_truncated, naming those files; REFUTED is left alone and an UNVERIFIABLE reason gets the files appended"
+    confidence: 0.9
+    criteria: [6, 7]
+    files: ["src/claimcheck/redact.py", "src/claimcheck/checker.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_a_claim_about_a_withheld_or_cut_file_cannot_come_back_supported and test_refuted_stays_refuted_and_unverifiable_gains_the_unseen_files"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c4
-    claim: "TEMP no longer decides on its own where claude runs: config.read_temp_dir and TEMP_ENV are removed, and TEMP unset no longer means the repo. The temp variables (TMPDIR, TEMP, TMP) still choose where Python makes the folder, so a sandbox can move it. If any of them points inside a repo, the call fails instead of running there"
+    claim: "Config gains checker_fail_on_unverifiable, read from [checker] fail_on_unverifiable as true or false, and true when the key is absent"
     confidence: 0.95
-    criteria: [1, 5, 6]
-    files: ["src/claimcheck/providers/claude_cli.py", "src/claimcheck/config.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_with_temp_unset_the_checker_still_runs_outside_the_repo and test_a_temp_variable_pointing_into_the_repo_stops_the_call_before_claude_starts[TMPDIR, TEMP, TMP]"
+    criteria: [8]
+    files: ["src/claimcheck/config.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_fail_on_unverifiable_is_on_when_the_config_does_not_say"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py"
-      - "cmd: grep -rn read_temp_dir src tests finds nothing"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c5
-    claim: "If the empty folder cannot be made, the call raises ProviderError 'could not make an empty folder for the claude CLI to run in: <reason>' and claude is never started. There is no fallback folder"
-    confidence: 0.95
-    criteria: [6]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_no_empty_folder_means_an_error_and_claude_never_starts"
+    claim: "decide_exit_code returns 2 when any verdict is REFUTED, else 9 when fail_on_unverifiable is on and an UNVERIFIABLE claim has no matching acceptance, else 0; with the setting off each such claim becomes a warning. run's pick_exit_code returns 2 whenever check or mutate returned 2, else the larger code, so 2 beats 9 and 9 beats 0"
+    confidence: 0.92
+    criteria: [9, 10, 11]
+    files: ["src/claimcheck/checker.py", "src/claimcheck/run.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_one_open_unverifiable_exits_9, test_refuted_and_a_low_catch_rate_beat_9_and_9_beats_0 and test_with_fail_on_unverifiable_off_an_open_unverifiable_only_warns"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c6
-    claim: "The claude command line carries --safe-mode and `--tools \"\"`, and no longer carries --disallowedTools"
-    confidence: 0.97
-    criteria: [7, 8]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_claude_runs_with_safe_mode_and_every_tool_off and tests/test_init_onboarding.py::test_provider_sends_the_prompt_on_stdin_with_tools_off"
+    claim: "`claimcheck accept ID --note TEXT` raises ClaimsError (exit 4) for a blank note or an id not in claims.yaml before writing anything; otherwise it appends one `accept` ledger line through append_atomic with claim_id, claim_hash, files_hash, the stripped note, the time and git's user.name, or 'unknown' when none is set. It does not look at any verdict"
+    confidence: 0.92
+    criteria: [12, 13, 14]
+    files: ["src/claimcheck/accept.py", "src/claimcheck/cli.py", "src/claimcheck/ledger.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_accept_refuses_an_empty_note_or_an_unknown_claim_and_writes_nothing, test_accept_works_before_any_run_and_records_unknown_without_a_git_name, test_accept_outside_a_git_repo_gives_the_usual_error and test_accept_appends_one_chained_line_with_both_hashes_the_note_and_the_name"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py tests/test_init_onboarding.py"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c7
-    claim: "A repo's CLAUDE.md, CLAUDE.local.md and .claude/settings.json hooks no longer reach the checker. Shown with the real Claude Code 2.1.311; a later CLI could change what --safe-mode covers"
-    confidence: 0.85
-    criteria: [9]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "obs: from a repo whose SessionStart hook touches a marker, run the provider with the real claude and ANTHROPIC_BASE_URL=http://127.0.0.1:9; the marker appears with the old code and does not appear with the new code"
+    claim: "find_accepted counts an acceptance line only when its claim_hash matches the hash of the claim's text, kill_condition and files, and its files_hash matches those files as they are on disk now (a missing file hashes as 'absent'). Neither hash uses the base, HEAD or any other file, so editing the claim or a listed file voids it while other changes do not"
+    confidence: 0.88
+    criteria: [15, 16]
+    files: ["src/claimcheck/accept.py", "src/claimcheck/checker.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_an_acceptance_holds_until_the_claim_or_its_files_change and test_an_acceptance_does_not_depend_on_the_base_or_other_files"
     verified_by:
-      - "obs: ran exactly that probe on 2026-10-28; old code ran the hook, new code did not"
-      - "cmd: test_each_call_starts_in_a_new_empty_folder_outside_the_repo shows the folder held no files"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c8
-    claim: "When claude's error output says 'unknown option', the ProviderError says this Claude Code is too old and to update it"
+    claim: "run_check's result gains an `accepted` map from each UNVERIFIABLE claim with a matching acceptance to that acceptance line's hash. _write_check_notes prints one stderr line per entry in that map, with no condition on fail_on_unverifiable. build_claim_record takes an `accepted` argument, default None, and writes it as the line's `accepted` field, and run_all passes check_result['accepted'].get(claim id) into it"
     confidence: 0.9
-    criteria: [10]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: tests/test_claude_cli_folder.py::test_an_older_claude_that_rejects_a_flag_is_told_to_update"
+    criteria: [17]
+    files: ["src/claimcheck/checker.py", "src/claimcheck/cli.py", "src/claimcheck/run.py", "src/claimcheck/ledger.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_the_output_and_the_ledger_name_the_claims_that_passed_by_acceptance"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_claude_cli_folder.py"
-      - "obs: claude 2.1.311 prints \"error: unknown option '--bogus-flag'\" for a flag it does not know"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
 
   - id: c9
-    claim: "A claude that cannot start still raises 'claude CLI could not be started', and the stdin prompt, redaction, --json-schema, the timeout message and the sign-in message are unchanged"
-    confidence: 0.92
-    criteria: [11, 12]
-    files: ["src/claimcheck/providers/claude_cli.py"]
-    kill_condition: "test: test_a_claude_that_cannot_start_keeps_the_existing_error, tests/test_redact.py::test_the_claude_cli_provider_scrubs_what_it_is_handed and tests/test_init_onboarding.py::test_provider_sends_the_prompt_on_stdin_with_tools_off"
+    claim: "The agent instructions init writes now say to report UNVERIFIABLE claims and that only a person runs `claimcheck accept`"
+    confidence: 0.96
+    criteria: [18]
+    files: ["src/claimcheck/agentdocs.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_init_tells_agents_that_only_a_person_runs_accept"
     verified_by:
-      - "cmd: python -m pytest -q (447 passed, 1 skipped)"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py tests/test_agents_md.py"
 
   - id: c10
-    claim: "The API, openai and stub providers and Desk's app/src/lib/claude-cli.ts are untouched; the only code files changed are claude_cli.py and config.py"
-    confidence: 0.98
-    criteria: [13]
-    files: ["src/claimcheck/providers/claude_cli.py", "src/claimcheck/config.py"]
-    kill_condition: "cmd: git diff --stat main...HEAD lists no other file under src/ or app/"
+    claim: "The config init writes includes `fail_on_unverifiable = true` with a comment explaining exit 9 and accept; README documents the rules, exit 9 and accept, and examples/config.toml has the key"
+    confidence: 0.93
+    criteria: [19]
+    files: ["src/claimcheck/detect.py"]
+    kill_condition: "test: tests/test_ci_referee.py::test_the_docs_and_the_written_config_cover_fail_on_unverifiable_exit_9_and_accept"
     verified_by:
-      - "cmd: git diff --stat main"
+      - "cmd: python -m pytest -q tests/test_ci_referee.py"
