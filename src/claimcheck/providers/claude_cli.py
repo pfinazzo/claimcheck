@@ -118,14 +118,24 @@ def make_claude_cli_provider(*, model: str | None = None, binary: str | None = N
     return make_provider("claude-cli", complete=answer_request, model=model)
 
 
+def _find_enclosing_repo(folder: Path) -> Path | None:
+    """The nearest folder above `folder` that holds a .git entry, or None when it is in no repo."""
+    return next((parent for parent in folder.resolve().parents if (parent / ".git").exists()), None)
+
+
 @contextlib.contextmanager
 def _make_empty_folder() -> Iterator[str]:
     """A new empty folder for one `claude -p` call, removed when the call ends, however it ends.
 
-    Claude Code reads CLAUDE.md files and runs hooks from the folder it starts in. Started in the
-    repo, it would read text the AI author controls, so the checker would no longer be blind.
-    Raises ProviderError when the folder cannot be made. There is no fallback folder: the repo
-    would undo the point, and a shared folder could hold anything.
+    Claude Code reads CLAUDE.md files and runs hooks from the folder it starts in, and from the
+    repo around it. Started in the repo, it would read text the AI author controls, so the checker
+    would no longer be blind.
+
+    The folder goes where Python puts temporary files: TMPDIR, TEMP or TMP, else the system's.
+    If those point inside a git repo, the folder would be inside it too, so the call fails instead.
+
+    Raises ProviderError when the folder cannot be made or lands inside a repo. There is no
+    fallback folder: the repo would undo the point, and a shared folder could hold anything.
     """
     try:
         # ignore_cleanup_errors: on Windows a just-killed child can hold the folder for a moment.
@@ -133,6 +143,12 @@ def _make_empty_folder() -> Iterator[str]:
     except OSError as error:
         raise ProviderError(f"could not make an empty folder for the claude CLI to run in: {error}") from error
     with holder as folder:
+        repo = _find_enclosing_repo(Path(folder))
+        if repo is not None:
+            raise ProviderError(
+                f"the empty folder for the claude CLI landed inside the git repo at {repo}, where Claude Code "
+                "could read the repo's files. Point TMPDIR (TEMP on Windows) at a folder outside any repo."
+            )
         yield folder
 
 
