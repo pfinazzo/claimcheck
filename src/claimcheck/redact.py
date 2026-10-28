@@ -186,12 +186,15 @@ _HEADER = re.compile(r"^diff --git a/(.+?) b/(.+)$")
 
 
 # What was held back, for the person to see. Never contains the withheld content itself.
-Sent = TypedDict("Sent", {"files_omitted": list[str], "redactions": int, "kinds": dict[str, int], "truncated": bool})
+# `files_truncated` names each file the checker saw only part of, or none of, because of the size caps.
+Sent = TypedDict(
+    "Sent", {"files_omitted": list[str], "files_truncated": list[str], "redactions": int, "kinds": dict[str, int], "truncated": bool}
+)
 
 
 def make_sent() -> Sent:
     """An empty Sent: nothing withheld yet."""
-    return {"files_omitted": [], "redactions": 0, "kinds": {}, "truncated": False}
+    return {"files_omitted": [], "files_truncated": [], "redactions": 0, "kinds": {}, "truncated": False}
 
 
 def filter_diff(diff: str) -> tuple[str, Sent]:
@@ -208,7 +211,7 @@ def filter_diff(diff: str) -> tuple[str, Sent]:
             sections.append((None, [line]))
     kept_lines: list[str] = []
     total = 0
-    for path, lines in sections:
+    for index, (path, lines) in enumerate(sections):
         if path is not None and is_secret_path(path):
             sent["files_omitted"].append(path)
             kept_lines.append(f"diff --git a/{path} b/{path}\n[withheld: {path} looks like a secret store, so its contents are not sent]")
@@ -220,9 +223,12 @@ def filter_diff(diff: str) -> tuple[str, Sent]:
         if len(body) > PER_FILE_CHARS:
             body = body[:PER_FILE_CHARS] + f"\n[truncated: this file's diff is longer than {PER_FILE_CHARS} characters]"
             sent["truncated"] = True
+            sent["files_truncated"] += [path] if path is not None else []
         if total + len(body) > TOTAL_CHARS:
             kept_lines.append(f"[truncated: the rest of the diff is longer than {TOTAL_CHARS} characters in total]")
             sent["truncated"] = True
+            # This file and every one after it were never sent.
+            sent["files_truncated"].extend(rest for rest, _lines in sections[index:] if rest is not None and rest not in sent["files_truncated"])
             break
         total += len(body)
         kept_lines.append(body)

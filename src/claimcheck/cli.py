@@ -1,7 +1,8 @@
-"""argparse CLI: init, spec, claims, check, mutate, run, hook.
+"""argparse CLI: init, spec, claims, check, mutate, run, accept, hook.
 
 Exit codes: 0 ok, 2 verdict/threshold failure, 3 spec refusal, 4 claims/hook failure,
-5 provider or baseline-test failure, 6 stale mutate sentinel.
+5 provider or baseline-test failure, 6 stale mutate sentinel, 9 a claim needs a person
+(UNVERIFIABLE and not accepted).
 
 @author Patrick Finazzo
 """
@@ -16,6 +17,7 @@ from pathlib import Path
 from . import (
     ClaimcheckError,
     __version__,
+    accept,
     checker,
     claims,
     config,
@@ -226,6 +228,14 @@ def handle_claims_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write_check_notes(report: dict) -> None:
+    """Tell the person, on stderr, about warnings and about claims that passed only by a person's acceptance."""
+    for warning in report["warnings"]:
+        _write_err(f"warning: {warning}")
+    for claim_id in report["accepted"]:
+        _write_err(f"claim {claim_id} is UNVERIFIABLE but passes: a person accepted it (`claimcheck accept`)")
+
+
 def handle_check(args: argparse.Namespace) -> int:
     """`claimcheck check`: the blind check of each claim against the diff."""
     repo = config.find_repo_root()
@@ -234,6 +244,7 @@ def handle_check(args: argparse.Namespace) -> int:
         worktree=args.worktree,
     )
     _write_out(report)
+    _write_check_notes(report)
     return code
 
 
@@ -264,7 +275,17 @@ def handle_run(args: argparse.Namespace) -> int:
         model=args.model, test_cmd=args.test_cmd, max_mutants=args.max_mutants, seed=args.seed,
     )
     _write_out(report)
+    _write_check_notes(report["check"])
     return code
+
+
+def handle_accept(args: argparse.Namespace) -> int:
+    """`claimcheck accept`: a person lets through a claim the checker could not settle, with a note saying why."""
+    repo = config.find_repo_root()
+    record = accept.accept_claim(repo, claim_id=args.claim_id, note=args.note)
+    _write_err(f"accepted claim {record['claim_id']}; it passes while the claim and its files stay as they are now")
+    _write_out(record)
+    return 0
 
 
 def handle_verify_ledger(args: argparse.Namespace) -> int:
@@ -367,6 +388,11 @@ def build_parser() -> argparse.ArgumentParser:
     command_parser.add_argument("--max-mutants", dest="max_mutants", type=int, default=None)
     command_parser.add_argument("--seed", type=int, default=0)
     command_parser.set_defaults(func=handle_run)
+
+    command_parser = sub.add_parser("accept", help="for a person: let through a claim the checker could not settle")
+    command_parser.add_argument("claim_id", help="the claim's id in claims.yaml")
+    command_parser.add_argument("--note", required=True, help="how you checked the claim, since the diff cannot show it")
+    command_parser.set_defaults(func=handle_accept)
 
     command_parser = sub.add_parser("verify-ledger", help="fail if a ledger line was removed, edited, moved or inserted")
     command_parser.add_argument("--base", default=None, help="also require the ledger at this git ref to be an unchanged beginning of the current one")

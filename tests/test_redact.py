@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import gitio, initflow, providers, redact, specdraft
+from claimcheck import checker, gitio, initflow, providers, redact, specdraft
 from claimcheck.providers import claude_cli
 from fakes import make_capturing_provider
 
@@ -99,11 +99,17 @@ def test_the_checker_never_receives_secrets_from_the_diff(calc_repo, *, monkeypa
     calc_repo.write(".env", text="SECRET=topsecretvalue1234\n")
     # Init now ignores .env; this is the accidental commit.
     calc_repo.git("add", "-f", ".env")
-    calc_repo.write(".claimcheck/claims.yaml", text=calc_repo.read(".claimcheck/claims.yaml"))
+    # Every changed code file needs a claim now, in the run as in the commit hook.
+    config_claim = (
+        '  - id: c3\n    claim: "the config holds the API settings"\n    confidence: 0.5\n    criteria: [1]\n'
+        '    files: ["src/config.py", ".env"]\n    kill_condition: "obs: the app starts"\n    verified_by: ["obs: ran it"]\n'
+    )
+    calc_repo.write(".claimcheck/claims.yaml", text=calc_repo.read(".claimcheck/claims.yaml") + config_claim)
     calc_repo.commit("add config and an accidentally committed .env", date="2020-01-06T00:00:00+00:00")
     cap, prompts = make_capturing_provider()
     monkeypatch.setattr(providers, "load", lambda name, model=None: cap)
-    assert calc_repo.cli("check", "--provider", "stub") == 0
+    # The capturing provider answers UNVERIFIABLE, which needs a person: exit 9.
+    assert calc_repo.cli("check", "--provider", "stub") == checker.EXIT_NEEDS_A_PERSON
     for needle in (RAND, "Tr0ub4dor3xKcdZ9", "topsecretvalue1234"):
         assert needle not in prompts[-1], needle
     assert "withheld: .env" in prompts[-1] and "[REDACTED:" in prompts[-1]

@@ -93,20 +93,12 @@ def run_pre_commit(repo: Path, *, settings: config.Config) -> int:
         lock_ids = None
     claims_file = claims.load_and_validate(text, lock_ids=lock_ids)
 
-    staged_set = set(code_paths)
-    problems: list[str] = []
-    for claim in claims_file["claims"]:
-        extra = [file_path for file_path in claim["files"] if file_path not in staged_set]
-        if extra:
-            problems.append(f"claim {claim['id']}: files not in the staged diff: {extra}")
-    if problems:
-        raise ClaimsError("\n  ".join(["claims do not match the staged diff:"] + problems))
-
-    covered = {file for claim in claims_file["claims"] for file in claim["files"]}
-    uncovered = [code_path for code_path in code_paths if code_path not in covered]
-    if uncovered:
-        msg = "staged paths with no claim covering them: " + ", ".join(uncovered)
-        if settings["require_full_coverage"]:
-            raise ClaimsError(msg)
-        print(f"claimcheck warning: {msg}", file=sys.stderr)
+    warnings = claims.check_coverage(
+        claims_file,
+        changed_paths=[staged_path for _status, staged_path in staged],
+        ignore=settings["ignore"],
+        require_full_coverage=settings["require_full_coverage"],
+    )
+    for warning in warnings:
+        print(f"claimcheck warning: {warning}", file=sys.stderr)
     return 0

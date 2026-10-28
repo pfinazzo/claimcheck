@@ -39,8 +39,9 @@ With every commit that changes code:
 5. List every changed code file in some claim's `files`, and cite criteria by number.
 
 Before finishing:
-6. Run `claimcheck run`. Report any claim that is REFUTED or has a low catch rate. Fix the tests
-   or narrow the claim. Never edit the checker, the ledger or the config to make a run pass.
+6. Run `claimcheck run`. Report any claim that is REFUTED, UNVERIFIABLE or has a low catch rate.
+   Fix the tests or narrow the claim. Never edit the checker, the ledger or the config to make a
+   run pass. Only a person runs `claimcheck accept`; never run it yourself.
 """
 
 

@@ -9,10 +9,14 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import ProviderError, claims, config, gitio, providers, redact, spec
+from . import ProviderError, accept, claims, config, gitio, providers, redact, spec
 from .spec import Criterion
 
 VERDICTS = ("SUPPORTED", "REFUTED", "UNVERIFIABLE")
+
+# Exit codes for the verdicts. REFUTED beats an open UNVERIFIABLE, which beats a pass.
+EXIT_REFUTED = 2
+EXIT_NEEDS_A_PERSON = 9
 
 VERDICT_SCHEMA: dict = {
     "type": "object",
@@ -186,6 +190,40 @@ def ask(provider: providers.Provider, *, system: str, user: str, claim_ids: list
     ]
 
 
+def _mark_one_unseen(verdict: dict, *, unseen: list[str]) -> dict:
+    """One verdict, downgraded when the checker never fully saw a file its claim lists."""
+    if not unseen or verdict["verdict"] == "REFUTED":
+        return verdict
+    note = f"the checker never saw all of {', '.join(unseen)}: withheld as a secret or cut for size"
+    return {**verdict, "verdict": "UNVERIFIABLE", "reason": f"{verdict['reason']} ({note})" if verdict["reason"] else note}
+
+
+def mark_unseen(verdicts: list[dict], *, claims_file: claims.ClaimsFile, unseen: list[str]) -> list[dict]:
+    """Verdicts where a claim listing a file the checker did not fully see can no longer be SUPPORTED.
+
+    The checker can only vouch for what it read. If the secret filter withheld a file, or the size
+    cap cut it, a SUPPORTED verdict for a claim about that file would be a guess. Such a verdict
+    becomes UNVERIFIABLE and names the files. REFUTED stays REFUTED.
+    """
+    unseen_set = set(unseen)
+    files_by_id = {claim["id"]: claim["files"] for claim in claims_file["claims"]}
+    return [_mark_one_unseen(verdict, unseen=[path for path in files_by_id.get(verdict["id"], []) if path in unseen_set]) for verdict in verdicts]
+
+
+def list_open_unverifiable(verdicts: list[dict], *, accepted: dict[str, str]) -> list[str]:
+    """Ids of UNVERIFIABLE claims that no matching acceptance lets through."""
+    return [verdict["id"] for verdict in verdicts if verdict["verdict"] == "UNVERIFIABLE" and verdict["id"] not in accepted]
+
+
+def decide_exit_code(verdicts: list[dict], *, accepted: dict[str, str], fail_on_unverifiable: bool) -> int:
+    """2 when any claim is REFUTED; else 9 when an UNVERIFIABLE is not accepted and that should fail; else 0."""
+    if any(verdict["verdict"] == "REFUTED" for verdict in verdicts):
+        return EXIT_REFUTED
+    if fail_on_unverifiable and list_open_unverifiable(verdicts, accepted=accepted):
+        return EXIT_NEEDS_A_PERSON
+    return 0
+
+
 def run_check(
     repo: Path,
     *, settings: config.Config,
@@ -210,6 +248,13 @@ def run_check(
     lock = spec.read_lock(repo)
     if claims_file is None:
         claims_file = claims.load_file(claims.resolve_claims_path(repo), lock_ids=spec.list_lock_ids(lock))
+    # The commit hook's rules, applied again here: a commit made with --no-verify skipped them.
+    warnings = claims.check_coverage(
+        claims_file,
+        changed_paths=gitio.list_changed_files(repo, base=base, worktree=worktree),
+        ignore=settings["ignore"],
+        require_full_coverage=settings["require_full_coverage"],
+    )
 
     # Whatever leaves this process is filtered first: secret files withheld, secret-looking values
     # redacted, size capped. What was held back is recorded in the result (never its content).
@@ -226,6 +271,18 @@ def run_check(
     except Exception as error:
         raise ProviderError(f"{type(error).__name__}: {error}") from error
 
+    verdicts = mark_unseen(verdicts, claims_file=claims_file, unseen=[*sent["files_omitted"], *sent["files_truncated"]])
+    # Acceptances only matter for a claim the checker could not settle.
+    accepted_any = accept.find_accepted(repo, claims_file=claims_file)
+    accepted = {verdict["id"]: accepted_any[verdict["id"]] for verdict in verdicts if verdict["verdict"] == "UNVERIFIABLE" and verdict["id"] in accepted_any}
+    fail_on_unverifiable = settings["checker_fail_on_unverifiable"]
+    code = decide_exit_code(verdicts, accepted=accepted, fail_on_unverifiable=fail_on_unverifiable)
+    if not fail_on_unverifiable:
+        warnings += [
+            f"claim {claim_id} is UNVERIFIABLE and not accepted; fail_on_unverifiable is off, so this is only a warning"
+            for claim_id in list_open_unverifiable(verdicts, accepted=accepted)
+        ]
+
     outcome = {
         "run_id": config.make_run_id(),
         "ts": config.format_utc_now(),
@@ -235,10 +292,11 @@ def run_check(
         "provider": provider_name,
         "model": None if provider_name == "stub" else model,
         "verdicts": verdicts,
+        "accepted": accepted,
+        "warnings": warnings,
         "sent": dict(sent),
     }
     runs = config.resolve_cc_dir(repo) / config.RUNS_DIR
     runs.mkdir(parents=True, exist_ok=True)
     (runs / f"{outcome['run_id']}-check.json").write_text(json.dumps(outcome, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    code = 2 if any(each_verdict["verdict"] == "REFUTED" for each_verdict in verdicts) else 0
     return outcome, code

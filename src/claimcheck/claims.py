@@ -185,3 +185,35 @@ def redact(cf: ClaimsFile) -> list[dict]:
 def redact_claims(claims: Sequence[Mapping[str, Any]]) -> list[dict]:
     """Each claim cut down to CHECKER_KEYS, lists copied so the checker never shares the originals."""
     return [{key: list(claim[key]) if isinstance(claim[key], list) else claim[key] for key in CHECKER_KEYS if key in claim} for claim in claims]
+
+
+def check_coverage(claims_file: ClaimsFile, *, changed_paths: Sequence[str], ignore: list[str], require_full_coverage: bool) -> list[str]:
+    """Hold the claims up against the diff under test. Raises ClaimsError on a refusal; returns warnings.
+
+    The commit hook and `run` / `check` both call this, so the rules cannot drift apart:
+    - A claim may list only files the diff changes.
+    - A diff that changes code (paths not in `ignore`) needs at least one claim.
+    - Every changed code file needs a claim that lists it. With `require_full_coverage` off,
+      a file no claim lists is a warning instead.
+    Deletions count as changes. Without these rules an author could skip claims entirely,
+    or cover a change with a claim about some other file.
+    """
+    changed = {path.replace("\\", "/") for path in changed_paths}
+    code_paths = sorted(path for path in changed if not config.is_ignored(path, globs=ignore))
+    outside = [
+        f"claim {claim['id']}: files not in the diff under test: {[path for path in claim['files'] if path not in changed]}"
+        for claim in claims_file["claims"]
+        if any(path not in changed for path in claim["files"])
+    ]
+    if outside:
+        raise ClaimsError("\n  ".join(["claims do not match the diff under test:", *outside]))
+    if code_paths and not claims_file["claims"]:
+        raise ClaimsError(f"the diff changes code ({', '.join(code_paths)}) but claims.yaml has no claims")
+    covered = {path for claim in claims_file["claims"] for path in claim["files"]}
+    uncovered = [path for path in code_paths if path not in covered]
+    if not uncovered:
+        return []
+    message = "changed code files with no claim covering them: " + ", ".join(uncovered)
+    if require_full_coverage:
+        raise ClaimsError(message)
+    return [message]

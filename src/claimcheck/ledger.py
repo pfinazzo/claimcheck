@@ -22,7 +22,9 @@ CLAIM_KEYS = frozenset(
     }
 )
 OUTCOME_KEYS = frozenset({"v", "type", "ts", "run_id", "claim_id", "outcome", "outcome_source"})
-TYPES = ("claim", "outcome")
+ACCEPT_KEYS = frozenset({"v", "type", "ts", "claim_id", "claim_hash", "files_hash", "note", "accepted_by"})
+TYPES = ("claim", "outcome", "accept")
+_REQUIRED_KEYS = {"claim": CLAIM_KEYS, "outcome": OUTCOME_KEYS, "accept": ACCEPT_KEYS}
 
 
 def resolve_ledger_path(repo: Path) -> Path:
@@ -41,7 +43,7 @@ def validate_line(line: str) -> dict:
     term = parsed.get("type")
     if term not in TYPES:
         raise ClaimcheckError(f"ledger line type must be one of {TYPES} (got {term!r})")
-    required = CLAIM_KEYS if term == "claim" else OUTCOME_KEYS
+    required = _REQUIRED_KEYS[term]
     missing = sorted(required - parsed.keys())
     if missing:
         raise ClaimcheckError(f"ledger {term} line missing keys: {missing}")
@@ -65,8 +67,12 @@ def build_claim_record(
     kill_condition: str,
     checker: dict,
     mutation: dict,
+    accepted: str | None = None,
 ) -> dict:
-    """One ledger line for a claim's verdict and catch rate in a run."""
+    """One ledger line for a claim's verdict and catch rate in a run.
+
+    `accepted` is the hash of the acceptance line that let an UNVERIFIABLE verdict pass, else None.
+    """
     return {
         "v": 1,
         "type": "claim",
@@ -85,9 +91,28 @@ def build_claim_record(
         "kill_condition": kill_condition,
         "checker": checker,
         "mutation": mutation,
+        "accepted": accepted,
         "outcome": None,
         "outcome_source": None,
         "outcome_ts": None,
+    }
+
+
+def build_accept_record(*, timestamp: str, claim_id: str, claim_hash: str, files_hash: str, note: str, accepted_by: str) -> dict:
+    """One ledger line saying a person accepted a claim the checker could not settle.
+
+    The two hashes tie the acceptance to the claim and its files exactly as they were, so any later
+    edit to either one voids it.
+    """
+    return {
+        "v": 1,
+        "type": "accept",
+        "ts": timestamp,
+        "claim_id": claim_id,
+        "claim_hash": claim_hash,
+        "files_hash": files_hash,
+        "note": note,
+        "accepted_by": accepted_by,
     }
 
 

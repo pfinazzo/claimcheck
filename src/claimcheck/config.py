@@ -106,6 +106,7 @@ Config = TypedDict(
         "require_full_coverage": bool,
         "checker_provider": str,
         "checker_model": str,
+        "checker_fail_on_unverifiable": bool,
         "mutate_max_mutants": int,
         "mutate_timeout_s": int,
         "mutate_min_catch_rate": float,
@@ -121,6 +122,7 @@ def make_config(
     require_full_coverage: bool = True,
     checker_provider: str = "claude",
     checker_model: str = "claude-opus-5-5",
+    checker_fail_on_unverifiable: bool = True,
     mutate_max_mutants: int = 50,
     mutate_timeout_s: int = 600,
     mutate_min_catch_rate: float = 0.0,
@@ -133,6 +135,7 @@ def make_config(
         "require_full_coverage": require_full_coverage,
         "checker_provider": checker_provider,
         "checker_model": checker_model,
+        "checker_fail_on_unverifiable": checker_fail_on_unverifiable,
         "mutate_max_mutants": mutate_max_mutants,
         "mutate_timeout_s": mutate_timeout_s,
         "mutate_min_catch_rate": mutate_min_catch_rate,
@@ -190,6 +193,9 @@ def load(repo: Path) -> Config:
     checker = raw.get("checker", {})
     cfg["checker_provider"] = _read_typed(checker, key="provider", kind=str, where="checker.", default=cfg["checker_provider"])
     cfg["checker_model"] = _read_typed(checker, key="model", kind=str, where="checker.", default=cfg["checker_model"])
+    cfg["checker_fail_on_unverifiable"] = _read_typed(
+        checker, key="fail_on_unverifiable", kind=bool, where="checker.", default=cfg["checker_fail_on_unverifiable"]
+    )
     mutate = raw.get("mutate", {})
     cfg["mutate_max_mutants"] = _read_typed(mutate, key="max_mutants", kind=int, where="mutate.", default=cfg["mutate_max_mutants"])
     cfg["mutate_timeout_s"] = _read_typed(mutate, key="timeout_s", kind=int, where="mutate.", default=cfg["mutate_timeout_s"])

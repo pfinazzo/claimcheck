@@ -60,6 +60,25 @@ flowchart LR
   H --> B
 ```
 
+## What it caught in its first five days
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/caught-bugs-dark.png">
+  <img alt="Two bugs in claimcheck's own code. Every test passed and the agent was 93 and 95 percent sure. claimcheck refuted both claims, and each fix passed a claimcheck rerun 3 and 9 minutes later." src="docs/screenshots/caught-bugs-light.png">
+</picture>
+
+From Oct 24 to 28, 2026, AI agents wrote claimcheck's own code, and claimcheck checked their changes. Every number here comes from this repo's [ledger](.claimcheck/ledger.jsonl), so you can check them yourself.
+
+- **4 claims refuted, in 137 checks of 92 distinct claims.** A run after a fix checks the same claims again, so checks outnumber claims.
+- **3 of those claims pointed at 2 code bugs.** Every test passed on both. The ledger shows this, because claimcheck only plants bugs once the whole suite passes.
+- **Both fixes passed a claimcheck rerun,** 9 and 3 minutes after the catch.
+- **The fourth claim said more than the code did.** It said unknown HTML tags were dropped. They stay as plain text, which is safe, so the claim was corrected.
+- **No false alarms.** The fix or the corrected claim that followed confirmed all 4.
+- **The agent's confidence carried no signal.** It said 80% to 95% on 90% of its claims, and on all 4 false ones.
+- **18% of checks went to a person.** The diff alone could not settle those claims, often because they depend on running the code. claimcheck holds the run until a person accepts or narrows each one.
+
+[A real catch](#a-real-catch) walks through the empty-diff bug, ledger line included.
+
 ## Use it in your own repo
 
 Six steps take a project from nothing to a checked change. Each links to the detail further down.
@@ -102,7 +121,7 @@ Six steps take a project from nothing to a checked change. Each links to the det
    claimcheck verify-ledger
    ```
 
-   `run` checks each claim with the blind checker, plants bugs in the added lines and reruns your tests. `verify-ledger` is optional. It fails if a ledger line was removed or edited. To try the planted-bug half without Claude, use `claimcheck run --provider stub`: every claim then comes back UNVERIFIABLE.
+   `run` checks each claim with the blind checker, plants bugs in the added lines and reruns your tests. `verify-ledger` is optional. It fails if a ledger line was removed or edited. To try the planted-bug half without Claude, use `claimcheck run --provider stub`. Every claim then comes back UNVERIFIABLE, so the run exits 9. See [When the checker can't tell](#when-the-checker-cant-tell).
 
 6. **Optional: run it in CI.**
 
@@ -199,6 +218,7 @@ Each run writes one JSON line per claim. This is the second run, trimmed:
 ## Contents
 
 - [The problem it solves](#the-problem-it-solves)
+- [What it caught in its first five days](#what-it-caught-in-its-first-five-days)
 - [Use it in your own repo](#use-it-in-your-own-repo)
 - [A real catch](#a-real-catch)
 - [Example: the weak-test catch](#example-the-weak-test-catch)
@@ -450,7 +470,7 @@ After setup, a task looks like this.
 1. **Spec.** `claimcheck spec draft` (or edit `spec.md` and run `claimcheck spec freeze`). The spec and lock are committed first, alone, on a task branch.
 2. **Build.** Your coding agent works on the branch. It reads the claimcheck rules from `CLAUDE.md` or `AGENTS.md`. Each commit that changes code includes an updated `.claimcheck/claims.yaml`, and the commit hook refuses one that does not.
 3. **Check.** `claimcheck run` verifies the lock, asks the blind checker about each claim, plants bugs and reruns your tests, then appends one ledger line per claim. It prints one JSON document and saves it under `.claimcheck/runs/`.
-4. **Decide.** Look at the board (below), fix what is weak, accept a risk with a reason, or narrow a claim.
+4. **Decide.** Look at the board (below), fix what is weak, accept a risk with a reason, or narrow a claim. A claim the checker can't settle fails the run until you narrow it or accept it with `claimcheck accept`.
 5. **Merge.** Commit `ledger.jsonl` with the merge so the history travels with the code.
 
 ## Using it on a team
@@ -476,6 +496,33 @@ min_catch_rate = 0.7     # exit code 2 if fewer than 70% of planted bugs are cau
 ```
 
 A sensible rollout: report only for the first couple of weeks, then set a floor a little under your median, then raise it as your tests improve. A REFUTED verdict already fails a run with exit code 2.
+
+**Claims must match the diff, in CI too.** `run` and `check` apply the commit hook's rules again before asking the checker. A commit made with `git commit --no-verify` skipped the hook, so CI refuses it here (exit 4):
+
+- A diff that changes code needs at least one claim.
+- A claim may list only files the diff changes.
+- Every changed code file needs a claim that lists it. With `require_full_coverage = false` this is a warning instead.
+
+**A claim about a file the checker never saw can't pass.** If the secret filter withheld a file, or the size cap cut it, a claim that lists that file comes back UNVERIFIABLE, naming the file. A SUPPORTED verdict for it would be a guess.
+
+### When the checker can't tell
+
+UNVERIFIABLE means the diff alone can't settle the claim. Usually the claim is about runtime behavior, or about a file the checker never saw. By default this fails the run with exit code 9, "a claim needs a person". Without that, an author could steer the checker toward "can't tell" and still pass.
+
+There are two ways forward:
+
+1. **Narrow the claim** to something the diff shows, and move the rest into a test.
+2. **Accept it**, if you checked it another way. Only a person does this, never the coding agent:
+
+   ```bash
+   claimcheck accept c3 --note "ran the export against staging; no photos left"
+   ```
+
+   This appends one line to the ledger with the note, the time and git's `user.name`. The run then passes that claim and says so. The acceptance holds only while the claim's text and its files stay exactly as they are. Any later edit to either, committed or not, voids it and the run fails again.
+
+   Nothing in code can stop an agent from running `accept` itself. The agent instructions `init` writes forbid it, and every acceptance is in the ledger for a reviewer to see.
+
+To turn exit 9 off, set `fail_on_unverifiable = false` under `[checker]`. UNVERIFIABLE is then a warning, as it was before.
 
 **Keep tests out of the mutation pool.** `init` puts your test folders on the `ignore` list for you, so planted bugs go into product code only. If you write the config by hand, add your test paths to `ignore`.
 
@@ -634,7 +681,7 @@ claims:
       - "cmd: python -m pytest -q"
 ```
 
-The validator rejects an `id` that is not lowercase letters, digits, `-` or `_`, empty text, a confidence outside 0 to 1, a bad `kill_condition`, an empty `verified_by` or `files`, fields of the wrong type, and criteria numbers that are not in the frozen lock (exit code 4). The commit hook requires, for every commit that changes code: an updated `claims.yaml` in the same commit, every file a claim lists to be in that commit, and every changed code file to be covered by some claim. Deletions count as changes.
+The validator rejects an `id` that is not lowercase letters, digits, `-` or `_`, empty text, a confidence outside 0 to 1, a bad `kill_condition`, an empty `verified_by` or `files`, fields of the wrong type, and criteria numbers that are not in the frozen lock (exit code 4). The commit hook requires, for every commit that changes code: an updated `claims.yaml` in the same commit, every file a claim lists to be in that commit, and every changed code file to be covered by some claim. Deletions count as changes. `run` and `check` apply the same rules to the whole diff, so skipping the hook doesn't skip them.
 
 ## Reference
 
@@ -650,6 +697,7 @@ claimcheck claims validate [path]  schema-check a claims file against the frozen
 claimcheck check                   independent verdict per claim
 claimcheck mutate                  planted-bug catch rate on the changed lines
 claimcheck run                     verify, validate, check, mutate, then append to the ledger
+claimcheck accept ID --note TEXT   for a person: let through a claim the checker could not settle
 claimcheck verify-ledger [--base REF]  fail if a ledger line was removed, edited, moved or inserted
 claimcheck hook pre-commit         what the installed git hook runs
 ```
@@ -735,6 +783,7 @@ The Desk app still connects to Claude only. Use the command line for another pro
 | 6 | a previous `mutate` left its lock behind, or `--restore` refused to overwrite a file |
 | 7 | the diff is empty, so there is nothing to verify (commit the change, or pass `--worktree`) |
 | 8 | `verify-ledger` found a ledger line that was removed, edited, moved or inserted |
+| 9 | a claim needs a person: it is UNVERIFIABLE and no matching `claimcheck accept` lets it through. 2 wins over 9 |
 
 ### Files
 
@@ -761,6 +810,7 @@ require_full_coverage = true        # the hook rejects uncovered code files (fal
 [checker]
 provider = "auto"                   # "auto" | "claude" | "claude-cli" | "openai" | "stub"
 model = "claude-opus-5-5"
+fail_on_unverifiable = true         # an UNVERIFIABLE no person accepted exits 9 (false = warn)
 
 [mutate]
 max_mutants = 50
@@ -823,7 +873,7 @@ Use `--no-animation`, or set `NO_COLOR=1`. On older Windows consoles, Windows Te
 
 ## Limits, stated plainly
 
-- **The checker only sees the diff.** Anything under `.claimcheck/` is removed from it, so it never sees your confidence, your evidence or earlier ledger lines. It cannot run your code. A claim that depends on runtime behavior comes back `UNVERIFIABLE`, which is honest but not a pass.
+- **The checker only sees the diff.** Anything under `.claimcheck/` is removed from it, so it never sees your confidence, your evidence or earlier ledger lines. It cannot run your code. A claim that depends on runtime behavior comes back `UNVERIFIABLE`, which is honest but not a pass: the run exits 9 until a person accepts it.
 - **The catch rate measures your tests, not your code.** A high rate means your tests would notice small breakages in the lines you added. It does not mean the code is right.
 - **Four kinds of planted bug.** Real bugs are more varied, so the rate is a floor for how responsive your tests are, not a full audit.
 - **Equivalent mutants exist.** Some planted bugs do not change behavior and always survive. Judge survivors, do not just count them.
