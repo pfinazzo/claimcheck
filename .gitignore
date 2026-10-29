@@ -25,3 +25,4 @@ id_ed25519*
 .claimcheck/worktrees/
 .claimcheck/app-state.json
 .claimcheck/spec-draft.json
+.claimcheck/tasks/*/spec-draft.json

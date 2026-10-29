@@ -34,6 +34,7 @@ GITIGNORE_LINES = [
     ".claimcheck/worktrees/",
     ".claimcheck/app-state.json",
     ".claimcheck/spec-draft.json",
+    ".claimcheck/tasks/*/spec-draft.json",
 ]
 
 _TEST_DIRS = ["tests/**", "**/tests/**", "test/**", "**/test/**"]
@@ -151,6 +152,9 @@ def render_config(det: Detection) -> str:
 # claimcheck configuration — written by `claimcheck init`, edit freely.
 version = 1
 base = "main"
+# "tasks": each task keeps its spec, claims and ledger in .claimcheck/tasks/<branch>/, so two
+# pull requests never change the same claimcheck file. "single": one set for the whole repo.
+layout = "tasks"
 test_cmd = {json.dumps(test_cmd)}
 # Paths that are not product code. Planted bugs go only into files NOT listed here,
 # and the commit hook does not ask for a claim covering them.

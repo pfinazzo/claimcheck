@@ -8,12 +8,13 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import re
 import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
-from . import ClaimcheckError, gitio
+from . import ClaimcheckError, SpecError, gitio
 
 CLAIMCHECK_DIR = ".claimcheck"
 CONFIG_FILE = "config.toml"
@@ -24,6 +25,11 @@ LEDGER_FILE = "ledger.jsonl"
 RUNS_DIR = "runs"
 MUTATE_BACKUP_DIR = "mutate-backup"
 MUTATE_SENTINEL = "mutate.lock"
+# The tasks layout keeps each task's spec, lock, claims and ledger in its own folder under here.
+TASKS_DIR = "tasks"
+# "single": one spec, lock, claims file and ledger for the whole repo, as claimcheck always did.
+# "tasks": one set per task, so two pull requests never write the same claimcheck file.
+LAYOUTS = ("single", "tasks")
 
 # Environment variables claimcheck reads. Every read goes through the functions below, so this is
 # the one place to see what the environment can change.
@@ -32,6 +38,7 @@ OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_MODEL_ENV = "OPENAI_MODEL"
 STUB_FILE_ENV = "CLAIMCHECK_STUB_FILE"
+TASK_ENV = "CLAIMCHECK_TASK"
 
 
 def has_api_key() -> bool:
@@ -57,6 +64,14 @@ def read_openai_model() -> str | None:
 def read_stub_reply_file() -> str | None:
     """The canned-reply file the stub provider returns verbatim, if one is set (tests use this)."""
     return os.environ.get(STUB_FILE_ENV) or None
+
+
+def read_task_override() -> str | None:
+    """The task CLAIMCHECK_TASK names, if it is set and not empty.
+
+    CI sets it: a pull request is checked out with no branch, so the branch cannot name the task.
+    """
+    return os.environ.get(TASK_ENV) or None
 
 
 DEFAULT_IGNORE = ["*.md", "docs/**", ".claimcheck/**", "*.lock", "*.txt", ".gitignore", ".github/**", "package-lock.json", "pnpm-lock.yaml"]
@@ -104,6 +119,7 @@ Config = TypedDict(
         "test_cmd": str,
         "ignore": list[str],
         "require_full_coverage": bool,
+        "layout": str,
         "checker_provider": str,
         "checker_model": str,
         "checker_fail_on_unverifiable": bool,
@@ -120,6 +136,7 @@ def make_config(
     test_cmd: str = "python -m pytest -q",
     ignore: list[str] | None = None,
     require_full_coverage: bool = True,
+    layout: str = "single",
     checker_provider: str = "claude",
     checker_model: str = "claude-opus-5-5",
     checker_fail_on_unverifiable: bool = True,
@@ -133,6 +150,7 @@ def make_config(
         "test_cmd": test_cmd,
         "ignore": list(DEFAULT_IGNORE) if ignore is None else ignore,
         "require_full_coverage": require_full_coverage,
+        "layout": layout,
         "checker_provider": checker_provider,
         "checker_model": checker_model,
         "checker_fail_on_unverifiable": checker_fail_on_unverifiable,
@@ -154,6 +172,70 @@ def find_repo_root(start: Path | None = None) -> Path:
 def resolve_cc_dir(repo: Path) -> Path:
     """The repo's .claimcheck folder."""
     return repo / CLAIMCHECK_DIR
+
+
+_UNSAFE_TASK_CHARACTERS = re.compile(r"[^A-Za-z0-9._-]")
+
+NO_TASK_MESSAGE = (
+    "claimcheck keeps each task's files in .claimcheck/tasks/<branch>/. You are on {where}, which is not a task. "
+    "Switch to a task branch, or run claimcheck spec draft to start one."
+)
+
+
+def to_task_name(raw: str) -> str:
+    """A branch name made safe as one folder name.
+
+    Every character outside A-Z, a-z, 0-9, '.', '_' and '-' becomes '-', so feat/login is feat-login.
+    A name that would point at the folder itself or its parent is refused.
+    """
+    name = _UNSAFE_TASK_CHARACTERS.sub("-", raw)
+    if name in ("", ".", ".."):
+        raise SpecError(f"{raw!r} cannot name a task folder; use a branch name with letters or digits")
+    return name
+
+
+def find_task_name(repo: Path, *, settings: Config) -> str:
+    """The current task's folder name in the tasks layout: CLAIMCHECK_TASK if set, else the branch.
+
+    Raises SpecError (exit 3) on the base branch or a detached HEAD, which are not tasks.
+    """
+    override = read_task_override()
+    if override:
+        return to_task_name(override)
+    branch = gitio.read_current_branch(repo)
+    if branch in ("", "HEAD"):
+        raise SpecError(NO_TASK_MESSAGE.format(where="detached HEAD"))
+    if branch == settings["base"]:
+        raise SpecError(NO_TASK_MESSAGE.format(where=branch))
+    return to_task_name(branch)
+
+
+def has_task(repo: Path, *, settings: Config) -> bool:
+    """Whether there is a current task. The single layout always has one: the whole repo."""
+    if settings["layout"] == "single":
+        return True
+    try:
+        find_task_name(repo, settings=settings)
+    except SpecError:
+        return False
+    return True
+
+
+def resolve_task_dir(repo: Path) -> Path:
+    """Where the current task's spec, lock, claims and ledger live.
+
+    Single layout: the .claimcheck folder itself, as always.
+    Tasks layout: .claimcheck/tasks/<task>/. Raises SpecError when there is no current task.
+    """
+    settings = load(repo)
+    if settings["layout"] == "single":
+        return resolve_cc_dir(repo)
+    return resolve_cc_dir(repo) / TASKS_DIR / find_task_name(repo, settings=settings)
+
+
+def to_repo_path(repo: Path, *, path: Path) -> str:
+    """A path inside the repo the way git names it: relative to the root, with forward slashes."""
+    return path.relative_to(repo).as_posix()
 
 
 def _read_typed(table: dict, *, key: str, kind, where: str, default):
@@ -187,6 +269,9 @@ def load(repo: Path) -> Config:
         raise ClaimcheckError("invalid config.toml: ignore must be a list of strings")
     cfg["ignore"] = list(ignore)
     cfg["require_full_coverage"] = _read_typed(raw, key="require_full_coverage", kind=bool, where="", default=cfg["require_full_coverage"])
+    cfg["layout"] = _read_typed(raw, key="layout", kind=str, where="", default=cfg["layout"])
+    if cfg["layout"] not in LAYOUTS:
+        raise ClaimcheckError(f'invalid config.toml: layout must be "single" or "tasks" (got {cfg["layout"]!r})')
     for name in ("checker", "mutate"):
         if name in raw and not isinstance(raw[name], dict):
             raise ClaimcheckError(f"invalid config.toml: [{name}] must be a table (got {raw[name]!r})")

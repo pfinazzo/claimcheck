@@ -54,20 +54,25 @@ def hash_spec(repo: Path) -> str:
 
 
 def resolve_spec_path(repo: Path) -> Path:
-    """Where spec.md lives in a repo."""
-    return config.resolve_cc_dir(repo) / config.SPEC_FILE
+    """Where spec.md lives: in the current task's folder (see config.resolve_task_dir)."""
+    return config.resolve_task_dir(repo) / config.SPEC_FILE
 
 
 def resolve_lock_path(repo: Path) -> Path:
-    """Where spec.lock lives in a repo."""
-    return config.resolve_cc_dir(repo) / config.LOCK_FILE
+    """Where spec.lock lives: in the current task's folder (see config.resolve_task_dir)."""
+    return config.resolve_task_dir(repo) / config.LOCK_FILE
+
+
+# What to run when spec.md is missing. A single-layout repo was never set up; a task has no spec yet.
+MISSING_SPEC_COMMANDS = {"single": "claimcheck init", "tasks": "claimcheck spec draft"}
 
 
 def read_spec(repo: Path) -> tuple[str, list[Criterion]]:
     """The spec's text and criteria. Raises SpecError, with what to run, when it is missing."""
     path = resolve_spec_path(repo)
     if not path.exists():
-        raise SpecError(f"missing {config.CLAIMCHECK_DIR}/{config.SPEC_FILE}; run `claimcheck init`")
+        command = MISSING_SPEC_COMMANDS[config.load(repo)["layout"]]
+        raise SpecError(f"missing {config.to_repo_path(repo, path=path)}; run `{command}`")
     text = path.read_text(encoding="utf-8-sig")
     return text, parse_criteria(text)
 
@@ -76,7 +81,7 @@ def read_lock(repo: Path) -> dict:
     """The parsed spec.lock. Raises SpecError, with what to run, when it is missing."""
     path = resolve_lock_path(repo)
     if not path.exists():
-        raise SpecError(f"missing {config.CLAIMCHECK_DIR}/{config.LOCK_FILE}; run `claimcheck spec freeze`")
+        raise SpecError(f"missing {config.to_repo_path(repo, path=path)}; run `claimcheck spec freeze`")
     return parse_lock(path.read_text(encoding="utf-8-sig"))
 
 
@@ -168,8 +173,8 @@ def check_open_diff_rules(repo: Path, *, settings: config.Config, base: str | No
     when given, else the config's base).
     """
     base = base or settings["base"]
-    rel_lock = f"{config.CLAIMCHECK_DIR}/{config.LOCK_FILE}"
-    rel_spec = f"{config.CLAIMCHECK_DIR}/{config.SPEC_FILE}"
+    rel_lock = config.to_repo_path(repo, path=resolve_lock_path(repo))
+    rel_spec = config.to_repo_path(repo, path=resolve_spec_path(repo))
 
     # AC 8 — any dirty tree: spec and lock must themselves be clean.
     if gitio.is_dirty(repo):

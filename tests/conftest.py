@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from claimcheck import cli
+from claimcheck import cli, config
 
 PY = f'"{Path(sys.executable).as_posix()}"'
 # A test's git or CLI call finishes in seconds. This stops a hung one from stalling the whole suite.
@@ -160,10 +160,23 @@ def repo(tmp_path: Path, *, monkeypatch: pytest.MonkeyPatch) -> types.SimpleName
     return row
 
 
+def use_single_layout(repo: types.SimpleNamespace) -> None:
+    """Switch the config `init` wrote to the single layout: one spec, claims and ledger for the repo."""
+    config_path = repo.cc / "config.toml"
+    config_path.write_text(config_path.read_text(encoding="utf-8").replace('layout = "tasks"', 'layout = "single"'), encoding="utf-8", newline="\n")
+    for name, content in (("spec.md", config.DEFAULT_SPEC_MD), ("claims.yaml", config.DEFAULT_CLAIMS_YAML), ("ledger.jsonl", "")):
+        if not (repo.cc / name).exists():
+            (repo.cc / name).write_text(content, encoding="utf-8", newline="\n")
+
+
 @pytest.fixture
 def cc_repo(repo: types.SimpleNamespace) -> types.SimpleNamespace:
-    """init + two frozen criteria committed on main; HEAD == main, tree clean."""
+    """init + two frozen criteria committed on main; HEAD == main, tree clean.
+
+    These tests cover the single layout, so the config `init` writes is switched to it.
+    """
     assert repo.cli("init") == 0
+    use_single_layout(repo)
     repo.write(".claimcheck/spec.md", text=TWO_CRITERIA_SPEC)
     repo.commit("add claimcheck files", date="2020-01-02T00:00:00+00:00")
     assert repo.cli("spec", "freeze") == 0

@@ -5,6 +5,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 ## [Unreleased]
 
 ### Added
+- A tasks layout, so two pull requests never conflict over claimcheck's files. With `layout = "tasks"` in `.claimcheck/config.toml`, each task keeps its spec, lock, claims and ledger in `.claimcheck/tasks/<branch>/`, and each task ledger is its own hash chain. `verify-ledger` checks every one. `init` picks this layout for a new repo, and the CI workflow sets `CLAIMCHECK_TASK` to the pull request's branch. Repos without the setting work as before. Desk still reads the single layout only.
 - An `openai` provider, so claimcheck can run without Claude. It talks to any server that speaks OpenAI's chat completions API: OpenAI itself, or a model on your own machine through Ollama, LM Studio or vLLM. Choose it with `--provider openai` or `provider = "openai"` under `[checker]`. `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `OPENAI_MODEL` set it up. It adds no dependency, applies the same secret filter, and `auto` still picks Claude.
 - An `AGENTS.md` beside `CLAUDE.md`, so coding agents that read `AGENTS.md`, such as OpenAI's Codex, follow the same repo rules. A test fails if the two files differ.
 - **Write a spec from this issue** on an opened issue. It starts the spec wizard with the issue's title and description as the goal, with template comments removed. You read and edit it before anything is sent to Claude.

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import config
+
 BEGIN = "<!-- claimcheck:begin (managed by `claimcheck init`; edits inside this block are overwritten) -->"
 END = "<!-- claimcheck:end -->"
 
@@ -45,9 +47,21 @@ Before finishing:
 """
 
 
-def build_block() -> str:
+TASK_FOLDER_NOTE = """
+In this repo each task's files live in `.claimcheck/tasks/<task>/`. `<task>` is your branch name
+with every character outside A-Z, a-z, 0-9, `.`, `_` and `-` turned into `-`.
+"""
+
+# The block for each layout. The tasks layout names the task folder in every path.
+BLOCK_BODIES = {
+    "single": BLOCK_BODY,
+    "tasks": BLOCK_BODY.replace("`.claimcheck/", "`.claimcheck/tasks/<task>/") + TASK_FOLDER_NOTE,
+}
+
+
+def build_block(*, layout: str = "single") -> str:
     """The marked block of agent instructions, begin and end markers included."""
-    return f"{BEGIN}\n{BLOCK_BODY}{END}\n"
+    return f"{BEGIN}\n{BLOCK_BODIES[layout]}{END}\n"
 
 
 def _read(path: Path) -> tuple[str, str, bool]:
@@ -81,9 +95,9 @@ def _make_separator_before_block(text: str) -> str:
     return "\n" if text.endswith("\n") else "\n\n"
 
 
-def apply_to_text(text: str) -> tuple[str, str]:
+def apply_to_text(text: str, *, layout: str = "single") -> tuple[str, str]:
     """Return (new_text, action) where action is added, updated or unchanged."""
-    new_block = build_block()
+    new_block = build_block(layout=layout)
     span = _find_block(text)
     if span is None:
         return text + _make_separator_before_block(text) + new_block, "added"
@@ -96,19 +110,20 @@ def install(repo: Path, *, create: str | None = None) -> list[tuple[str, str]]:
 
     `create` is "claude" or "agents": make that file when no agent file exists at all.
     """
+    layout = config.load(repo)["layout"]
     results: list[tuple[str, str]] = []
     for rel in CANDIDATES:
         path = repo / rel
         if not path.is_file():
             continue
         text, newline, bom = _read(path)
-        new_text, action = apply_to_text(text)
+        new_text, action = apply_to_text(text, layout=layout)
         if action != "unchanged":
             _write(path, text=new_text, newline=newline, bom=bom)
         results.append((rel, action))
     if not results and create:
         rel = CREATABLE[create]
         path = repo / rel
-        path.write_text(f"# {repo.name}\n\n" + build_block(), encoding="utf-8", newline="\n")
+        path.write_text(f"# {repo.name}\n\n" + build_block(layout=layout), encoding="utf-8", newline="\n")
         results.append((rel, "created"))
     return results

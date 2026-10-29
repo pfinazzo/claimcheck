@@ -6,7 +6,7 @@
 import pytest
 
 from claimcheck import claims
-from conftest import CLAIMS_FOR_CALC
+from conftest import CLAIMS_FOR_CALC, use_single_layout
 
 LOCK_IDS = {1, 2}
 
@@ -85,6 +85,7 @@ def test_ac9_cli_exit_codes(cc_repo, *, capsys):
 def test_ac9_no_lock_means_no_frozen_ids(repo, *, capsys):
     # No freeze.
     repo.cli("init")
+    use_single_layout(repo)
     repo.write(".claimcheck/claims.yaml", text=_make_doc(GOOD.replace("criteria: [1]", "criteria: [9]")))
     assert repo.cli("claims", "validate") == 4
     err = capsys.readouterr().err

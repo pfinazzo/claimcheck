@@ -35,7 +35,7 @@ def test_the_workflow_installs_from_the_public_address_and_runs_against_the_base
     assert ci.INSTALL_URL == "https://github.com/pfinazzo/claimcheck.git"
     run = next(workflow_step for workflow_step in steps if workflow_step.get("run", "").startswith("claimcheck run"))
     assert run["run"] == "claimcheck run --provider claude --base origin/${{ github.base_ref }}"
-    assert run["env"] == {"ANTHROPIC_API_KEY": "${{ secrets.ANTHROPIC_API_KEY }}"}
+    assert run["env"] == {"ANTHROPIC_API_KEY": "${{ secrets.ANTHROPIC_API_KEY }}", "CLAIMCHECK_TASK": "${{ github.head_ref }}"}
 
 
 def test_the_readme_install_command_uses_the_templates_address():

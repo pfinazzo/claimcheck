@@ -42,8 +42,8 @@ def make_claims_file(*, version: int, author: str, base: str, claims: list[Claim
 
 
 def resolve_claims_path(repo: Path) -> Path:
-    """Where the claims file lives in a repo."""
-    return config.resolve_cc_dir(repo) / config.CLAIMS_FILE
+    """Where the claims file lives: in the current task's folder (see config.resolve_task_dir)."""
+    return config.resolve_task_dir(repo) / config.CLAIMS_FILE
 
 
 def _read_text_field(raw: dict, *, key: str, tag: str) -> tuple[str, str | None]:
