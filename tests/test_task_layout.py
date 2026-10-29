@@ -343,6 +343,8 @@ def test_the_agent_block_names_the_task_folder_in_the_tasks_layout(tasks_repo):
     block = agentdocs.build_block(layout="tasks")
     assert "`.claimcheck/tasks/<task>/spec.lock`" in block and "`.claimcheck/tasks/<task>/claims.yaml`" in block
     assert "`.claimcheck/spec.lock`" not in block and "`.claimcheck/claims.yaml`" not in block
+    assert "In this repo each task's files live in `.claimcheck/tasks/<task>/`. `<task>` is your branch name\n" in block
+    assert "with every character outside A-Z, a-z, 0-9, `.`, `_` and `-` turned into `-`.\n" in block
     assert agentdocs.build_block() == agentdocs.build_block(layout="single")
     tasks_repo.write("CLAUDE.md", text="# repo\n")
     agentdocs.install(tasks_repo.path)

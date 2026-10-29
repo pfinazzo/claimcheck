@@ -100,7 +100,7 @@ claims:
     verified_by:
       - "cmd: python -m pytest -q tests/test_task_layout.py"
   - id: c13
-    claim: "In the single layout every path is the .claimcheck folder as before, CLAIMCHECK_TASK is ignored, and the existing suite passes with only its fixtures switched to layout = single after init"
+    claim: "In the single layout every path is the .claimcheck folder as before and CLAIMCHECK_TASK is ignored. The existing tests that ran init now switch to layout = single first. Three assertions changed because init's output changed: the onboarding test expects the spec in the new branch's task folder, the CI template test expects CLAIMCHECK_TASK in the step's env, and the init test starts from a single-layout config"
     confidence: 0.85
     criteria: [14, 24]
     files: ["tests/conftest.py", "tests/test_claims.py", "tests/test_ledger.py", "tests/test_cli.py", "tests/test_init_onboarding.py", "tests/test_task_layout.py"]
