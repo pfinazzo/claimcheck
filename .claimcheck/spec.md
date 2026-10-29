@@ -1,52 +1,66 @@
 # Acceptance criteria
 
-Goal: Make `claimcheck run` and `claimcheck check` refuse what today only the pre-commit hook refuses, and stop UNVERIFIABLE from passing. This is the first of three PRs that make CI the referee. (1) Before any checker call, `run` and `check` apply the hook's claim rules to the diff under test: if the diff changes code files (paths not in `ignore`) and claims.yaml has no claims, refuse; a claim that lists a file the diff does not change is refused; with `require_full_coverage`, a changed code file that no claim lists is refused, otherwise it is a warning. Refusals exit 4, like the hook. The hook and the run share one function, so the rules cannot drift. (2) A claim that lists a file the checker never saw, because the secret filter withheld it or the size cap cut it, cannot come back SUPPORTED: its verdict becomes UNVERIFIABLE with a reason naming that file. (3) A new setting `[checker] fail_on_unverifiable`, true by default. When it is true, a run or check where any claim is UNVERIFIABLE and not accepted exits 9 ("a claim needs a person"). REFUTED still exits 2 and wins over 9. When it is false, UNVERIFIABLE prints a warning and exits as today. (4) A new command `claimcheck accept <claim-id> --note "..."` for a person. It refuses an empty note and a claim id that is not in claims.yaml. It appends one acceptance line to the ledger, hash-chained like every other line, recording the claim id, a hash of the claim's text, kill_condition and files, a hash of those files' contents at HEAD, the note, the time and git's user.name. A later run treats that claim's UNVERIFIABLE as accepted only while both hashes still match, so editing the claim or its files voids the acceptance. The run output and the ledger say which claims passed by acceptance. The agent instructions written by init say only a person runs `claimcheck accept`. README, the exit code table, examples/config.toml and the config init writes are updated. Out of this PR: reading config from the base branch, recording the test command in the ledger, spec timing by git order, the ledger check on push, and Desk's own Accept the risk.
+Goal: Two pull requests that each use claimcheck never conflict over claimcheck's files. Today every task writes the same .claimcheck/spec.md, spec.lock and claims.yaml, and appends to one hash-chained .claimcheck/ledger.jsonl. So every second PR conflicts on all four. Resolving it means dropping that PR's own ledger lines, keeping main's, and running claimcheck again, about 10 minutes per merge. Fix: an opt-in layout, set by layout = "tasks" in .claimcheck/config.toml. In it, each task keeps spec.md, spec.lock, claims.yaml, ledger.jsonl and spec-draft.json in .claimcheck/tasks/<task>/. The task is the current git branch name, made safe for a folder name. Every CLI path goes through one resolver, so spec, freeze, verify, claims validate, check, mutate, run, accept, the commit hook and the late-refreeze rules all use the task folder. Each task ledger is its own hash chain. verify-ledger checks every task ledger's chain, and with --base checks that each task ledger and the old top-level ledger only grew. spec draft --finish creates the task branch first when on the base branch, then writes into that branch's folder. Without the setting, everything works exactly as today. init writes layout = "tasks" for new repos. The agent instructions block names the task folder in this layout. The Desk app is out of scope for this change.
 
-- [ ] 1. With code files changed (paths not in ignore) and no claims in claims.yaml, `run` and `check` exit 4 without calling the checker.
-  - Check: Stage a change to src/a.py with empty claims.yaml; run both commands; assert exit 4 and the stub checker was called zero times.
-- [ ] 2. A claim listing a file the diff does not change makes `run` and `check` exit 4 before any checker call, for every claim in claims.yaml.
-  - Check: Claim lists b.py, diff changes only a.py; assert exit 4 and zero checker calls. Also with a second valid claim present, assert exit 4.
-- [ ] 3. With require_full_coverage true, a changed code file listed by no claim makes `run` and `check` exit 4; with it false, they print a warning and continue.
-  - Check: Change a.py and c.py, claim lists only a.py; assert exit 4 when true; when false assert warning naming c.py and no exit 4.
-- [ ] 4. The hook and `run`/`check` apply claim rules through one shared function, and give the same refusal for the same diff and claims.
-  - Check: Test feeding identical inputs to the hook and to run/check, asserting the same refusal messages; assert the hook module calls the shared function.
-- [ ] 5. Claim refusals (exit 4) happen before any checker call and win over any verdict-based exit code.
-  - Check: Diff with a refusal condition and stub returning REFUTED; assert exit 4 and zero checker calls.
-- [ ] 6. A claim listing a file withheld by the secret filter or cut by the size cap never returns SUPPORTED; it returns UNVERIFIABLE with a reason naming every such file.
-  - Check: Stub returns SUPPORTED; claim lists a secret-containing file and an over-cap file; assert UNVERIFIABLE and reason contains both paths.
-- [ ] 7. A REFUTED verdict stays REFUTED when files were unseen; an UNVERIFIABLE verdict stays UNVERIFIABLE with the unseen files added to its reason.
-  - Check: Stub returns REFUTED, then UNVERIFIABLE, for a claim listing a withheld file; assert REFUTED unchanged and UNVERIFIABLE reason includes the path.
-- [ ] 8. `[checker] fail_on_unverifiable` defaults to true when absent from config.
-  - Check: Load a config without the key; assert the value is true.
-- [ ] 9. With fail_on_unverifiable true, a run or check with any unaccepted UNVERIFIABLE claim and no REFUTED exits 9.
-  - Check: Stub returns one UNVERIFIABLE, others SUPPORTED; assert exit 9.
-- [ ] 10. REFUTED (or catch rate under the floor) exits 2 and beats 9; 9 beats 0; pre-verdict error exits 1,3,4,5,6,7 keep their codes.
-  - Check: Stub returns REFUTED and UNVERIFIABLE; assert exit 2. UNVERIFIABLE only; assert 9. Trigger exit 4 case; assert 4.
-- [ ] 11. With fail_on_unverifiable false, UNVERIFIABLE prints a warning and the exit code is what it would be without it.
-  - Check: Set false; stub returns UNVERIFIABLE; assert warning printed and exit 0.
-- [ ] 12. `claimcheck accept <id> --note` with an empty or whitespace-only note, or an id not in claims.yaml, exits 4 and appends nothing to the ledger.
-  - Check: Run with --note "" and with an unknown id; assert exit 4 and ledger bytes unchanged.
-- [ ] 13. `accept` works regardless of the claim's verdict (even before any run), outside a git repo gives the existing 'not a git repository' error, and with no git user.name records 'unknown'.
-  - Check: Accept a claim before any run and assert success; unset user.name and assert recorded name 'unknown'; run outside a repo and assert the existing error.
-- [ ] 14. A successful `accept` appends exactly one hash-chained ledger line with claim id, hash of claim text/kill_condition/files, hash of those files' on-disk contents at accept time, note, time, git user.name.
-  - Check: Run accept; assert one new line, valid chain verification, and every field present with expected hash values.
-- [ ] 15. An UNVERIFIABLE claim counts as accepted if any acceptance line for it has both hashes matching the claim and its files now; editing the claim or its files (committed or not) voids it, giving exit 9.
-  - Check: Accept, run, assert exit 0; edit claim text, then separately a listed file, assert exit 9 each time. Accept twice (old content, then current); assert still accepted.
-- [ ] 16. Acceptance does not depend on the base branch or the rest of the diff.
-  - Check: Accept, then change an unrelated file or base; run and assert the claim is still accepted.
-- [ ] 17. Run output lists claims that passed by acceptance, whether fail_on_unverifiable is true or false; each claim's ledger line for the run has an 'accepted' field: the acceptance line's hash, else null.
-  - Check: After accept, run with true and with false; assert output names the claim id and its ledger line's accepted equals the acceptance line hash; other claims have null.
-- [ ] 18. The agent instructions written by init state that only a person runs `claimcheck accept`.
-  - Check: Run init in a temp repo; assert the generated agent file contains that statement.
-- [ ] 19. README, the exit code table (including 9), examples/config.toml, and the config written by init document fail_on_unverifiable and accept.
-  - Check: Grep each file for fail_on_unverifiable, exit 9, and accept; assert init's config contains the key.
+- [ ] 1. With layout = "tasks", spec, freeze and claims commands read and write spec.md, spec.lock, claims.yaml, ledger.jsonl and spec-draft.json only under .claimcheck/tasks/<task>/.
+  - Check: On branch feat-a with layout=tasks, run spec draft --finish and freeze; assert the files are in .claimcheck/tasks/feat-a/ and top-level spec.md, spec.lock, claims.yaml, ledger.jsonl are not created or changed.
+- [ ] 2. <task> is the git branch name with every character outside A-Z, a-z, 0-9, '.', '_' and '-' replaced by '-'.
+  - Check: Branch feat/login gives folder feat-login; branch 'feat/x y' gives feat-x-y; the same branch always gives the same folder.
+- [ ] 3. Two branches from the same base, each using claimcheck in the tasks layout, merge with no git conflict in any claimcheck file.
+  - Check: In a temp repo create branches a and b, run spec and freeze on each, merge both into main, and assert git reports zero conflicts.
+- [ ] 4. verify, claims validate, check, mutate, run, accept, the commit hook and the late-refreeze rules use the current task's folder in the tasks layout and do not read other tasks' files.
+  - Check: For each command on branch feat-a, assert it reads and writes only .claimcheck/tasks/feat-a/ paths, even when tasks/feat-b/ exists.
+- [ ] 5. Each task ledger is its own hash chain that starts at the genesis value, independent of other task ledgers and the old top-level ledger.
+  - Check: Create ledgers on two branches; assert each first entry's previous hash is the genesis value and each chain validates alone.
+- [ ] 6. verify-ledger checks the hash chain of every task ledger and the old top-level ledger, and exits non-zero naming the file if any chain is broken.
+  - Check: Tamper with one line in tasks/a/ledger.jsonl with several tasks present; assert non-zero exit and that the output names that file.
+- [ ] 7. verify-ledger --base fails if any task ledger or the old top-level ledger lost or changed lines present in base, and passes if each only grew.
+  - Check: Remove or edit an earlier line in a ledger versus base and assert non-zero exit; append lines only and assert zero exit.
+- [ ] 8. In the tasks layout, spec draft --finish on the base branch creates the task branch first, then writes into that branch's folder (or the CLAIMCHECK_TASK folder if set).
+  - Check: On main with layout=tasks run spec draft --finish; assert the current branch is the new task branch, files are in its folder, and no folder exists for main.
+- [ ] 9. spec draft refuses to start when the task's folder .claimcheck/tasks/<name> already exists at the base ref, with: 'A task folder .claimcheck/tasks/<name> already exists on <base>. Pick another branch name.'
+  - Check: Commit tasks/feat-a/ on main, then start spec draft on branch feat/a; assert that refusal and a non-zero exit. Repeat with CLAIMCHECK_TASK=feat-a.
+- [ ] 10. In the tasks layout on the config's base branch or detached HEAD with CLAIMCHECK_TASK unset or empty, task commands exit 3 with: 'claimcheck keeps each task's files in .claimcheck/tasks/<branch>/. You are on <base or detached HEAD>, which is not a task. Switch to a task branch, or run claimcheck spec draft to start one.'
+  - Check: On main with layout=tasks and no CLAIMCHECK_TASK run freeze; assert exit 3, that message with 'main' filled in, and no files created. Repeat on detached HEAD and with CLAIMCHECK_TASK=''.
+- [ ] 11. In the tasks layout, verify-ledger, status and init work on the base branch and on detached HEAD without needing a task.
+  - Check: On main and on detached HEAD with layout=tasks, run each; assert none exits 3 for lack of a task.
+- [ ] 12. In the tasks layout, the old top-level spec.md, spec.lock, claims.yaml and ledger.jsonl are never written by any command.
+  - Check: With top-level files present, run the full flow on a task branch; assert their bytes are unchanged.
+- [ ] 13. A layout value other than "single" or "tasks" is rejected with: 'invalid config.toml: layout must be "single" or "tasks" (got ...)'.
+  - Check: Set layout = "flat"; run any command; assert non-zero exit and that message with the given value.
+- [ ] 14. Without a layout key, or with layout = "single", all commands behave exactly as today using the top-level .claimcheck files.
+  - Check: Run the existing test suite with no layout setting and assert it passes unchanged and no tasks/ folder is created.
+- [ ] 15. init writes layout = "tasks" to a .claimcheck/config.toml that it creates for a new repo.
+  - Check: Run init in an empty repo and assert config.toml contains layout = "tasks".
+- [ ] 16. init leaves an existing .claimcheck/config.toml without a layout key unchanged, so that repo stays on the single layout.
+  - Check: Create config.toml without layout, run init, assert the file bytes are identical and commands still use top-level files.
+- [ ] 17. In the tasks layout, a non-empty CLAIMCHECK_TASK names the task instead of the git branch, sanitized by the same rule as branch names, wherever the command runs.
+  - Check: On detached HEAD with CLAIMCHECK_TASK=feat/a, run check; assert it reads .claimcheck/tasks/feat-a/ only. On main with it set, assert no exit 3.
+- [ ] 18. An empty CLAIMCHECK_TASK is treated as unset, so the branch name is used.
+  - Check: On branch feat-a with CLAIMCHECK_TASK='', run check; assert it reads .claimcheck/tasks/feat-a/.
+- [ ] 19. In the tasks layout, when CLAIMCHECK_TASK names a task whose folder has no spec.md, commands fail with: 'missing .claimcheck/tasks/<name>/spec.md; run `claimcheck spec draft`', not as zero claims.
+  - Check: Set CLAIMCHECK_TASK=nope with no such folder; run check; assert non-zero exit and that message with 'nope', not a pass.
+- [ ] 20. With CLAIMCHECK_TASK set, spec draft --finish on the base branch still creates a new branch, and writes into the folder named by CLAIMCHECK_TASK.
+  - Check: On main with CLAIMCHECK_TASK=job-7, run spec draft --finish; assert a new branch is checked out and files are in tasks/job-7/, not the new branch's folder.
+- [ ] 21. The CI template written by init --ci github sets CLAIMCHECK_TASK to the pull request's head branch (github.head_ref).
+  - Check: Run init --ci github; assert the workflow file sets CLAIMCHECK_TASK: ${{ github.head_ref }} for the claimcheck steps.
+- [ ] 22. In the tasks layout on the base branch or detached HEAD with CLAIMCHECK_TASK unset, the commit hook exits 0 and prints to stderr: 'claimcheck: not on a task branch, so no claims are checked for this commit.'
+  - Check: On main with layout=tasks, run the hook; assert exit 0, that stderr line, and no claims checked.
+- [ ] 23. The generated agent instructions block names .claimcheck/tasks/<task>/ as the task folder when layout is tasks.
+  - Check: Generate the block in the tasks layout and assert it contains .claimcheck/tasks/<task>/ and does not name the top-level spec path as the target.
+- [ ] 24. In the single layout, CLAIMCHECK_TASK is ignored.
+  - Check: With no layout key and CLAIMCHECK_TASK=feat-a, run spec verify; it reads .claimcheck/spec.md.
+- [ ] 25. ruff check, mypy and python -m pytest -q all exit 0.
+  - Check: Run all three.
 
 ## Out of scope
 
-- Reading config from the base branch
-- Recording the test command in the ledger
-- Spec timing by git order
-- Ledger check on push
-- Desk's own Accept the risk
+- Desk app (app/) changes
+- Automatic migration of existing top-level files into task folders
+- Changing the ledger hash format
+- Detecting the base branch (the config's base is used as today)
+- Resolving collisions between branch names that map to the same folder, beyond the spec draft refusal
+- Adding a --task flag (CLAIMCHECK_TASK is the only override)
+- Changing existing repos' config.toml during init
 
 <!-- drafted with `claimcheck spec draft`; frozen with `claimcheck spec freeze` -->
