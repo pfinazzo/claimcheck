@@ -176,6 +176,12 @@ def show_file_at(repo: Path, *, ref: str, path: str) -> str | None:
     return proc.stdout if proc.returncode == 0 else None
 
 
+def list_files_at(repo: Path, *, ref: str, path: str) -> list[str]:
+    """Every file under `path` as committed at `ref`, as repo paths. None there gives an empty list."""
+    output = run_git(repo, "ls-tree", "-r", "--name-only", ref, "--", path, check=False)
+    return [line for line in output.splitlines() if line.strip()]
+
+
 def read_staged_file(repo: Path, *, path: str) -> str | None:
     """The file as staged in the index, or None when it is not staged."""
     return show_file_at(repo, ref="", path=path)

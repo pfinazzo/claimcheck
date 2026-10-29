@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from . import ClaimcheckError, LedgerError, config
+from . import ClaimcheckError, LedgerError, config, gitio
 
 CLAIM_KEYS = frozenset(
     {
@@ -28,8 +28,8 @@ _REQUIRED_KEYS = {"claim": CLAIM_KEYS, "outcome": OUTCOME_KEYS, "accept": ACCEPT
 
 
 def resolve_ledger_path(repo: Path) -> Path:
-    """Where the ledger lives in a repo."""
-    return config.resolve_cc_dir(repo) / config.LEDGER_FILE
+    """Where the current task's ledger lives (see config.resolve_task_dir)."""
+    return config.resolve_task_dir(repo) / config.LEDGER_FILE
 
 
 def validate_line(line: str) -> dict:
@@ -238,3 +238,32 @@ def check_grew_only(lines: list[str], *, base_lines: list[str], ref: str) -> Non
     for index, text in enumerate(base_lines):
         if lines[index] != text:
             raise LedgerError(f"ledger line {index + 1} differs from the ledger at {ref}")
+
+
+def list_ledger_repo_paths(repo: Path, *, base: str | None) -> list[str]:
+    """Every ledger in the tasks layout, as repo paths: the old top-level one and each task's.
+
+    With `base`, a task ledger that exists only on the base counts too. A branch that deleted one
+    must still fail the grew-only check.
+    """
+    top_level = f"{config.CLAIMCHECK_DIR}/{config.LEDGER_FILE}"
+    tasks_dir = config.resolve_cc_dir(repo) / config.TASKS_DIR
+    here = [config.to_repo_path(repo, path=path) for path in tasks_dir.glob(f"*/{config.LEDGER_FILE}")]
+    on_base = gitio.list_files_at(repo, ref=base, path=f"{config.CLAIMCHECK_DIR}/{config.TASKS_DIR}") if base else []
+    task_ledgers = [path for path in [*here, *on_base] if path.endswith(f"/{config.LEDGER_FILE}")]
+    return sorted({top_level, *task_ledgers})
+
+
+def verify_ledger_file(repo: Path, *, rel_path: str, base: str | None) -> dict:
+    """Checks one ledger's chain and, with `base`, that it only grew. A LedgerError names the file."""
+    path = repo / rel_path
+    lines = split_ledger_lines(path.read_bytes() if path.exists() else b"")
+    try:
+        outcome = check_chain(lines)
+        if base:
+            text = gitio.show_file_at(repo, ref=base, path=rel_path)
+            check_grew_only(lines, base_lines=split_ledger_lines((text or "").encode("utf-8")), ref=base)
+    except LedgerError as error:
+        raise LedgerError(f"{rel_path}: {error}") from error
+    return outcome
+

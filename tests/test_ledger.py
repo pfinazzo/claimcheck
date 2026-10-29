@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from claimcheck import ClaimcheckError, checker, claims, ledger, spec
-from conftest import PY
+from conftest import PY, use_single_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
@@ -53,6 +53,7 @@ def test_ac28_exit_is_max_of_parts(calc_repo, *, monkeypatch):
 
 def test_ac28_append_is_all_or_nothing(repo):
     repo.cli("init")
+    use_single_layout(repo)
     good = json.loads((EXAMPLES / "ledger.jsonl").read_text(encoding="utf-8").splitlines()[0])
     with pytest.raises(ClaimcheckError):
         ledger.append_atomic(repo.path, records=[good, {"v": 1, "type": "claim"}])
@@ -91,6 +92,7 @@ def test_ac30_attribution_everywhere():
 
 def test_ac31_examples_are_valid_fixtures(repo):
     repo.cli("init")
+    use_single_layout(repo)
     repo.write(".claimcheck/spec.md", text=(EXAMPLES / "spec.md").read_text(encoding="utf-8"))
     repo.commit("example spec")
     assert repo.cli("spec", "freeze") == 0

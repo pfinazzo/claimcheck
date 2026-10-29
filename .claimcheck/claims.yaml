@@ -4,91 +4,162 @@ author: "claude-code/claude-opus-5-5"
 base: "main"
 claims:
   - id: c1
-    claim: "claims.check_coverage raises ClaimsError (exit 4) when a claim lists a file the diff does not change, when code files changed and there are no claims, and, with require_full_coverage, when a changed code file has no claim; without it that last case is a returned warning. run_check calls it with the changed files directly after loading the claims file"
-    confidence: 0.92
-    criteria: [1, 2, 3]
-    files: ["src/claimcheck/claims.py", "src/claimcheck/checker.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_code_changed_with_no_claims_exits_4_before_the_checker, test_a_claim_about_a_file_the_diff_does_not_change_exits_4_even_beside_a_good_claim, test_an_uncovered_code_file_exits_4_with_full_coverage_and_only_warns_without_it and test_a_refusal_wins_over_a_refuted_verdict_and_the_checker_never_runs"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py (25 passed)"
-
-  - id: c2
-    claim: "The pre-commit hook no longer has its own coverage loop; it passes the staged paths to claims.check_coverage, the same function run_check uses, so both give the same refusal text"
-    confidence: 0.93
-    criteria: [4]
-    files: ["src/claimcheck/hook.py", "src/claimcheck/claims.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_the_hook_and_check_give_the_same_refusal_through_one_function"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py tests/test_hook.py"
-
-  - id: c3
-    claim: "filter_diff now lists in files_truncated each file cut by the per-file cap and every file dropped by the total cap. mark_unseen turns a SUPPORTED verdict into UNVERIFIABLE when its claim lists a file in files_omitted or files_truncated, naming those files; REFUTED is left alone and an UNVERIFIABLE reason gets the files appended"
-    confidence: 0.9
-    criteria: [6, 7]
-    files: ["src/claimcheck/redact.py", "src/claimcheck/checker.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_a_claim_about_a_withheld_or_cut_file_cannot_come_back_supported and test_refuted_stays_refuted_and_unverifiable_gains_the_unseen_files"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
-  - id: c4
-    claim: "Config gains checker_fail_on_unverifiable, read from [checker] fail_on_unverifiable as true or false, and true when the key is absent"
-    confidence: 0.95
-    criteria: [8]
-    files: ["src/claimcheck/config.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_fail_on_unverifiable_is_on_when_the_config_does_not_say"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
-  - id: c5
-    claim: "decide_exit_code returns 2 when any verdict is REFUTED, else 9 when fail_on_unverifiable is on and an UNVERIFIABLE claim has no matching acceptance, else 0; with the setting off each such claim becomes a warning. run's pick_exit_code returns 2 whenever check or mutate returned 2, else the larger code, so 2 beats 9 and 9 beats 0"
-    confidence: 0.92
-    criteria: [9, 10, 11]
-    files: ["src/claimcheck/checker.py", "src/claimcheck/run.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_one_open_unverifiable_exits_9, test_refuted_and_a_low_catch_rate_beat_9_and_9_beats_0 and test_with_fail_on_unverifiable_off_an_open_unverifiable_only_warns"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
-  - id: c6
-    claim: "`claimcheck accept ID --note TEXT` raises ClaimsError (exit 4) for a blank note or an id not in claims.yaml before writing anything; otherwise it appends one `accept` ledger line through append_atomic with claim_id, claim_hash, files_hash, the stripped note, the time and git's user.name, or 'unknown' when none is set. It does not look at any verdict"
-    confidence: 0.92
-    criteria: [12, 13, 14]
-    files: ["src/claimcheck/accept.py", "src/claimcheck/cli.py", "src/claimcheck/ledger.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_accept_refuses_an_empty_note_or_an_unknown_claim_and_writes_nothing, test_accept_works_before_any_run_and_records_unknown_without_a_git_name, test_accept_outside_a_git_repo_gives_the_usual_error and test_accept_appends_one_chained_line_with_both_hashes_the_note_and_the_name"
-    verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
-  - id: c7
-    claim: "find_accepted counts an acceptance line only when its claim_hash matches the hash of the claim's text, kill_condition and files, and its files_hash matches those files as they are on disk now (a missing file hashes as 'absent'). Neither hash uses the base, HEAD or any other file, so editing the claim or a listed file voids it while other changes do not"
+    claim: "With layout = tasks, resolve_task_dir returns .claimcheck/tasks/<task>/, and resolve_spec_path, resolve_lock_path, resolve_claims_path, resolve_ledger_path and draft_path (once there is a task) all build on it, so spec draft --finish writes spec.md and spec.lock only in the task folder"
     confidence: 0.88
-    criteria: [15, 16]
-    files: ["src/claimcheck/accept.py", "src/claimcheck/checker.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_an_acceptance_holds_until_the_claim_or_its_files_change and test_an_acceptance_does_not_depend_on_the_base_or_other_files"
+    criteria: [1, 8]
+    files: ["src/claimcheck/config.py", "src/claimcheck/spec.py", "src/claimcheck/claims.py", "src/claimcheck/ledger.py", "src/claimcheck/specdraft.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_finishing_a_draft_on_main_makes_the_branch_first_and_writes_into_its_folder"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
-  - id: c8
-    claim: "run_check's result gains an `accepted` map from each UNVERIFIABLE claim with a matching acceptance to that acceptance line's hash. _write_check_notes prints one stderr line per entry in that map, with no condition on fail_on_unverifiable. build_claim_record takes an `accepted` argument, default None, and writes it as the line's `accepted` field, and run_all passes check_result['accepted'].get(claim id) into it"
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c2
+    claim: "to_task_name replaces every character outside A-Z, a-z, 0-9, '.', '_' and '-' with '-', and refuses '', '.' and '..' so a task folder can never be the tasks folder itself or its parent"
+    confidence: 0.94
+    criteria: [2]
+    files: ["src/claimcheck/config.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_a_branch_name_becomes_one_safe_folder_name"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_a_branch_name_becomes_one_safe_folder_name"
+  - id: c3
+    claim: "Two task branches from one base, each with a frozen spec, claims, code and a ledger line, merge into the base with no conflict in any .claimcheck file"
     confidence: 0.9
-    criteria: [17]
-    files: ["src/claimcheck/checker.py", "src/claimcheck/cli.py", "src/claimcheck/run.py", "src/claimcheck/ledger.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_the_output_and_the_ledger_name_the_claims_that_passed_by_acceptance"
+    criteria: [3]
+    files: ["tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_two_tasks_from_one_base_merge_with_no_conflict"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
-
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_two_tasks_from_one_base_merge_with_no_conflict"
+  - id: c4
+    claim: "On a task branch, claims validate and run read the task's claims and append to the task's ledger only, the commit hook asks for the task's claims.yaml, and the late-refreeze rule checks the task's spec.lock; another task's broken claims are never read"
+    confidence: 0.84
+    criteria: [4]
+    files: ["src/claimcheck/hook.py", "src/claimcheck/spec.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_a_run_on_a_task_uses_only_that_task_folder, test_the_hook_asks_for_the_task_claims_file and test_a_refreeze_after_the_diff_began_is_refused_in_the_task_folder"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c5
+    claim: "A new task ledger starts its chain at ZERO_HASH, independent of other task ledgers and the old top-level ledger, because append_atomic reads the head of the task's own file"
+    confidence: 0.9
+    criteria: [5]
+    files: ["src/claimcheck/ledger.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_each_task_ledger_starts_its_own_chain"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_each_task_ledger_starts_its_own_chain"
+  - id: c6
+    claim: "In the tasks layout verify-ledger checks the chain of the old top-level ledger and every task ledger, and a broken one exits 8 with its repo path before the error"
+    confidence: 0.88
+    criteria: [6]
+    files: ["src/claimcheck/cli.py", "src/claimcheck/ledger.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_a_broken_task_ledger_fails_verify_ledger_and_is_named"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_a_broken_task_ledger_fails_verify_ledger_and_is_named"
+  - id: c7
+    claim: "verify-ledger --base in the tasks layout also lists task ledgers that exist only on the base, so a task ledger that lost lines, was deleted, or an old top-level ledger that shrank exits 8 naming the file, and a ledger that only grew passes"
+    confidence: 0.86
+    criteria: [7]
+    files: ["src/claimcheck/cli.py", "src/claimcheck/ledger.py", "src/claimcheck/gitio.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_verify_ledger_base_wants_every_task_ledger_to_only_grow and test_verify_ledger_still_guards_the_old_top_level_ledger"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c8
+    claim: "apply_draft in the tasks layout names the task (CLAIMCHECK_TASK, else the new branch, else the current branch), refuses with 'A task folder .claimcheck/tasks/<name> already exists on <base>. Pick another branch name.' when the base has files there, and only then makes the new branch and writes the spec"
+    confidence: 0.86
+    criteria: [8, 9, 20]
+    files: ["src/claimcheck/specdraft.py", "src/claimcheck/gitio.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_a_task_folder_the_base_already_has_is_refused and test_claimcheck_task_names_the_folder_while_a_branch_is_still_made"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
   - id: c9
-    claim: "The agent instructions init writes now say to report UNVERIFIABLE claims and that only a person runs `claimcheck accept`"
-    confidence: 0.96
-    criteria: [18]
-    files: ["src/claimcheck/agentdocs.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_init_tells_agents_that_only_a_person_runs_accept"
+    claim: "In the tasks layout with no CLAIMCHECK_TASK, spec freeze, spec verify and claims validate on the base branch or a detached HEAD exit 3 with the no-task message naming 'main' or 'detached HEAD', and create no task folder"
+    confidence: 0.9
+    criteria: [10]
+    files: ["src/claimcheck/config.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_task_commands_on_main_stop_with_exit_3_and_say_why and test_task_commands_on_a_detached_head_stop_with_exit_3"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py tests/test_agents_md.py"
-
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
   - id: c10
-    claim: "The config init writes includes `fail_on_unverifiable = true` with a comment explaining exit 9 and accept; README documents the rules, exit 9 and accept, and examples/config.toml has the key"
-    confidence: 0.93
-    criteria: [19]
-    files: ["src/claimcheck/detect.py"]
-    kill_condition: "test: tests/test_ci_referee.py::test_the_docs_and_the_written_config_cover_fail_on_unverifiable_exit_9_and_accept"
+    claim: "verify-ledger, status and init exit 0 on the base branch and on a detached HEAD in the tasks layout"
+    confidence: 0.88
+    criteria: [11]
+    files: ["src/claimcheck/cli.py", "src/claimcheck/initflow.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_verify_ledger_status_and_init_work_without_a_task"
     verified_by:
-      - "cmd: python -m pytest -q tests/test_ci_referee.py"
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_verify_ledger_status_and_init_work_without_a_task"
+  - id: c11
+    claim: "In the tasks layout no command writes the old top-level spec.md, spec.lock, claims.yaml or ledger.jsonl: every write goes through resolve_task_dir, and init skips the top-level starter files"
+    confidence: 0.82
+    criteria: [12]
+    files: ["src/claimcheck/initflow.py", "src/claimcheck/config.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_the_old_top_level_files_are_never_written and test_init_writes_the_tasks_layout_for_a_new_repo_and_no_top_level_task_files"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c12
+    claim: "config.load rejects a layout other than single or tasks with 'invalid config.toml: layout must be \"single\" or \"tasks\" (got ...)', and a missing layout key is single"
+    confidence: 0.93
+    criteria: [13, 14]
+    files: ["src/claimcheck/config.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_an_unknown_layout_is_refused_by_name and test_init_leaves_an_existing_config_without_a_layout_as_it_was"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c13
+    claim: "In the single layout every path is the .claimcheck folder as before, CLAIMCHECK_TASK is ignored, and the existing suite passes with only its fixtures switched to layout = single after init"
+    confidence: 0.85
+    criteria: [14, 24]
+    files: ["tests/conftest.py", "tests/test_claims.py", "tests/test_ledger.py", "tests/test_cli.py", "tests/test_init_onboarding.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_the_single_layout_ignores_claimcheck_task and the full suite"
+    verified_by:
+      - "cmd: python -m pytest -q"
+  - id: c14
+    claim: "init writes layout = \"tasks\" into a config.toml it creates, and leaves an existing config.toml without a layout byte for byte as it was"
+    confidence: 0.92
+    criteria: [15, 16]
+    files: ["src/claimcheck/detect.py", "src/claimcheck/initflow.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_init_writes_the_tasks_layout_for_a_new_repo_and_no_top_level_task_files and test_init_leaves_an_existing_config_without_a_layout_as_it_was"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c15
+    claim: "A non-empty CLAIMCHECK_TASK names the task, made safe by to_task_name, even on a detached HEAD; an empty one counts as unset"
+    confidence: 0.9
+    criteria: [17, 18]
+    files: ["src/claimcheck/config.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_claimcheck_task_names_a_task_on_a_detached_head and test_an_empty_claimcheck_task_counts_as_unset"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py"
+  - id: c16
+    claim: "A task whose folder has no spec.md fails with 'missing .claimcheck/tasks/<name>/spec.md; run `claimcheck spec draft`'; in the single layout the message is unchanged"
+    confidence: 0.9
+    criteria: [19]
+    files: ["src/claimcheck/spec.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_a_task_with_no_spec_says_which_file_is_missing"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_a_task_with_no_spec_says_which_file_is_missing"
+  - id: c17
+    claim: "The workflow init --ci github writes sets CLAIMCHECK_TASK to ${{ github.head_ref }} on the claimcheck run step"
+    confidence: 0.95
+    criteria: [21]
+    files: ["src/claimcheck/ci.py", "tests/test_ci_template.py"]
+    kill_condition: "test: tests/test_ci_template.py::test_the_workflow_installs_from_the_public_address_and_runs_against_the_base"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_ci_template.py"
+  - id: c18
+    claim: "In the tasks layout the commit hook on the base branch or a detached HEAD exits 0 and prints 'claimcheck: not on a task branch, so no claims are checked for this commit.'"
+    confidence: 0.9
+    criteria: [22]
+    files: ["src/claimcheck/hook.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_the_hook_lets_a_commit_on_main_through_with_a_note"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_the_hook_lets_a_commit_on_main_through_with_a_note"
+  - id: c19
+    claim: "The agent instructions block in the tasks layout names .claimcheck/tasks/<task>/ in every path and explains the name, and install picks the block from the repo's layout; the single-layout block is unchanged"
+    confidence: 0.9
+    criteria: [23]
+    files: ["src/claimcheck/agentdocs.py", "tests/test_task_layout.py"]
+    kill_condition: "test: tests/test_task_layout.py::test_the_agent_block_names_the_task_folder_in_the_tasks_layout"
+    verified_by:
+      - "cmd: python -m pytest -q tests/test_task_layout.py::test_the_agent_block_names_the_task_folder_in_the_tasks_layout"
+  - id: c20
+    claim: "ruff check, mypy and python -m pytest -q all exit 0"
+    confidence: 0.92
+    criteria: [25]
+    files: ["src/claimcheck/cli.py"]
+    kill_condition: "cmd: ruff check && mypy && python -m pytest -q"
+    verified_by:
+      - "cmd: ruff check && mypy && python -m pytest -q"

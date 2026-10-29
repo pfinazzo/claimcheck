@@ -48,6 +48,8 @@ def test_ac2_help_tree():
 
 
 def test_ac3_init_creates_everything_and_is_idempotent(repo):
+    # A repo already on the single layout gets the starter spec, claims and ledger at the top.
+    repo.write(".claimcheck/config.toml", text='version = 1\nlayout = "single"\n')
     assert repo.cli("init") == 0
     cc = repo.cc
     expected = ["config.toml", "spec.md", "claims.yaml", "ledger.jsonl"]

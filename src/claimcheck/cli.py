@@ -193,7 +193,7 @@ def handle_spec_draft(args: argparse.Namespace) -> int:
         if output["commit"]:
             tui.write_line(term, text=f"Committed {output['commit'][:8]} on {output['branch']}.")
     else:
-        tui.write_line(term, text=tui.format_styled(term, text="Wrote .claimcheck/spec.md. Freeze it with `claimcheck spec freeze`.", styles=("grey",)))
+        tui.write_line(term, text=tui.format_styled(term, text=f"Wrote {config.to_repo_path(repo, path=Path(output['spec_path']))}. Freeze it with `claimcheck spec freeze`.", styles=("grey",)))
     return 0
 
 
@@ -288,9 +288,28 @@ def handle_accept(args: argparse.Namespace) -> int:
     return 0
 
 
+def _verify_task_ledgers(repo: Path, *, base: str | None) -> int:
+    """verify-ledger in the tasks layout: every task ledger and the old top-level one, each on its own chain."""
+    if base:
+        # A base that does not exist is an error, not "no ledger there".
+        gitio.resolve_ref(repo, ref=base)
+    rel_paths = ledger.list_ledger_repo_paths(repo, base=base)
+    outcomes = [ledger.verify_ledger_file(repo, rel_path=rel_path, base=base) for rel_path in rel_paths]
+    totals = {key: sum(outcome[key] for outcome in outcomes) for key in ("lines", "legacy", "chained")}
+    _write_err(
+        f"ledger ok: {len(rel_paths)} ledgers, {totals['lines']} lines, {totals['chained']} chained"
+        + (f", {totals['legacy']} older without a hash" if totals["legacy"] else "")
+        + (f", each an unchanged beginning of {base}" if base else "")
+    )
+    _write_out({**totals, "ledgers": rel_paths, "base": base})
+    return 0
+
+
 def handle_verify_ledger(args: argparse.Namespace) -> int:
     """`claimcheck verify-ledger`: the hash chain is intact and, with --base, the ledger only grew."""
     repo = config.find_repo_root()
+    if config.load(repo)["layout"] == "tasks":
+        return _verify_task_ledgers(repo, base=args.base)
     path = ledger.resolve_ledger_path(repo)
     lines = ledger.split_ledger_lines(path.read_bytes() if path.exists() else b"")
     outcome = ledger.check_chain(lines)

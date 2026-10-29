@@ -484,7 +484,17 @@ After setup, a task looks like this.
 
 The author never grades their own work: someone else fixes the criteria, a model that cannot see the author's confidence gives the verdict, and your own tests produce the catch rate.
 
-**What to commit and ignore.** Commit `spec.md`, `spec.lock`, `claims.yaml`, `config.toml` and `ledger.jsonl`. `init` already ignores the scratch output. The lock must be in git: the late-criteria check compares the lock's freeze time with the branch's first commit.
+**One folder per task, so pull requests don't conflict.** With `layout = "tasks"` in `.claimcheck/config.toml`, each task keeps its own `spec.md`, `spec.lock`, `claims.yaml` and `ledger.jsonl` in `.claimcheck/tasks/<task>/`. `init` writes this setting for a new repo.
+
+- **The task is the branch.** `<task>` is the branch name with every character outside A-Z, a-z, 0-9, `.`, `_` and `-` turned into `-`, so `feat/login` uses `.claimcheck/tasks/feat-login/`.
+- **Two pull requests never touch the same file.** Each adds only its own folder. Merging both needs no conflict fixes and no second `claimcheck run`.
+- **Each task ledger is its own hash chain.** `verify-ledger` checks every task's ledger and the old top-level one. With `--base`, it checks that each one only grew.
+- **On the base branch there is no task.** Commands that need one stop with exit 3 and say so. `verify-ledger`, `status` and `init` work anywhere. The commit hook lets a commit on the base branch through with a note.
+- **Starting a task.** `spec draft` on the base branch makes the task branch first, then writes the spec into that branch's folder. It refuses a branch whose folder the base already has, because that task was merged.
+- **CI.** A pull request is checked out with no branch, so `CLAIMCHECK_TASK` names the task there. The workflow that `init --ci github` writes sets it to the pull request's branch.
+- **An existing repo.** Without the setting, or with `layout = "single"`, claimcheck uses one set of files for the whole repo, as before. To switch, add `layout = "tasks"`. The old top-level files stay as they are, and nothing writes to them again.
+
+**What to commit and ignore.** Commit `spec.md`, `spec.lock`, `claims.yaml`, `config.toml` and `ledger.jsonl`, in each task's folder in the tasks layout. `init` already ignores the scratch output. The lock must be in git: the late-criteria check compares the lock's freeze time with the branch's first commit.
 
 **CI.** `claimcheck init --ci github` writes `.github/workflows/claimcheck.yml`, which checks out full history, installs claimcheck and runs it against the pull request's base branch with `ANTHROPIC_API_KEY` from your repository secrets. It has not been run in a real pipeline yet, so treat it as a starting point. The run edits files in the checkout while it plants bugs and then restores them, which is fine in a throwaway CI checkout.
 
@@ -795,6 +805,7 @@ The Desk app still connects to Claude only. Use the command line for another pro
 | `.claimcheck/ledger.jsonl` | Append-only and hash-chained: each new line carries `prev`, the SHA-256 of the line before it, and `claimcheck verify-ledger` checks the chain. Lines written before chaining existed are sealed by the first chained line. See [`examples/ledger.jsonl`](examples/ledger.jsonl) |
 | `.claimcheck/config.toml` | Settings. See [`examples/config.toml`](examples/config.toml) |
 | `.claimcheck/setup.json` | The files `init` changed outside `.claimcheck/`, so the first commit includes them |
+| `.claimcheck/tasks/<task>/` | In the tasks layout: that task's own `spec.md`, `spec.lock`, `claims.yaml` and `ledger.jsonl`. See [Using it on a team](#using-it-on-a-team) |
 
 ### Config
 
@@ -803,6 +814,7 @@ The Desk app still connects to Claude only. Use the command line for another pro
 ```toml
 version = 1
 base = "main"                       # the ref diffs are measured against
+layout = "tasks"                    # one folder per task; "single" (the default) = one set for the repo
 test_cmd = "npm test"               # rerun once per planted bug
 ignore = ["*.md", "docs/**", ".claimcheck/**", "*.lock", ".gitignore", ".github/**", "tests/**"]
 require_full_coverage = true        # the hook rejects uncovered code files (false = warn)

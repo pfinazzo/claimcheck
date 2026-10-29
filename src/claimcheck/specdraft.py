@@ -347,8 +347,13 @@ def render_spec(draft: Draft) -> str:
 
 
 def draft_path(repo: Path) -> Path:
-    """Where the in-progress interview draft is saved."""
-    return config.resolve_cc_dir(repo) / DRAFT_FILE
+    """Where the in-progress interview draft is saved: the current task's folder.
+
+    In the tasks layout before a task exists, on the base branch, it goes in .claimcheck itself.
+    """
+    settings = config.load(repo)
+    folder = config.resolve_task_dir(repo) if config.has_task(repo, settings=settings) else config.resolve_cc_dir(repo)
+    return folder / DRAFT_FILE
 
 
 def save_draft(repo: Path, *, draft: Draft) -> None:
@@ -567,6 +572,43 @@ def _list_setup_files(repo: Path) -> list[str]:
     return [file for file in files if isinstance(file, str) and (repo / file).exists()]
 
 
+def _pick_branch_to_create(repo: Path, *, settings: config.Config, draft: Draft, branch: str | None, new_branch: bool) -> str | None:
+    """The new branch the spec moves onto, or None to stay on the current one.
+
+    A branch is made when the person names one, or when they are on the base branch or detached.
+    """
+    current = gitio.read_current_branch(repo)
+    has_commits = bool(gitio.run_git(repo, "rev-parse", "--verify", "--quiet", "HEAD", check=False).strip())
+    if not (has_commits and new_branch and (branch or current in (settings["base"], "HEAD"))):
+        return None
+    return pick_unique_branch(repo, wanted=branch or f"task/{make_slug(draft['goal'])}")
+
+
+def _refuse_task_folder_on_base(repo: Path, *, settings: config.Config, task_name: str) -> None:
+    """Refuse a task whose folder the base branch already has.
+
+    A merged task's folder stays on the base. Reusing its name would write this task's spec over
+    that record, and the two pull requests would conflict again.
+    """
+    rel = f"{config.CLAIMCHECK_DIR}/{config.TASKS_DIR}/{task_name}"
+    if gitio.list_files_at(repo, ref=settings["base"], path=rel):
+        raise SpecError(f"A task folder {rel} already exists on {settings['base']}. Pick another branch name.")
+
+
+def _start_task(repo: Path, *, settings: config.Config, draft: Draft, branch: str | None, new_branch: bool) -> None:
+    """Tasks layout: names the task, refuses a folder the base already has, then moves onto a new branch if needed.
+
+    The task is CLAIMCHECK_TASK when set, else the new branch, else the current branch.
+    Raises SpecError on the base branch when no new branch is made, because there is no task.
+    """
+    new_name = _pick_branch_to_create(repo, settings=settings, draft=draft, branch=branch, new_branch=new_branch)
+    raw_task = config.read_task_override() or new_name
+    task_name = config.to_task_name(raw_task) if raw_task else config.find_task_name(repo, settings=settings)
+    _refuse_task_folder_on_base(repo, settings=settings, task_name=task_name)
+    if new_name:
+        gitio.create_branch(repo, name=new_name)
+
+
 def apply_draft(
     repo: Path,
     *, settings: config.Config,
@@ -581,7 +623,12 @@ def apply_draft(
     A branch is created only when the person is on the base branch (or detached) or names one.
     Nothing is pushed. The commit holds .claimcheck plus the files `init` touched, and the commit
     hook runs as usual.
+
+    In the tasks layout the branch is made first, because the spec goes in that branch's folder.
     """
+    is_tasks_layout = settings["layout"] == "tasks"
+    if is_tasks_layout:
+        _start_task(repo, settings=settings, draft=draft, branch=branch, new_branch=new_branch)
     path = write_spec(repo, draft=draft, refuse_if=lambda checked_repo: spec.open_code_paths(checked_repo, settings=settings, base=settings["base"]))
     summary: dict = {
         "spec_path": str(path),
@@ -597,10 +644,8 @@ def apply_draft(
     summary.update(frozen=True, lock_sha256=lock["spec_sha256"])
     if not commit:
         return summary
-    current = gitio.read_current_branch(repo)
-    has_commits = bool(gitio.run_git(repo, "rev-parse", "--verify", "--quiet", "HEAD", check=False).strip())
-    if has_commits and new_branch and (branch or current in (settings["base"], "HEAD")):
-        name = pick_unique_branch(repo, wanted=branch or f"task/{make_slug(draft['goal'])}")
+    name = None if is_tasks_layout else _pick_branch_to_create(repo, settings=settings, draft=draft, branch=branch, new_branch=new_branch)
+    if name:
         gitio.create_branch(repo, name=name)
         summary["branch"] = name
     gitio.add_all_to_index(repo, ".claimcheck", *_list_setup_files(repo))

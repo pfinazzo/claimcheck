@@ -69,15 +69,25 @@ def install(repo: Path) -> bool:
     return True
 
 
+NO_TASK_NOTE = "claimcheck: not on a task branch, so no claims are checked for this commit."
+
+
 def run_pre_commit(repo: Path, *, settings: config.Config) -> int:
-    """Return the exit code; messages go to stderr."""
+    """Return the exit code; messages go to stderr.
+
+    In the tasks layout, a commit on the base branch or a detached HEAD has no task, so no claims
+    file to check. The commit is allowed with a note. Blocking it would stop merges into the base.
+    """
+    if not config.has_task(repo, settings=settings):
+        print(NO_TASK_NOTE, file=sys.stderr)
+        return 0
     staged = gitio.list_staged_paths(repo)
     # Deletions count: removing code is a change a claim must cover too.
     code_paths = sorted({staged_path for _status, staged_path in staged if not config.is_ignored(staged_path, globs=settings["ignore"])})
     if not code_paths:
         return 0
 
-    rel_claims = f"{config.CLAIMCHECK_DIR}/{config.CLAIMS_FILE}"
+    rel_claims = config.to_repo_path(repo, path=claims.resolve_claims_path(repo))
     staged_claims = next((message for message, p in staged if p == rel_claims), None)
     if staged_claims not in ("A", "M"):
         raise ClaimsError(

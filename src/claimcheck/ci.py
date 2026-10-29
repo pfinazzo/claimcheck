@@ -43,6 +43,8 @@ jobs:
       - run: claimcheck run --provider claude --base origin/${{{{ github.base_ref }}}}
         env:
           ANTHROPIC_API_KEY: ${{{{ secrets.ANTHROPIC_API_KEY }}}}
+          # A pull request is checked out with no branch, so this names the task folder.
+          CLAIMCHECK_TASK: ${{{{ github.head_ref }}}}
 """
 
 

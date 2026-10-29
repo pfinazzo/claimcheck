@@ -29,6 +29,7 @@ from claimcheck import (
 )
 from claimcheck.providers import claude_cli
 from claimcheck.providers.stub import make_stub_provider
+from conftest import use_single_layout
 
 # ---- setup core -------------------------------------------------------------
 
@@ -51,7 +52,7 @@ def test_run_setup_does_everything_and_reports_it(repo):
 
 def test_run_setup_is_idempotent_and_never_overwrites(repo):
     initflow.run_setup(repo.path)
-    repo.write(".claimcheck/config.toml", text='version = 1\ntest_cmd = "make check"\n')
+    repo.write(".claimcheck/config.toml", text='version = 1\nlayout = "tasks"\ntest_cmd = "make check"\n')
     second = initflow.run_setup(repo.path)
     assert second["created"] == [] and second["config"] == "exists" and second["hook"]["status"] == "present"
     assert second["gitignore_added"] == [] and config.load(repo.path)["test_cmd"] == "make check"
@@ -132,6 +133,7 @@ def test_spec_draft_without_a_terminal_needs_a_goal(repo, *, monkeypatch, capsys
 
 def test_spec_draft_goal_flag_no_terminal_writes_spec_only(repo, *, capsys):
     repo.cli("init", "--yes")
+    use_single_layout(repo)
     inputs = iter(["a", "b", "", ""])
 
     orig = builtins.input
@@ -345,7 +347,9 @@ def test_onboarding_runs_the_whole_journey(repo, *, monkeypatch):
     assert branch == "task/add-free-shipping-over-50"
     assert "Freeze acceptance criteria" in repo.git("log", "-1", "--format=%s")
     assert "claimcheck:begin" in repo.git("show", "HEAD:CLAUDE.md")
-    assert "Add free shipping over 50" in repo.read(".claimcheck/spec.md")
+    # init wrote the tasks layout, so the spec is in the new branch's own folder.
+    assert "Add free shipping over 50" in repo.read(".claimcheck/tasks/task-add-free-shipping-over-50/spec.md")
+    assert not (repo.cc / "spec.md").exists()
 
 
 def test_onboarding_tour_can_be_skipped_and_goal_left_blank(repo, *, monkeypatch):

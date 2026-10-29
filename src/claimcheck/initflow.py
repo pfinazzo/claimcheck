@@ -73,7 +73,9 @@ def run_setup(
         created.append(config.CONFIG_FILE)
         config_status = "created"
     run_step("config", value=config_status)
-    for name, content in _INITIAL:
+    # The tasks layout starts with no task. Each task's files appear in its own folder with its spec.
+    initial_files = _INITIAL if config.load(repo)["layout"] == "single" else ()
+    for name, content in initial_files:
         if _write_if_missing(entry / name, content=content):
             created.append(name)
     (entry / config.RUNS_DIR).mkdir(exist_ok=True)
