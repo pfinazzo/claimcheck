@@ -85,7 +85,7 @@ These words have a specific meaning here. Each one is explained again where it f
 | **Planted bug** | A small mistake claimcheck puts into a new line of code on purpose, such as turning `>=` into `>`. claimcheck then reruns your tests. |
 | **Caught** or **missed** | If your test command fails with the planted bug in place, the tests caught it. That includes a planted bug that stops the code from building. If the tests still pass, they missed it. In the record, a caught bug is "killed" and a missed one "survived". A test run that takes too long is recorded as a "timeout". |
 | **Catch rate** | The share of planted bugs your tests caught, from 0 (none) to 1 (all). |
-| **Kill condition** | Something outside a claim that would prove it wrong, such as the name of a test. Every claim must give one. |
+| **Kill condition** | The check that would show a claim is false. Most name one test in the repo, like `test: tests/test_shipping.py::test_exactly_fifty_ships_free`. If that test fails, the claim is wrong. Every claim must give one. claimcheck never runs that test. The checker reads the code and judges whether the test would fail. |
 | **Provider** | How claimcheck reaches an AI model: your Claude Code sign-in, an Anthropic API key, any server that works like OpenAI's, or `stub`, an offline stand-in that answers unverifiable to every claim. |
 | **Run** | One `claimcheck run`. It checks the spec lock, asks the checker about every claim, plants bugs and records the results. |
 | **Ledger** | The permanent record, in `.claimcheck/ledger.jsonl`. In the tasks layout, each task has its own, in the task's folder. Lines are only ever added. Each run adds one line per claim, and `claimcheck accept` and the Desk app add lines too. Each new line contains a fingerprint of the line before it, so a line edited, moved, inserted or removed from the middle shows up. [Limits, stated plainly](#limits-stated-plainly) says what it cannot catch. |
@@ -810,7 +810,14 @@ A claim is one sentence about the diff that could turn out to be false. Your cod
 - **One checkable statement per claim.** "`shipping_fee` returns 0 at exactly $50" is a claim. "The shipping feature works" is not.
 - **Name what it is about.** List the numbers of the criteria it supports, and every file it is about.
 - **State real confidence.** If the code was never run, 0.6 is better than 0.95.
-- **Give a `kill_condition`.** That is something outside the claim that would prove it wrong. It takes one of three forms: `test:` names a test, `cmd:` names a command whose failure would disprove the claim, and `obs:` names a value you could observe. A kill condition that only repeats the claim is rejected.
+- **Give a `kill_condition`.** That is the check that would show the claim is false. It takes one of three forms:
+  - `test:` names a test. If that test fails, the claim is wrong.
+  - `cmd:` names a command. If that command fails, the claim is wrong.
+  - `obs:` describes something a person could look at, such as a value in a log or on screen. If it is not what the claim says, the claim is wrong.
+
+  claimcheck never runs the test or command. Instead, the checker reads the changed code and judges whether that check would fail. If the code plainly breaks it, the checker marks the claim refuted.
+
+  The kill condition must name a separate check. If it just copies the claim's own sentence, `claimcheck claims validate` rejects the claims file.
 
 ```yaml
 version: 1
