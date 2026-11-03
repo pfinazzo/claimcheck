@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
-from claimcheck import agentdocs
+import textwrap
+
+from claimcheck import agentdocs, claims
 
 
 def test_adds_block_to_existing_files_only(tmp_path):
@@ -76,3 +78,49 @@ def test_unterminated_begin_marker_does_not_eat_the_file(tmp_path):
     (tmp_path / "CLAUDE.md").write_text(f"keep me\n{agentdocs.BEGIN}\nhalf a block\n", encoding="utf-8")
     agentdocs.install(tmp_path)
     assert "keep me" in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+# ---- the block names every key `claims validate` requires (issue 41) ------------------------
+
+def _read_example_claims_file(block: str) -> str:
+    """The fenced YAML example inside the block, dedented so it parses as a claims file."""
+    fenced = block.split("```yaml\n", 1)[1].split("```", 1)[0]
+    return textwrap.dedent(fenced)
+
+
+def test_block_names_version_and_every_claim_key():
+    block = agentdocs.build_block()
+    assert "It starts with `version: 1`." in block
+    for key in claims.Claim.__annotations__:
+        assert f"{key}:" in block, key
+
+
+def test_the_example_claim_in_the_block_passes_the_validator():
+    claims_file, violations = claims.load_text(_read_example_claims_file(agentdocs.build_block()))
+    assert violations == [] and claims_file is not None
+    # The example cites the second criterion of a spec, as the README's example does.
+    assert [claim["criteria"] for claim in claims_file["claims"]] == [[2]]
+    assert claims.validate(claims_file, lock_ids={2}) == []
+
+
+def test_block_explains_kill_condition_and_verified_by():
+    block = agentdocs.build_block()
+    assert "`confidence` is between 0 and 1 and reflects how sure you actually are. Do not round up." in block
+    assert "`test:` names a test, `cmd:`\n   a command, `obs:` something a person can look at" in block
+    assert "It must not be the claim restated." in block
+    assert "`verified_by` says how you checked the claim yourself: one or more entries in the same three\n   forms. It is never empty." in block
+
+
+def test_example_is_the_same_in_both_layouts_and_has_no_claimcheck_path():
+    single = _read_example_claims_file(agentdocs.build_block())
+    assert _read_example_claims_file(agentdocs.build_block(layout="tasks")) == single
+    assert ".claimcheck/" not in single
+
+
+def test_old_block_is_replaced_by_one_that_names_verified_by(tmp_path):
+    old_rules = "4. Give each claim a `kill_condition` that would prove it wrong: `test:`, `cmd:` or `obs:`.\n"
+    (tmp_path / "CLAUDE.md").write_text(f"top\n\n{agentdocs.BEGIN}\n{old_rules}{agentdocs.END}\n\nbottom\n", encoding="utf-8")
+    assert agentdocs.install(tmp_path) == [("CLAUDE.md", "updated")]
+    text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert text.count("claimcheck:begin") == 1 and "verified_by" in text
+    assert text.startswith("top\n\n") and text.rstrip().endswith("bottom")

@@ -27,6 +27,7 @@ All notable changes to claimcheck. The format follows [Keep a Changelog](https:/
 - Open repo takes a pasted folder path as well as the folder picker, and shows each recent repo as its name over its path.
 
 ### Fixed
+- The rules `init` writes into `CLAUDE.md` and `AGENTS.md` never named the claims file's `version: 1` line or each claim's `verified_by` list, both of which `claims validate` requires. A coding agent that followed the rules to the letter wrote a file claimcheck refused with exit 4. The rules now show one example claim with every required key. ([#41](https://github.com/pfinazzo/claimcheck/issues/41))
 - A task list item in a pull request description (`- [x] done`) drew its box on one line and its words on the next. The box now sits beside the words.
 - While a pull request is checked, the top of Desk showed the name of the folder it was fetched into and `HEAD`. It now shows the repo you opened and `pull request #N`, and the all-clear banner talks about that pull request and about posting results instead of opening one.
 - Run claimcheck in Desk said "claimcheck was not found" when `claimcheck` was not on PATH, which is the normal case for a copy installed with pip into a virtualenv, or when Desk is started from the Start menu. Desk now also tries the Python named by `[app].python`, a virtualenv inside the repo (only after you agree to run the repo's commands), and any Python on PATH that has claimcheck installed. The message now says how to install it.

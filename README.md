@@ -370,7 +370,7 @@ Then `init` does these steps, in order:
 | Agent instructions | Adds claimcheck's rules to `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md`, whichever of them exist. If none exist, it asks whether to create `CLAUDE.md`. The rules sit between two marker comments. So running `init` again updates them in place and never adds a second copy |
 | CI workflow | Asks once, with the default answer no. If you say yes, it adds a GitHub Actions workflow that runs claimcheck on every pull request |
 
-You never copy rules into an instructions file or edit `.gitignore` by hand. The rules `init` adds are in [`src/claimcheck/agentdocs.py`](src/claimcheck/agentdocs.py). They tell your coding AI to do three things: check the spec, keep `claims.yaml` up to date with honest confidence, and run `claimcheck run` before it finishes.
+You never copy rules into an instructions file or edit `.gitignore` by hand. The rules `init` adds are in [`src/claimcheck/agentdocs.py`](src/claimcheck/agentdocs.py). They tell your coding AI to do three things: check the spec, keep `claims.yaml` up to date with honest confidence, and run `claimcheck run` before it finishes. The rules show one example claim with every key `claimcheck claims validate` requires, `version: 1` and `verified_by` included. So a coding AI that follows them writes a file claimcheck accepts.
 
 ### 4. Connect Claude
 

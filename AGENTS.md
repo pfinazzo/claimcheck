@@ -52,15 +52,30 @@ Before writing code for a task:
    If the human has no spec yet, run `claimcheck spec draft` and let them answer its questions.
 
 With every commit that changes code:
-2. Update `.claimcheck/claims.yaml`. One claim per thing you assert about the diff.
-3. Give each claim a confidence between 0 and 1 that reflects how sure you actually are.
-   Do not round up. Low confidence is useful information.
-4. Give each claim a `kill_condition` that would prove it wrong: `test:`, `cmd:` or `obs:`.
-   It must be something other than the claim restated.
-5. List every changed code file in some claim's `files`, and cite criteria by number.
+2. Update `.claimcheck/claims.yaml`. It starts with `version: 1`. One claim per thing you assert
+   about the diff, each with every key in this example:
+   ```yaml
+   version: 1
+   author: "claude-code"
+   claims:
+     - id: c1
+       claim: "shipping_fee returns 0 for an order of exactly $50"
+       confidence: 0.8
+       criteria: [2]
+       files: ["src/shipping.py"]
+       kill_condition: "test: tests/test_shipping.py::test_exactly_fifty_ships_free"
+       verified_by: ["cmd: python -m pytest -q tests/test_shipping.py"]
+   ```
+3. `confidence` is between 0 and 1 and reflects how sure you actually are. Do not round up.
+   Low confidence is useful information.
+4. `kill_condition` is the check that would prove the claim wrong: `test:` names a test, `cmd:`
+   a command, `obs:` something a person can look at. It must not be the claim restated.
+5. `verified_by` says how you checked the claim yourself: one or more entries in the same three
+   forms. It is never empty.
+6. List every changed code file in some claim's `files`, and cite `criteria` by number.
 
 Before finishing:
-6. Run `claimcheck run`. Report any claim that is REFUTED, UNVERIFIABLE or has a low catch rate.
+7. Run `claimcheck run`. Report any claim that is REFUTED, UNVERIFIABLE or has a low catch rate.
    Fix the tests or narrow the claim. Never edit the checker, the ledger or the config to make a
    run pass. Only a person runs `claimcheck accept`; never run it yourself.
 <!-- claimcheck:end -->
