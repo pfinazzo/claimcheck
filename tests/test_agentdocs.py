@@ -90,7 +90,7 @@ def _read_example_claims_file(block: str) -> str:
 
 def test_block_names_version_and_every_claim_key():
     block = agentdocs.build_block()
-    assert "version: 1" in block
+    assert "It starts with `version: 1`." in block
     for key in claims.Claim.__annotations__:
         assert f"{key}:" in block, key
 
@@ -98,12 +98,14 @@ def test_block_names_version_and_every_claim_key():
 def test_the_example_claim_in_the_block_passes_the_validator():
     claims_file, violations = claims.load_text(_read_example_claims_file(agentdocs.build_block()))
     assert violations == [] and claims_file is not None
-    cited = {criterion for claim in claims_file["claims"] for criterion in claim["criteria"]}
-    assert cited and claims.validate(claims_file, lock_ids=cited) == []
+    # The example cites the second criterion of a spec, as the README's example does.
+    assert [claim["criteria"] for claim in claims_file["claims"]] == [[2]]
+    assert claims.validate(claims_file, lock_ids={2}) == []
 
 
 def test_block_explains_kill_condition_and_verified_by():
     block = agentdocs.build_block()
+    assert "`confidence` is between 0 and 1 and reflects how sure you actually are. Do not round up." in block
     assert "`test:` names a test, `cmd:`\n   a command, `obs:` something a person can look at" in block
     assert "It must not be the claim restated." in block
     assert "`verified_by` says how you checked the claim yourself: one or more entries in the same three\n   forms. It is never empty." in block
